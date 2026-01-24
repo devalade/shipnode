@@ -2,25 +2,50 @@
 
 ## Quick Install (Recommended)
 
+Download and run the self-extracting installer:
+
 ```bash
-cd ~/Code/Labs/shipnode
-./install.sh
+curl -fsSL https://github.com/devalade/shipnode/releases/latest/download/shipnode-installer.sh | bash
 ```
 
-The interactive installer will guide you through the setup process.
+Or download manually:
+
+```bash
+wget https://github.com/devalade/shipnode/releases/latest/download/shipnode-installer.sh
+chmod +x shipnode-installer.sh
+./shipnode-installer.sh
+```
+
+The interactive installer will:
+- Extract ShipNode to your chosen location
+- Automatically set up PATH or create a symlink
+- Verify the installation
+
+## Alternative: Install from Source
+
+If you prefer to install from source:
+
+```bash
+git clone https://github.com/devalade/shipnode.git
+cd shipnode
+./install.sh
+```
 
 ## Installation Options
 
-### Option 1: Symlink to /usr/local/bin (Recommended)
+The installer offers several installation locations and PATH setup methods:
 
-Creates a system-wide symlink. Requires sudo.
+### Installation Locations
 
-```bash
-./install.sh
-# Choose option 1
-```
+1. **~/.shipnode** (Default) - No sudo required, recommended for single users
+2. **/opt/shipnode** (System-wide) - Requires sudo, for multi-user systems
+3. **Custom path** - Specify your own location
 
-After installation, `shipnode` will be available globally from any directory.
+### PATH Setup Methods
+
+#### Option 1: Symlink to /usr/local/bin (Recommended)
+
+Creates a system-wide symlink. Requires sudo. `shipnode` will be available globally from any directory.
 
 **Pros:**
 - Works in all shells (bash, zsh, fish, etc.)
@@ -30,19 +55,9 @@ After installation, `shipnode` will be available globally from any directory.
 **Cons:**
 - Requires sudo access
 
-### Option 2: Add to ~/.bashrc
+#### Option 2: Add to ~/.bashrc
 
-Adds ShipNode to your PATH in bash configuration.
-
-```bash
-./install.sh
-# Choose option 2
-```
-
-After installation, run:
-```bash
-source ~/.bashrc
-```
+Adds ShipNode to your PATH in bash configuration. After installation, run `source ~/.bashrc` or restart your terminal.
 
 **Pros:**
 - No sudo required
@@ -52,39 +67,17 @@ source ~/.bashrc
 - Only works in bash
 - Requires sourcing config after install
 
-### Option 3: Add to ~/.zshrc
+#### Option 3: Add to ~/.zshrc
 
-Same as option 2, but for zsh users.
+Same as option 2, but for zsh users. After installation, run `source ~/.zshrc` or restart your terminal.
 
-```bash
-./install.sh
-# Choose option 3
-```
-
-After installation, run:
-```bash
-source ~/.zshrc
-```
-
-### Option 4: Add to both bash and zsh
+#### Option 4: Add to both bash and zsh
 
 If you use both shells or are unsure which one you use.
 
-```bash
-./install.sh
-# Choose option 4
-```
+#### Option 5: Manual Setup
 
-### Option 5: Manual Setup
-
-Skip automatic installation and set up manually.
-
-```bash
-./install.sh
-# Choose option 5
-```
-
-The installer will show you the commands to run manually.
+Skip automatic installation and set up manually. The installer will show you the commands to run manually.
 
 ## Verification
 
@@ -128,19 +121,40 @@ chmod +x ~/Code/Labs/shipnode/install.sh
 
 The installer detected an existing ShipNode entry in your config. This is safe to ignore.
 
+## Building the Installer
+
+If you want to build the self-extracting installer yourself:
+
+```bash
+git clone https://github.com/devalade/shipnode.git
+cd shipnode
+make build
+```
+
+This creates `dist/shipnode-installer.sh`.
+
 ## Uninstallation
 
 To remove ShipNode:
 
+1. **Remove installation directory:**
+   ```bash
+   rm -rf ~/.shipnode  # or /opt/shipnode, or your custom path
+   ```
+
+2. **Remove symlink (if created):**
+   ```bash
+   sudo rm /usr/local/bin/shipnode
+   ```
+
+3. **Remove from shell config (if added to PATH):**
+   Edit `~/.bashrc` or `~/.zshrc` and remove the ShipNode export lines.
+
+Or if installed from source:
 ```bash
-cd ~/Code/Labs/shipnode
+cd /path/to/shipnode
 ./uninstall.sh
 ```
-
-The uninstaller will:
-1. Remove symlink from /usr/local/bin (if exists)
-2. Remove PATH entries from shell configs
-3. Optionally delete the entire ShipNode directory
 
 ## Next Steps
 
@@ -162,9 +176,17 @@ After installation:
    shipnode deploy
    ```
 
+## Updating
+
+To update to the latest version, simply download and run the installer again:
+
+```bash
+curl -fsSL https://github.com/devalade/shipnode/releases/latest/download/shipnode-installer.sh | bash
+```
+
 ## Support
 
 If you encounter issues:
-1. Check the README: `~/Code/Labs/shipnode/README.md`
-2. Verify file permissions: `ls -la ~/Code/Labs/shipnode/`
-3. Test the script directly: `bash ~/Code/Labs/shipnode/shipnode help`
+1. Check the [README.md](README.md)
+2. Report issues: https://github.com/devalade/shipnode/issues
+3. Check installation: `which shipnode` and `shipnode help`

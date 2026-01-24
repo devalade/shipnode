@@ -1,5 +1,8 @@
 # ShipNode .gitignore
 
+# Build output
+dist/
+
 # Config file (contains sensitive server info)
 shipnode.conf
 

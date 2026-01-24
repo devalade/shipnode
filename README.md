@@ -13,43 +13,48 @@ Simple, zero-config deployment tool for Node.js backends and static frontends. D
 
 ## Installation
 
-### Easy Install (Recommended)
+### Quick Install (Recommended)
+
+Download and run the self-extracting installer:
 
 ```bash
-cd ~/Code/Labs/shipnode
-./install.sh
+curl -fsSL https://github.com/devalade/shipnode/releases/latest/download/shipnode-installer.sh | bash
+```
+
+Or download manually first:
+
+```bash
+wget https://github.com/devalade/shipnode/releases/latest/download/shipnode-installer.sh
+chmod +x shipnode-installer.sh
+./shipnode-installer.sh
 ```
 
 The installer will:
-- Make `shipnode` executable
-- Offer to create a symlink to `/usr/local/bin` (recommended)
-- Or add to your shell config (~/.bashrc or ~/.zshrc)
+- Extract ShipNode to your chosen location (~/.shipnode, /opt/shipnode, or custom)
+- Create a symlink to `/usr/local/bin` or add to your PATH
+- Verify the installation
 
-### Manual Install
+### Install from Source
 
 ```bash
-# Clone or download to ~/Code/Labs/shipnode
-cd ~/Code/Labs/shipnode
-
-# Make executable
-chmod +x shipnode
-
-# Option 1: Symlink (requires sudo)
-sudo ln -s ~/Code/Labs/shipnode/shipnode /usr/local/bin/shipnode
-
-# Option 2: Add to PATH (add this to your ~/.bashrc or ~/.zshrc)
-export PATH="$HOME/Code/Labs/shipnode:$PATH"
-
-# Verify installation
-shipnode help
+git clone https://github.com/devalade/shipnode.git
+cd shipnode
+./install.sh
 ```
 
 ### Uninstall
 
 ```bash
-cd ~/Code/Labs/shipnode
+# If installed via installer
+rm -rf ~/.shipnode  # or /opt/shipnode
+sudo rm /usr/local/bin/shipnode
+
+# If installed from source
+cd /path/to/shipnode
 ./uninstall.sh
 ```
+
+See [INSTALL.md](INSTALL.md) for detailed installation instructions.
 
 ## Quick Start
 
