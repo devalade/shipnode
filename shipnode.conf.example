@@ -42,3 +42,27 @@ DOMAIN=myapp.com
 # Frontend build output directory
 # Default: auto-detect (dist, build, or public)
 # BUILD_DIR=dist
+
+# ============================================
+# Zero-Downtime Deployment
+# ============================================
+# Enable atomic release-based deployments with health checks
+ZERO_DOWNTIME=true
+
+# Number of releases to keep (older releases will be deleted)
+KEEP_RELEASES=5
+
+# ============================================
+# Health Checks (Backend only)
+# ============================================
+# Enable health checks after deployment
+HEALTH_CHECK_ENABLED=true
+
+# Health check endpoint (should return 200 OK)
+HEALTH_CHECK_PATH=/health
+
+# Timeout for each health check attempt (seconds)
+HEALTH_CHECK_TIMEOUT=30
+
+# Number of health check retries before rollback
+HEALTH_CHECK_RETRIES=3

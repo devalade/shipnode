@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # ShipNode version
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Helper functions
 error() {
@@ -28,6 +28,118 @@ info() {
 
 warn() {
     echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+# Release management helper functions
+generate_release_timestamp() {
+    date +"%Y%m%d%H%M%S"
+}
+
+get_release_path() {
+    local timestamp=$1
+    echo "$REMOTE_PATH/releases/$timestamp"
+}
+
+setup_release_structure() {
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        mkdir -p $REMOTE_PATH/{releases,shared,.shipnode}
+        if [ ! -f $REMOTE_PATH/.shipnode/releases.json ]; then
+            echo "[]" > $REMOTE_PATH/.shipnode/releases.json
+        fi
+ENDSSH
+}
+
+acquire_deploy_lock() {
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        LOCK_FILE="$REMOTE_PATH/.shipnode/deploy.lock"
+        if [ -f "\$LOCK_FILE" ]; then
+            PID=\$(cat "\$LOCK_FILE")
+            if kill -0 "\$PID" 2>/dev/null; then
+                echo "ERROR: Another deployment in progress (PID: \$PID)"
+                exit 1
+            else
+                echo "Removing stale lock file"
+                rm -f "\$LOCK_FILE"
+            fi
+        fi
+        echo \$\$ > "\$LOCK_FILE"
+ENDSSH
+    [ $? -ne 0 ] && error "Failed to acquire deployment lock"
+}
+
+release_deploy_lock() {
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "rm -f $REMOTE_PATH/.shipnode/deploy.lock" || true
+}
+
+switch_symlink() {
+    local release_path=$1
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        cd $REMOTE_PATH
+        ln -sfn $release_path current.tmp
+        mv -Tf current.tmp current
+ENDSSH
+}
+
+perform_health_check() {
+    local max_retries=${HEALTH_CHECK_RETRIES:-3}
+    local timeout=${HEALTH_CHECK_TIMEOUT:-30}
+    local path=${HEALTH_CHECK_PATH:-/health}
+    local port=${BACKEND_PORT:-3000}
+
+    info "Running health check (${max_retries} retries, ${timeout}s timeout)..."
+
+    for i in $(seq 1 $max_retries); do
+        if ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "timeout $timeout curl -sf http://localhost:$port$path" > /dev/null 2>&1; then
+            success "Health check passed"
+            return 0
+        fi
+        [ $i -lt $max_retries ] && warn "Health check attempt $i failed, retrying..."
+        sleep 2
+    done
+
+    error "Health check failed after $max_retries attempts"
+    return 1
+}
+
+record_release() {
+    local timestamp=$1
+    local status=$2
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        cd $REMOTE_PATH/.shipnode
+        CURRENT_DATE=\$(date -Is)
+        jq ". + [{\"timestamp\":\"$timestamp\",\"date\":\"\$CURRENT_DATE\",\"status\":\"$status\"}]" releases.json > releases.json.tmp
+        mv releases.json.tmp releases.json
+ENDSSH
+}
+
+get_previous_release() {
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        cd $REMOTE_PATH/.shipnode
+        cat releases.json | jq -r '.[-2].timestamp // empty'
+ENDSSH
+}
+
+cleanup_old_releases() {
+    local keep=${KEEP_RELEASES:-5}
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        cd $REMOTE_PATH/releases
+        ls -t | tail -n +$((keep + 1)) | xargs -r rm -rf
+ENDSSH
+    info "Cleaned up old releases (keeping last $keep)"
+}
+
+rollback_to_release() {
+    local timestamp=$1
+    local release_path="$REMOTE_PATH/releases/$timestamp"
+
+    info "Rolling back to release $timestamp..."
+    switch_symlink "$release_path"
+
+    if [ "$APP_TYPE" = "backend" ]; then
+        ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "pm2 reload $PM2_APP_NAME"
+    fi
+
+    success "Rolled back to $timestamp"
 }
 
 # Load configuration
@@ -61,6 +173,12 @@ load_config() {
 
     # Set defaults
     SSH_PORT="${SSH_PORT:-22}"
+    ZERO_DOWNTIME="${ZERO_DOWNTIME:-true}"
+    KEEP_RELEASES="${KEEP_RELEASES:-5}"
+    HEALTH_CHECK_ENABLED="${HEALTH_CHECK_ENABLED:-true}"
+    HEALTH_CHECK_PATH="${HEALTH_CHECK_PATH:-/health}"
+    HEALTH_CHECK_TIMEOUT="${HEALTH_CHECK_TIMEOUT:-30}"
+    HEALTH_CHECK_RETRIES="${HEALTH_CHECK_RETRIES:-3}"
 
     # Validate APP_TYPE
     if [ "$APP_TYPE" != "backend" ] && [ "$APP_TYPE" != "frontend" ]; then
@@ -107,6 +225,16 @@ BACKEND_PORT=3000
 
 # Frontend-specific (optional)
 DOMAIN=myapp.com
+
+# Zero-downtime deployment (optional)
+ZERO_DOWNTIME=true
+KEEP_RELEASES=5
+
+# Health checks for backend (optional)
+HEALTH_CHECK_ENABLED=true
+HEALTH_CHECK_PATH=/health
+HEALTH_CHECK_TIMEOUT=30
+HEALTH_CHECK_RETRIES=3
 EOF
 
     success "Created shipnode.conf"
@@ -136,6 +264,15 @@ cmd_setup() {
         SUDO=""
         if [ "$EUID" -ne 0 ]; then
             SUDO="sudo"
+        fi
+
+        # Install jq for JSON manipulation
+        if ! command -v jq &> /dev/null; then
+            echo "Installing jq..."
+            $SUDO apt-get update
+            $SUDO apt-get install -y jq
+        else
+            echo "jq already installed: $(jq --version)"
         fi
 
         # Install Node.js (using NodeSource)
@@ -200,6 +337,16 @@ deploy_backend() {
     # Check if package.json exists
     [ ! -f "package.json" ] && error "package.json not found in current directory"
 
+    if [ "$ZERO_DOWNTIME" = "true" ]; then
+        deploy_backend_zero_downtime
+    else
+        deploy_backend_legacy
+    fi
+}
+
+deploy_backend_legacy() {
+    info "Using legacy deployment (non-zero-downtime)..."
+
     # Rsync application files
     info "Syncing files to server..."
     rsync -avz --progress \
@@ -246,6 +393,111 @@ ENDSSH
     info "Run 'shipnode status' to check app status"
 }
 
+deploy_backend_zero_downtime() {
+    info "Using zero-downtime deployment..."
+
+    # Acquire deployment lock
+    acquire_deploy_lock
+    trap release_deploy_lock EXIT
+
+    # Generate release timestamp
+    local timestamp=$(generate_release_timestamp)
+    local release_path=$(get_release_path "$timestamp")
+
+    info "Creating release: $timestamp"
+
+    # Setup release structure on first deploy
+    setup_release_structure
+
+    # Get previous release for potential rollback
+    local previous_release=$(get_previous_release)
+
+    # Rsync to new release directory
+    info "Syncing files to release directory..."
+    rsync -avz --progress \
+        --exclude 'node_modules' \
+        --exclude '.env' \
+        --exclude '.git' \
+        --exclude '.gitignore' \
+        --exclude 'shipnode.conf' \
+        --exclude '*.log' \
+        -e "ssh -p $SSH_PORT" \
+        ./ "$SSH_USER@$SSH_HOST:$release_path/"
+
+    success "Files synced to $release_path"
+
+    # Link shared resources and install dependencies
+    info "Setting up release environment..."
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        set -e
+        cd $release_path
+
+        # Link shared .env if it exists
+        if [ -f $REMOTE_PATH/shared/.env ]; then
+            ln -sf $REMOTE_PATH/shared/.env .env
+        fi
+
+        # Install dependencies
+        npm install --production
+ENDSSH
+
+    success "Release prepared"
+
+    # Atomic symlink switch
+    info "Switching to new release..."
+    switch_symlink "$release_path"
+
+    # Reload PM2
+    info "Reloading application..."
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        set -e
+        cd $REMOTE_PATH/current
+
+        if pm2 describe $PM2_APP_NAME > /dev/null 2>&1; then
+            pm2 reload $PM2_APP_NAME --update-env
+        else
+            if [ -f ecosystem.config.js ]; then
+                pm2 start ecosystem.config.js
+            else
+                pm2 start npm --name "$PM2_APP_NAME" -- start
+            fi
+        fi
+
+        pm2 save
+ENDSSH
+
+    # Wait for app to start
+    sleep 3
+
+    # Run health check if enabled
+    if [ "$HEALTH_CHECK_ENABLED" = "true" ]; then
+        if ! perform_health_check; then
+            warn "Health check failed, rolling back..."
+            if [ -n "$previous_release" ]; then
+                rollback_to_release "$previous_release"
+                record_release "$timestamp" "failed"
+                error "Deployment failed, rolled back to $previous_release"
+            else
+                error "Health check failed and no previous release to rollback to"
+            fi
+        fi
+    fi
+
+    # Record successful release
+    record_release "$timestamp" "success"
+    success "Release $timestamp deployed successfully"
+
+    # Cleanup old releases
+    cleanup_old_releases
+
+    # Configure Caddy if needed
+    if [ -n "$DOMAIN" ]; then
+        configure_caddy_backend
+    fi
+
+    info "Run 'shipnode status' to check app status"
+}
+
 deploy_frontend() {
     local SKIP_BUILD=$1
     info "Deploying frontend application..."
@@ -267,6 +519,16 @@ deploy_frontend() {
 
     [ ! -d "$BUILD_DIR" ] && error "$BUILD_DIR directory not found"
 
+    if [ "$ZERO_DOWNTIME" = "true" ]; then
+        deploy_frontend_zero_downtime "$BUILD_DIR"
+    else
+        deploy_frontend_legacy "$BUILD_DIR"
+    fi
+}
+
+deploy_frontend_legacy() {
+    local BUILD_DIR=$1
+
     # Rsync build directory
     info "Syncing $BUILD_DIR to server..."
     rsync -avz --progress --delete \
@@ -280,6 +542,51 @@ deploy_frontend() {
         configure_caddy_frontend
     else
         warn "No DOMAIN set. Configure Caddy manually to serve $REMOTE_PATH"
+    fi
+}
+
+deploy_frontend_zero_downtime() {
+    local BUILD_DIR=$1
+
+    info "Using zero-downtime deployment..."
+
+    # Acquire deployment lock
+    acquire_deploy_lock
+    trap release_deploy_lock EXIT
+
+    # Generate release timestamp
+    local timestamp=$(generate_release_timestamp)
+    local release_path=$(get_release_path "$timestamp")
+
+    info "Creating release: $timestamp"
+
+    # Setup release structure
+    setup_release_structure
+
+    # Rsync build output to release directory
+    info "Syncing $BUILD_DIR to release directory..."
+    rsync -avz --progress --delete \
+        -e "ssh -p $SSH_PORT" \
+        "$BUILD_DIR/" "$SSH_USER@$SSH_HOST:$release_path/"
+
+    success "Files synced to $release_path"
+
+    # Atomic symlink switch
+    info "Switching to new release..."
+    switch_symlink "$release_path"
+
+    # Record release
+    record_release "$timestamp" "success"
+    success "Release $timestamp deployed successfully"
+
+    # Cleanup old releases
+    cleanup_old_releases
+
+    # Configure Caddy
+    if [ -n "$DOMAIN" ]; then
+        configure_caddy_frontend
+    else
+        warn "No DOMAIN set. Configure Caddy manually to serve $REMOTE_PATH/current"
     fi
 }
 
@@ -317,6 +624,12 @@ configure_caddy_frontend() {
     info "Configuring Caddy static file server for $DOMAIN..."
 
     local CADDY_CONFIG="/etc/caddy/Caddyfile"
+    local SERVE_PATH="$REMOTE_PATH"
+
+    # Use current symlink if zero-downtime is enabled
+    if [ "$ZERO_DOWNTIME" = "true" ]; then
+        SERVE_PATH="$REMOTE_PATH/current"
+    fi
 
     ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         set -e
@@ -327,7 +640,7 @@ configure_caddy_frontend() {
         # Create Caddyfile
         cat > $CADDY_CONFIG << 'EOF'
 $DOMAIN {
-    root * $REMOTE_PATH
+    root * $SERVE_PATH
     file_server
     encode gzip
 
@@ -343,7 +656,7 @@ EOF
         caddy reload --config $CADDY_CONFIG
 ENDSSH
 
-    success "Caddy configured for $DOMAIN → $REMOTE_PATH"
+    success "Caddy configured for $DOMAIN → $SERVE_PATH"
 }
 
 # Show app status
@@ -397,6 +710,176 @@ cmd_stop() {
     success "App stopped"
 }
 
+# Rollback to previous release
+cmd_rollback() {
+    load_config
+
+    if [ "$ZERO_DOWNTIME" != "true" ]; then
+        error "Rollback only available with zero-downtime deployment enabled"
+    fi
+
+    local steps_back=${1:-1}
+
+    info "Fetching release history..."
+
+    # Get target release
+    local target_release=$(ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        cd $REMOTE_PATH/.shipnode
+        cat releases.json | jq -r ".[-$((steps_back + 1))].timestamp // empty"
+ENDSSH
+)
+
+    if [ -z "$target_release" ]; then
+        error "No release found to rollback to (requested $steps_back steps back)"
+    fi
+
+    # Confirm rollback
+    warn "This will rollback to release: $target_release"
+    read -p "Continue? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        info "Rollback cancelled"
+        exit 0
+    fi
+
+    # Perform rollback
+    rollback_to_release "$target_release"
+
+    # Run health check for backend
+    if [ "$APP_TYPE" = "backend" ] && [ "$HEALTH_CHECK_ENABLED" = "true" ]; then
+        sleep 3
+        if perform_health_check; then
+            success "Rollback successful and health check passed"
+        else
+            warn "Rollback completed but health check failed"
+        fi
+    else
+        success "Rollback successful"
+    fi
+}
+
+# List available releases
+cmd_releases() {
+    load_config
+
+    if [ "$ZERO_DOWNTIME" != "true" ]; then
+        error "Releases command only available with zero-downtime deployment enabled"
+    fi
+
+    info "Fetching releases..."
+
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        cd $REMOTE_PATH
+
+        # Get current release
+        CURRENT=""
+        if [ -L current ]; then
+            CURRENT=\$(readlink current | xargs basename)
+        fi
+
+        echo ""
+        echo "Available releases:"
+        echo "==================="
+
+        cd .shipnode
+        cat releases.json | jq -r '.[] | "\(.timestamp) - \(.date) - \(.status)"' | while read line; do
+            timestamp=\$(echo \$line | cut -d' ' -f1)
+            if [ "\$timestamp" = "\$CURRENT" ]; then
+                echo "→ \$line (current)"
+            else
+                echo "  \$line"
+            fi
+        done
+
+        echo ""
+        echo "Total: \$(cat releases.json | jq 'length') releases"
+ENDSSH
+}
+
+# Migrate existing deployment to release structure
+cmd_migrate() {
+    load_config
+
+    if [ "$ZERO_DOWNTIME" != "true" ]; then
+        error "Migration only needed when enabling zero-downtime deployment"
+    fi
+
+    warn "This will migrate your existing deployment to the release structure"
+    warn "Existing files will be moved to a new release directory"
+    read -p "Continue? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        info "Migration cancelled"
+        exit 0
+    fi
+
+    info "Migrating to release structure..."
+
+    local timestamp=$(generate_release_timestamp)
+
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        set -e
+        cd $REMOTE_PATH
+
+        # Create structure
+        mkdir -p releases shared .shipnode
+        echo "[]" > .shipnode/releases.json
+
+        # Move existing files to first release
+        mkdir -p releases/$timestamp
+
+        # Move all files except the new directories
+        find . -maxdepth 1 -mindepth 1 \
+            ! -name 'releases' \
+            ! -name 'shared' \
+            ! -name '.shipnode' \
+            ! -name 'current' \
+            -exec mv {} releases/$timestamp/ \;
+
+        # Move .env to shared if it exists
+        if [ -f releases/$timestamp/.env ]; then
+            mv releases/$timestamp/.env shared/.env
+            ln -sf $REMOTE_PATH/shared/.env releases/$timestamp/.env
+        fi
+
+        # Create current symlink
+        ln -sfn releases/$timestamp current
+
+        # Update PM2 to use current directory if backend
+        if [ "$APP_TYPE" = "backend" ]; then
+            cd current
+            if pm2 describe $PM2_APP_NAME > /dev/null 2>&1; then
+                pm2 delete $PM2_APP_NAME
+                if [ -f ecosystem.config.js ]; then
+                    pm2 start ecosystem.config.js
+                else
+                    pm2 start npm --name "$PM2_APP_NAME" -- start
+                fi
+                pm2 save
+            fi
+        fi
+
+        # Record initial release
+        CURRENT_DATE=\$(date -Is)
+        jq ". + [{\"timestamp\":\"$timestamp\",\"date\":\"\$CURRENT_DATE\",\"status\":\"migrated\"}]" .shipnode/releases.json > .shipnode/releases.json.tmp
+        mv .shipnode/releases.json.tmp .shipnode/releases.json
+ENDSSH
+
+    success "Migration complete"
+    info "Your deployment now uses the release structure"
+    info "Current release: $timestamp"
+
+    # Update Caddy config
+    if [ -n "$DOMAIN" ]; then
+        info "Updating Caddy configuration..."
+        if [ "$APP_TYPE" = "backend" ]; then
+            configure_caddy_backend
+        else
+            configure_caddy_frontend
+        fi
+    fi
+}
+
 # Show help
 cmd_help() {
     cat << EOF
@@ -406,23 +889,38 @@ Usage: shipnode <command> [options]
 
 Commands:
     init                Create shipnode.conf in current project
-    setup               First-time server setup (Node, PM2, Caddy)
+    setup               First-time server setup (Node, PM2, Caddy, jq)
     deploy              Deploy the application
     deploy --skip-build Deploy without running build step
     status              Check application status
     logs                View application logs (backend only)
     restart             Restart application (backend only)
     stop                Stop application (backend only)
+    rollback [N]        Rollback to previous release (or N steps back)
+    releases            List all available releases
+    migrate             Migrate existing deployment to release structure
     help                Show this help message
 
 Configuration:
     Edit shipnode.conf to configure your deployment settings.
     Supports both backend (Node.js + PM2) and frontend (static files) apps.
 
+Zero-Downtime Deployment:
+    ZERO_DOWNTIME=true           Enable atomic deployments (default)
+    KEEP_RELEASES=5              Number of releases to keep (default: 5)
+    HEALTH_CHECK_ENABLED=true    Enable health checks (default: true)
+    HEALTH_CHECK_PATH=/health    Health endpoint (default: /health)
+    HEALTH_CHECK_TIMEOUT=30      Health check timeout seconds (default: 30)
+    HEALTH_CHECK_RETRIES=3       Number of health check retries (default: 3)
+
 Examples:
-    shipnode init       # Create config file
-    shipnode setup      # Setup server (first time)
-    shipnode deploy     # Deploy your app
+    shipnode init               # Create config file
+    shipnode setup              # Setup server (first time)
+    shipnode deploy             # Deploy your app
+    shipnode rollback           # Rollback to previous release
+    shipnode rollback 2         # Rollback 2 releases back
+    shipnode releases           # List all releases
+    shipnode migrate            # Migrate to release structure
 
 EOF
 }
@@ -450,6 +948,15 @@ main() {
             ;;
         stop)
             cmd_stop
+            ;;
+        rollback)
+            cmd_rollback "$2"
+            ;;
+        releases)
+            cmd_releases
+            ;;
+        migrate)
+            cmd_migrate
             ;;
         help|--help|-h)
             cmd_help

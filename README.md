@@ -5,6 +5,10 @@ Simple, zero-config deployment tool for Node.js backends and static frontends. D
 ## Features
 
 - **Single CLI tool** for both backend and frontend deployments
+- **Zero-downtime deployments** with atomic release switching
+- **Automatic rollback** on health check failure
+- **Release management** with configurable retention
+- **Health checks** for backend deployments
 - **Zero dependencies** (pure bash script)
 - **PM2** process management for backends
 - **Caddy** web server with automatic HTTPS
@@ -55,6 +59,17 @@ cd /path/to/shipnode
 ```
 
 See [INSTALL.md](INSTALL.md) for detailed installation instructions.
+
+## What's New in v1.1.0
+
+ShipNode now supports **zero-downtime deployments** with automatic health checks and rollback capabilities! See [CHANGELOG.md](CHANGELOG.md) for full release notes.
+
+Key features:
+- Atomic release-based deployments
+- Automatic health check validation
+- One-command rollback to previous releases
+- Deployment lock to prevent concurrent deploys
+- Configurable release retention
 
 ## Quick Start
 
@@ -110,14 +125,164 @@ That's it! Your app is live.
 ## Commands
 
 ```bash
-shipnode init              # Create shipnode.conf
-shipnode setup             # Setup server (first time only)
-shipnode deploy            # Deploy app
-shipnode deploy --skip-build  # Deploy without building
-shipnode status            # Check app status
-shipnode logs              # View logs (backend only)
-shipnode restart           # Restart app (backend only)
-shipnode stop              # Stop app (backend only)
+shipnode init                # Create shipnode.conf
+shipnode setup               # Setup server (first time only)
+shipnode deploy              # Deploy app
+shipnode deploy --skip-build # Deploy without building
+shipnode status              # Check app status
+shipnode logs                # View logs (backend only)
+shipnode restart             # Restart app (backend only)
+shipnode stop                # Stop app (backend only)
+shipnode rollback            # Rollback to previous release
+shipnode rollback 2          # Rollback 2 releases back
+shipnode releases            # List all available releases
+shipnode migrate             # Migrate to release structure
+```
+
+## Zero-Downtime Deployment
+
+ShipNode uses atomic release-based deployments to ensure zero downtime during updates.
+
+### How It Works
+
+Each deployment creates a timestamped release in the `releases/` directory:
+
+```
+/var/www/myapp/
+├── releases/
+│   ├── 20240124150000/     # Previous release
+│   ├── 20240124160000/     # Current release
+│   └── 20240124170000/     # Latest release
+├── current -> releases/20240124170000/  # Atomic symlink
+├── shared/
+│   ├── .env                # Shared environment variables
+│   └── logs/               # Shared logs
+└── .shipnode/
+    ├── releases.json       # Release history
+    └── deploy.lock         # Deployment lock
+```
+
+During deployment:
+1. New release created in `releases/$timestamp/`
+2. Dependencies installed per-release
+3. Symlink atomically switched: `current -> releases/$timestamp/`
+4. PM2 reloaded (backend only)
+5. Health check performed
+6. If health check fails → automatic rollback
+7. Old releases cleaned up (keeps last N releases)
+
+### Configuration
+
+Add to `shipnode.conf`:
+
+```bash
+# Enable zero-downtime deployment (enabled by default)
+ZERO_DOWNTIME=true
+
+# Number of releases to keep (default: 5)
+KEEP_RELEASES=5
+
+# Health check settings (backend only)
+HEALTH_CHECK_ENABLED=true
+HEALTH_CHECK_PATH=/health        # Endpoint to check
+HEALTH_CHECK_TIMEOUT=30          # Seconds per attempt
+HEALTH_CHECK_RETRIES=3           # Attempts before rollback
+```
+
+### Health Checks
+
+For backend deployments, add a health endpoint to your app:
+
+```javascript
+// Express example
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// Fastify example
+fastify.get('/health', async (request, reply) => {
+  return { status: 'ok' };
+});
+```
+
+After deployment, ShipNode will:
+- Wait 3 seconds for app to start
+- Attempt health check (default: 3 retries, 30s timeout)
+- If all checks fail → automatic rollback to previous release
+- If checks pass → deployment succeeds
+
+### Rollback
+
+Rollback to a previous release:
+
+```bash
+# Rollback to immediately previous release
+shipnode rollback
+
+# Rollback 2 releases back
+shipnode rollback 2
+
+# List available releases first
+shipnode releases
+```
+
+Rollback performs:
+1. Atomic symlink switch to target release
+2. PM2 reload (backend only)
+3. Health check verification
+4. Confirmation of success/failure
+
+### Migration
+
+If you have an existing deployment, migrate to the release structure:
+
+```bash
+shipnode migrate
+```
+
+This will:
+1. Move existing files to first release
+2. Create release structure
+3. Setup `current` symlink
+4. Update PM2 configuration (backend)
+5. Update Caddy configuration
+
+**Note:** Migration is a one-time operation. Back up your data first.
+
+### Disabling Zero-Downtime
+
+To use legacy deployment (direct rsync without releases):
+
+```bash
+# In shipnode.conf
+ZERO_DOWNTIME=false
+```
+
+### Example Workflow
+
+```bash
+# Initial deployment
+shipnode deploy
+# → Creates releases/20240124150000/, sets as current
+
+# Deploy update
+shipnode deploy
+# → Creates releases/20240124160000/
+# → Runs health check
+# → If success: switches to new release
+# → If failure: auto-rollback to 20240124150000/
+
+# Check releases
+shipnode releases
+# → Shows all releases with current marker
+
+# Manual rollback if needed
+shipnode rollback
+# → Switches back to previous release
+
+# Rollback to specific older release
+shipnode rollback 3
+# → Goes back 3 releases
 ```
 
 ## Backend Deployment
@@ -232,6 +397,14 @@ BACKEND_PORT=3000         # App listening port
 
 # Optional for both
 DOMAIN=myapp.com          # Domain for Caddy config
+
+# Zero-downtime deployment
+ZERO_DOWNTIME=true              # Enable atomic deployments (default: true)
+KEEP_RELEASES=5                 # Releases to keep (default: 5)
+HEALTH_CHECK_ENABLED=true       # Enable health checks (default: true)
+HEALTH_CHECK_PATH=/health       # Health endpoint (default: /health)
+HEALTH_CHECK_TIMEOUT=30         # Timeout seconds (default: 30)
+HEALTH_CHECK_RETRIES=3          # Retry count (default: 3)
 ```
 
 ## Server Requirements
@@ -318,6 +491,40 @@ Ensure:
 2. Ports 80 and 443 are open
 3. Check Caddy logs: `ssh root@server "journalctl -u caddy -n 50"`
 
+### Health check failures
+
+If deployments keep failing health checks:
+
+1. Verify your app has the health endpoint:
+   ```bash
+   ssh root@your-server "curl http://localhost:3000/health"
+   ```
+
+2. Check if health check path is correct in `shipnode.conf`
+3. Increase timeout: `HEALTH_CHECK_TIMEOUT=60`
+4. Check PM2 logs: `shipnode logs`
+5. Temporarily disable: `HEALTH_CHECK_ENABLED=false`
+
+### Deployment lock issues
+
+If you see "Another deployment in progress":
+
+```bash
+# Check for stale lock (SSH to server)
+ssh root@your-server "cat /var/www/myapp/.shipnode/deploy.lock"
+ssh root@your-server "rm /var/www/myapp/.shipnode/deploy.lock"
+```
+
+### Release cleanup
+
+Manually clean old releases:
+
+```bash
+ssh root@your-server "cd /var/www/myapp/releases && ls -t | tail -n +6 | xargs rm -rf"
+```
+
+Or adjust retention: `KEEP_RELEASES=10` in `shipnode.conf`
+
 ## Comparison with Other Tools
 
 | Feature | ShipNode | Deployer | PM2 Deploy | Capistrano |
@@ -377,8 +584,18 @@ ln -s my-custom-dist dist
 
 For backends, manage `.env` files separately:
 
+**With zero-downtime deployment:**
 ```bash
-# Copy .env to server
+# Copy .env to shared directory (persists across releases)
+scp .env root@your-server:/var/www/myapp/shared/.env
+
+# Then deploy (will be symlinked to each release)
+shipnode deploy
+```
+
+**Without zero-downtime deployment:**
+```bash
+# Copy .env directly
 scp .env root@your-server:/var/www/myapp/.env
 
 # Then deploy
