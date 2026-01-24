@@ -41,7 +41,7 @@ get_release_path() {
 }
 
 setup_release_structure() {
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         mkdir -p $REMOTE_PATH/{releases,shared,.shipnode}
         if [ ! -f $REMOTE_PATH/.shipnode/releases.json ]; then
             echo "[]" > $REMOTE_PATH/.shipnode/releases.json
@@ -50,30 +50,42 @@ ENDSSH
 }
 
 acquire_deploy_lock() {
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    local result
+    result=$(ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash -s "$REMOTE_PATH" << 'ENDSSH'
+        REMOTE_PATH="$1"
+        mkdir -p "$REMOTE_PATH/.shipnode"
         LOCK_FILE="$REMOTE_PATH/.shipnode/deploy.lock"
-        if [ -f "\$LOCK_FILE" ]; then
-            PID=\$(cat "\$LOCK_FILE")
-            if kill -0 "\$PID" 2>/dev/null; then
-                echo "ERROR: Another deployment in progress (PID: \$PID)"
-                exit 1
+
+        # Check for stale lock (older than 30 minutes)
+        if [ -f "$LOCK_FILE" ]; then
+            LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE") ))
+            if [ "$LOCK_AGE" -gt 1800 ]; then
+                echo "Removing stale lock file (${LOCK_AGE}s old)"
+                rm -f "$LOCK_FILE"
             else
-                echo "Removing stale lock file"
-                rm -f "\$LOCK_FILE"
+                echo "ERROR: Deployment in progress (lock age: ${LOCK_AGE}s)"
+                exit 1
             fi
         fi
-        echo \$\$ > "\$LOCK_FILE"
+
+        # Create lock with timestamp
+        date +%s > "$LOCK_FILE"
+        echo "Lock acquired"
 ENDSSH
-    [ $? -ne 0 ] && error "Failed to acquire deployment lock"
+    )
+    echo "$result"
+    if [[ "$result" == *"ERROR"* ]]; then
+        error "Failed to acquire deployment lock"
+    fi
 }
 
 release_deploy_lock() {
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "rm -f $REMOTE_PATH/.shipnode/deploy.lock" || true
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "rm -f $REMOTE_PATH/.shipnode/deploy.lock" || true
 }
 
 switch_symlink() {
     local release_path=$1
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         cd $REMOTE_PATH
         ln -sfn $release_path current.tmp
         mv -Tf current.tmp current
@@ -89,7 +101,7 @@ perform_health_check() {
     info "Running health check (${max_retries} retries, ${timeout}s timeout)..."
 
     for i in $(seq 1 $max_retries); do
-        if ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "timeout $timeout curl -sf http://localhost:$port$path" > /dev/null 2>&1; then
+        if ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "timeout $timeout curl -sf http://localhost:$port$path" > /dev/null 2>&1; then
             success "Health check passed"
             return 0
         fi
@@ -104,7 +116,7 @@ perform_health_check() {
 record_release() {
     local timestamp=$1
     local status=$2
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         cd $REMOTE_PATH/.shipnode
         CURRENT_DATE=\$(date -Is)
         jq ". + [{\"timestamp\":\"$timestamp\",\"date\":\"\$CURRENT_DATE\",\"status\":\"$status\"}]" releases.json > releases.json.tmp
@@ -113,7 +125,7 @@ ENDSSH
 }
 
 get_previous_release() {
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         cd $REMOTE_PATH/.shipnode
         cat releases.json | jq -r '.[-2].timestamp // empty'
 ENDSSH
@@ -121,7 +133,7 @@ ENDSSH
 
 cleanup_old_releases() {
     local keep=${KEEP_RELEASES:-5}
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         cd $REMOTE_PATH/releases
         ls -t | tail -n +$((keep + 1)) | xargs -r rm -rf
 ENDSSH
@@ -136,7 +148,7 @@ rollback_to_release() {
     switch_symlink "$release_path"
 
     if [ "$APP_TYPE" = "backend" ]; then
-        ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "pm2 reload $PM2_APP_NAME"
+        ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "pm2 reload $PM2_APP_NAME"
     fi
 
     success "Rolled back to $timestamp"
@@ -397,8 +409,10 @@ deploy_backend_zero_downtime() {
     info "Using zero-downtime deployment..."
 
     # Acquire deployment lock
+    info "Acquiring deployment lock..."
     acquire_deploy_lock
     trap release_deploy_lock EXIT
+    success "Lock acquired"
 
     # Generate release timestamp
     local timestamp=$(generate_release_timestamp)
@@ -407,7 +421,9 @@ deploy_backend_zero_downtime() {
     info "Creating release: $timestamp"
 
     # Setup release structure on first deploy
+    info "Setting up release structure..."
     setup_release_structure
+    success "Release structure ready"
 
     # Get previous release for potential rollback
     local previous_release=$(get_previous_release)
@@ -428,7 +444,7 @@ deploy_backend_zero_downtime() {
 
     # Link shared resources and install dependencies
     info "Setting up release environment..."
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         set -e
         cd $release_path
 
@@ -449,7 +465,7 @@ ENDSSH
 
     # Reload PM2
     info "Reloading application..."
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         set -e
         cd $REMOTE_PATH/current
 
@@ -710,6 +726,46 @@ cmd_stop() {
     success "App stopped"
 }
 
+# Clear deployment lock
+cmd_unlock() {
+    load_config
+
+    info "Checking for deployment lock on $SSH_USER@$SSH_HOST..."
+
+    local lock_info
+    lock_info=$(ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash -s "$REMOTE_PATH" << 'ENDSSH'
+        REMOTE_PATH="$1"
+        LOCK_FILE="$REMOTE_PATH/.shipnode/deploy.lock"
+
+        if [ -f "$LOCK_FILE" ]; then
+            LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE") ))
+            echo "FOUND:${LOCK_AGE}"
+        else
+            echo "NOTFOUND"
+        fi
+ENDSSH
+    )
+
+    if [[ "$lock_info" == "NOTFOUND" ]]; then
+        info "No deployment lock found"
+        return 0
+    fi
+
+    local lock_age
+    lock_age=$(echo "$lock_info" | cut -d: -f2)
+
+    warn "Found deployment lock (age: ${lock_age}s)"
+    read -p "Clear this lock? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        info "Lock not cleared"
+        return 0
+    fi
+
+    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "rm -f $REMOTE_PATH/.shipnode/deploy.lock"
+    success "Deployment lock cleared"
+}
+
 # Rollback to previous release
 cmd_rollback() {
     load_config
@@ -723,7 +779,7 @@ cmd_rollback() {
     info "Fetching release history..."
 
     # Get target release
-    local target_release=$(ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    local target_release=$(ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         cd $REMOTE_PATH/.shipnode
         cat releases.json | jq -r ".[-$((steps_back + 1))].timestamp // empty"
 ENDSSH
@@ -768,7 +824,7 @@ cmd_releases() {
 
     info "Fetching releases..."
 
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         cd $REMOTE_PATH
 
         # Get current release
@@ -817,7 +873,7 @@ cmd_migrate() {
 
     local timestamp=$(generate_release_timestamp)
 
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         set -e
         cd $REMOTE_PATH
 
@@ -896,6 +952,7 @@ Commands:
     logs                View application logs (backend only)
     restart             Restart application (backend only)
     stop                Stop application (backend only)
+    unlock              Clear deployment lock (if stuck)
     rollback [N]        Rollback to previous release (or N steps back)
     releases            List all available releases
     migrate             Migrate existing deployment to release structure
@@ -917,6 +974,7 @@ Examples:
     shipnode init               # Create config file
     shipnode setup              # Setup server (first time)
     shipnode deploy             # Deploy your app
+    shipnode unlock             # Clear stuck deployment lock
     shipnode rollback           # Rollback to previous release
     shipnode rollback 2         # Rollback 2 releases back
     shipnode releases           # List all releases
@@ -948,6 +1006,9 @@ main() {
             ;;
         stop)
             cmd_stop
+            ;;
+        unlock)
+            cmd_unlock
             ;;
         rollback)
             cmd_rollback "$2"
