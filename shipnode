@@ -697,7 +697,7 @@ cmd_user_list() {
     fi
 
     # Fetch and display users
-    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << 'ENDSSH'
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         cd $REMOTE_PATH/.shipnode
 
         echo ""
