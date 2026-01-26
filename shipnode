@@ -302,6 +302,261 @@ read_key_file() {
     return 0
 }
 
+# ============================================================================
+# FRAMEWORK DETECTION & AUTO-CONFIGURATION
+# ============================================================================
+
+# Parse package.json safely and extract dependencies
+parse_package_json() {
+    local pkg_file="${1:-package.json}"
+    
+    if [ ! -f "$pkg_file" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        warn "jq not found, cannot parse package.json"
+        echo ""
+        return 1
+    fi
+    
+    # Extract dependencies and devDependencies, combine them
+    local deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys | join(",")' "$pkg_file" 2>/dev/null)
+    
+    if [ $? -ne 0 ] || [ -z "$deps" ]; then
+        echo ""
+        return 1
+    fi
+    
+    echo "$deps"
+    return 0
+}
+
+# Suggest app type based on dependencies
+suggest_app_type() {
+    local deps=$1
+    
+    # Backend frameworks
+    if [[ "$deps" =~ (express|@nestjs/core|@nestjs/common|fastify|koa|@hapi/hapi|hono) ]]; then
+        echo "backend"
+        return 0
+    fi
+    
+    # Full-stack frameworks (suggest backend for reverse proxy)
+    if [[ "$deps" =~ (next|nuxt|@remix-run) ]]; then
+        echo "backend"
+        return 0
+    fi
+    
+    # Frontend frameworks
+    if [[ "$deps" =~ (react|vue|svelte|solid-js|@angular/core) ]]; then
+        echo "frontend"
+        return 0
+    fi
+    
+    echo "unknown"
+    return 0
+}
+
+# Detect framework from package.json
+detect_framework() {
+    local pkg_file="${1:-package.json}"
+    
+    # Parse dependencies
+    local deps=$(parse_package_json "$pkg_file")
+    
+    if [ -z "$deps" ]; then
+        echo "none|unknown"
+        return 0
+    fi
+    
+    # Detect specific frameworks
+    local framework="none"
+    
+    # Backend frameworks
+    if [[ "$deps" =~ express ]]; then
+        framework="Express"
+    elif [[ "$deps" =~ @nestjs/core ]]; then
+        framework="NestJS"
+    elif [[ "$deps" =~ fastify ]]; then
+        framework="Fastify"
+    elif [[ "$deps" =~ koa ]]; then
+        framework="Koa"
+    elif [[ "$deps" =~ @hapi/hapi ]]; then
+        framework="Hapi"
+    elif [[ "$deps" =~ hono ]]; then
+        framework="Hono"
+    # Full-stack frameworks
+    elif [[ "$deps" =~ next ]]; then
+        framework="Next.js"
+    elif [[ "$deps" =~ nuxt ]]; then
+        framework="Nuxt"
+    elif [[ "$deps" =~ @remix-run ]]; then
+        framework="Remix"
+    # Frontend frameworks
+    elif [[ "$deps" =~ react ]]; then
+        framework="React"
+    elif [[ "$deps" =~ vue ]]; then
+        framework="Vue"
+    elif [[ "$deps" =~ svelte ]]; then
+        framework="Svelte"
+    elif [[ "$deps" =~ solid-js ]]; then
+        framework="SolidJS"
+    elif [[ "$deps" =~ @angular/core ]]; then
+        framework="Angular"
+    fi
+    
+    # Suggest app type
+    local app_type=$(suggest_app_type "$deps")
+    
+    echo "${framework}|${app_type}"
+    return 0
+}
+
+# Auto-detect port from package.json scripts
+suggest_port() {
+    local pkg_file="${1:-package.json}"
+    
+    if [ ! -f "$pkg_file" ] || ! command -v jq &> /dev/null; then
+        echo ""
+        return 1
+    fi
+    
+    # Extract start and dev scripts
+    local scripts=$(jq -r '.scripts // {} | .start // .dev // ""' "$pkg_file" 2>/dev/null)
+    
+    if [ -z "$scripts" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Look for PORT= or :port patterns
+    local port=""
+    
+    # Match PORT=3000
+    if [[ "$scripts" =~ PORT=([0-9]+) ]]; then
+        port="${BASH_REMATCH[1]}"
+    # Match :3000 (common in node server.js:3000)
+    elif [[ "$scripts" =~ :([0-9]+) ]]; then
+        port="${BASH_REMATCH[1]}"
+    fi
+    
+    echo "$port"
+    return 0
+}
+
+# ============================================================================
+# INPUT VALIDATION FUNCTIONS
+# ============================================================================
+
+# Validate IP address or hostname
+validate_ip_or_hostname() {
+    local input=$1
+    
+    if [ -z "$input" ]; then
+        return 1
+    fi
+    
+    # Check if it's a valid IPv4 address
+    if [[ "$input" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        # Validate each octet is 0-255
+        IFS='.' read -ra OCTETS <<< "$input"
+        for octet in "${OCTETS[@]}"; do
+            if [ "$octet" -lt 0 ] || [ "$octet" -gt 255 ]; then
+                return 1
+            fi
+        done
+        return 0
+    fi
+    
+    # Check if it's a valid hostname
+    if [[ "$input" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Validate port number
+validate_port() {
+    local port=$1
+    
+    if [ -z "$port" ]; then
+        return 1
+    fi
+    
+    # Must be numeric
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    
+    # Must be in valid range
+    if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate domain name
+validate_domain() {
+    local domain=$1
+    
+    # Empty is allowed (optional field)
+    if [ -z "$domain" ]; then
+        return 0
+    fi
+    
+    # Must not contain protocol
+    if [[ "$domain" =~ ^https?:// ]]; then
+        return 1
+    fi
+    
+    # Basic domain format
+    if [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Validate PM2 app name
+validate_pm2_app_name() {
+    local name=$1
+    
+    if [ -z "$name" ]; then
+        return 1
+    fi
+    
+    # Alphanumeric, dash, underscore only
+    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        return 1
+    fi
+    
+    # Max length 64 chars
+    if [ ${#name} -gt 64 ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Test SSH connection (optional)
+test_ssh_connection() {
+    local user=$1
+    local host=$2
+    local port=${3:-22}
+    
+    # Try connection with 5 second timeout
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes -p "$port" "$user@$host" "exit" 2>/dev/null; then
+        return 0
+    fi
+    
+    return 1
+}
+
 # Parse users.yml file
 parse_users_yaml() {
     local yaml_file=$1
@@ -1001,8 +1256,60 @@ EOF
     info "Review users.yml and run: shipnode user sync"
 }
 
-# Initialize config file
-cmd_init() {
+# ============================================================================
+# INTERACTIVE PROMPT HELPERS
+# ============================================================================
+
+# Prompt with default value
+prompt_with_default() {
+    local prompt=$1
+    local default=$2
+    local varname=$3
+    
+    if [ -n "$default" ]; then
+        read -p "$prompt [$default]: " input
+        eval "$varname=\"\${input:-$default}\""
+    else
+        read -p "$prompt: " input
+        eval "$varname=\"\$input\""
+    fi
+}
+
+# Prompt with validation loop
+prompt_with_validation() {
+    local prompt=$1
+    local validator=$2
+    local varname=$3
+    local default=${4:-}
+    
+    while true; do
+        if [ -n "$default" ]; then
+            read -p "$prompt [$default]: " input
+            input="${input:-$default}"
+        else
+            read -p "$prompt: " input
+        fi
+        
+        if [ -z "$input" ] && [ -z "$default" ]; then
+            warn "This field is required"
+            continue
+        fi
+        
+        if $validator "$input"; then
+            eval "$varname=\"\$input\""
+            break
+        else
+            warn "Invalid input, please try again"
+        fi
+    done
+}
+
+#=============================================================================
+# INITIALIZATION COMMANDS
+# ============================================================================
+
+# Legacy non-interactive init (backward compatibility)
+cmd_init_legacy() {
     if [ -f "shipnode.conf" ]; then
         read -p "shipnode.conf already exists. Overwrite? (y/N) " -n 1 -r
         echo
@@ -1051,6 +1358,240 @@ EOF
         init_users_yaml
     else
         info "Skipped users.yml - create later with 'shipnode user sync'"
+    fi
+}
+
+# Interactive initialization wizard
+cmd_init_interactive() {
+    # Check for existing config
+    if [ -f "shipnode.conf" ]; then
+        warn "shipnode.conf already exists"
+        if ! prompt_yes_no "Overwrite?"; then
+            info "Aborted"
+            return 0
+        fi
+    fi
+    
+    # Welcome banner
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║  ShipNode Interactive Setup       ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
+    echo ""
+    
+    # 1. Framework detection
+    local detected_framework detected_type
+    IFS='|' read -r detected_framework detected_type <<< "$(detect_framework)"
+    
+    if [ "$detected_framework" != "none" ]; then
+        info "Detected framework: $detected_framework"
+        info "Suggested app type: $detected_type"
+        echo ""
+    fi
+    
+    # 2. Prompt for app type
+    local app_type
+    echo "Application type:"
+    echo "  1) Backend (Node.js API with PM2)"
+    echo "  2) Frontend (Static site)"
+    echo ""
+    
+    while true; do
+        if [ "$detected_type" != "unknown" ]; then
+            read -p "Choose [1-2] (detected: $detected_type): " choice
+        else
+            read -p "Choose [1-2]: " choice
+        fi
+        
+        case "$choice" in
+            1|backend) app_type="backend"; break ;;
+            2|frontend) app_type="frontend"; break ;;
+            "") 
+                if [ "$detected_type" != "unknown" ]; then
+                    app_type="$detected_type"
+                    break
+                fi
+                warn "Please choose an option"
+                ;;
+            *) warn "Invalid choice" ;;
+        esac
+    done
+    
+    # 3. SSH connection details
+    echo ""
+    info "Server connection details"
+    echo ""
+    
+    local ssh_user ssh_host ssh_port
+    prompt_with_default "SSH user" "root" "ssh_user"
+    prompt_with_validation "SSH host (IP or hostname)" "validate_ip_or_hostname" "ssh_host" ""
+    prompt_with_validation "SSH port" "validate_port" "ssh_port" "22"
+    
+    # 4. Deployment path
+    echo ""
+    local remote_path app_name
+    
+    # Try to get app name from package.json
+    if [ -f "package.json" ] && command -v jq &> /dev/null; then
+        app_name=$(jq -r '.name // empty' package.json 2>/dev/null | tr -d '"' | tr ' ' '-')
+    fi
+    
+    if [ -z "$app_name" ]; then
+        app_name=$(basename "$PWD")
+    fi
+    
+    prompt_with_default "Remote deployment path" "/var/www/$app_name" "remote_path"
+    
+    # 5. Backend-specific config
+    local pm2_app_name backend_port domain
+    if [ "$app_type" = "backend" ]; then
+        echo ""
+        info "Backend configuration"
+        echo ""
+        
+        pm2_app_name="$app_name"
+        prompt_with_validation "PM2 process name" "validate_pm2_app_name" "pm2_app_name" "$app_name"
+        
+        # Try to detect port
+        local suggested_port
+        suggested_port=$(suggest_port)
+        
+        prompt_with_validation "Application port" "validate_port" "backend_port" "${suggested_port:-3000}"
+        prompt_with_validation "Domain (optional, press Enter to skip)" "validate_domain" "domain" ""
+    fi
+    
+    # 6. Frontend-specific config
+    if [ "$app_type" = "frontend" ]; then
+        echo ""
+        info "Frontend configuration"
+        echo ""
+        
+        while true; do
+            prompt_with_validation "Domain (required for Caddy)" "validate_domain" "domain" ""
+            if [ -n "$domain" ]; then
+                break
+            fi
+            warn "Domain is required for frontenddeployments"
+        done
+    fi
+    
+    # Use defaults for advanced options
+    local zero_downtime="true"
+    local keep_releases="5"
+    local health_enabled="true"
+    local health_path="/health"
+    local health_timeout="30"
+    local health_retries="3"
+    
+    # 7. Configuration summary
+    echo ""
+    echo -e "${BLUE}════════════════════════════════════${NC}"
+    echo -e "${BLUE}Configuration Summary${NC}"
+    echo -e "${BLUE}════════════════════════════════════${NC}"
+    echo "App Type:      $app_type"
+    echo "SSH:           $ssh_user@$ssh_host:$ssh_port"
+    echo "Remote Path:   $remote_path"
+    
+    if [ "$app_type" = "backend" ]; then
+        echo "PM2 Name:      $pm2_app_name"
+        echo "Backend Port:  $backend_port"
+    fi
+    
+    [ -n "$domain" ] && echo "Domain:        $domain"
+    echo "Zero-downtime: $zero_downtime"
+    
+    if [ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ]; then
+        echo "Health Checks: $health_path (${health_timeout}s timeout, ${health_retries} retries)"
+    fi
+    
+    echo -e "${BLUE}════════════════════════════════════${NC}"
+    echo ""
+    
+    if ! prompt_yes_no "Create shipnode.conf with these settings?" "y"; then
+        warn "Configuration cancelled"
+        return 1
+    fi
+    
+    # 8. Write configuration file
+    cat > shipnode.conf <<EOF
+# ShipNode Configuration
+# Generated by interactive wizard
+
+# Application type
+APP_TYPE=$app_type
+
+# SSH Connection
+SSH_USER=$ssh_user
+SSH_HOST=$ssh_host
+SSH_PORT=$ssh_port
+
+# Deployment path
+REMOTE_PATH=$remote_path
+EOF
+
+    # Backend-specific settings
+    if [ "$app_type" = "backend" ]; then
+        cat >> shipnode.conf <<EOF
+
+# Backend settings
+PM2_APP_NAME=$pm2_app_name
+BACKEND_PORT=$backend_port
+EOF
+    fi
+
+    # Domain (for both types if provided)
+    if [ -n "$domain" ]; then
+        cat >> shipnode.conf <<EOF
+
+# Domain
+DOMAIN=$domain
+EOF
+    fi
+
+    # Zero-downtime settings
+    cat >> shipnode.conf <<EOF
+
+# Zero-downtime deployment
+ZERO_DOWNTIME=$zero_downtime
+KEEP_RELEASES=$keep_releases
+EOF
+
+    # Health check settings (backend only)
+    if [ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ]; then
+        cat >> shipnode.conf <<EOF
+
+# Health checks
+HEALTH_CHECK_ENABLED=$health_enabled
+HEALTH_CHECK_PATH=$health_path
+HEALTH_CHECK_TIMEOUT=$health_timeout
+HEALTH_CHECK_RETRIES=$health_retries
+EOF
+    fi
+
+    success "Created shipnode.conf"
+    
+    # 9. Users.yml wizard
+    echo ""
+    if prompt_yes_no "Add deployment users now?"; then
+        init_users_yaml
+    else
+        info "You can add users later with: shipnode user sync"
+    fi
+    
+    echo ""
+    success "Initialization complete!"
+    info "Next steps:"
+    echo "  1. Review shipnode.conf"
+    echo "  2. Run: shipnode setup"
+    echo "  3. Run: shipnode deploy"
+}
+
+# Initialize config file (router)
+cmd_init() {
+    if [ "$1" = "--non-interactive" ]; then
+        cmd_init_legacy
+    else
+        cmd_init_interactive
     fi
 }
 
@@ -1787,8 +2328,9 @@ ShipNode v$VERSION - Simple Node.js Deployment Tool
 Usage: shipnode <command> [options]
 
 Commands:
-    init                Create shipnode.conf (+ optional users.yml)
-    setup               First-time server setup (Node, PM2, Caddy, jq)
+    init                     Create shipnode.conf (interactive wizard)
+    init --non-interactive   Create basic shipnode.conf without prompts
+    setup                    First-time server setup (Node, PM2, Caddy, jq)
     deploy              Deploy the application
     deploy --skip-build Deploy without running build step
     env                 Upload .env file to server
@@ -1846,7 +2388,7 @@ EOF
 main() {
     case "${1:-}" in
         init)
-            cmd_init
+            cmd_init "$2"
             ;;
         setup)
             cmd_setup
