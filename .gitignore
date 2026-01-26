@@ -5,7 +5,6 @@ dist/
 
 # Config files (contain sensitive server info)
 shipnode.conf
-users.yml
 
 # Log files
 *.log
