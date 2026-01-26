@@ -323,9 +323,28 @@ parse_package_json() {
     fi
     
     # Extract dependencies and devDependencies, combine them
-    local deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys | join(",")' "$pkg_file" 2>/dev/null)
+    local jq_err
+    jq_err=$(mktemp 2>/dev/null || printf "/tmp/shipnode_jq_err.%s" "$$")
+    local deps
+    deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys | join(",")' "$pkg_file" 2>"$jq_err")
+    local jq_status=$?
     
-    if [ $? -ne 0 ] || [ -z "$deps" ]; then
+    if [ $jq_status -ne 0 ]; then
+        local jq_err_msg
+        jq_err_msg=$(cat "$jq_err" 2>/dev/null || printf "")
+        rm -f "$jq_err"
+        if [ -n "$jq_err_msg" ]; then
+            warn "Failed to parse $pkg_file: $jq_err_msg"
+        else
+            warn "Failed to parse $pkg_file with jq"
+        fi
+        echo ""
+        return 1
+    fi
+    
+    rm -f "$jq_err"
+    
+    if [ -z "$deps" ]; then
         echo ""
         return 1
     fi
@@ -345,7 +364,7 @@ suggest_app_type() {
     fi
     
     # Full-stack frameworks (suggest backend for reverse proxy)
-    if [[ "$deps" =~ (next|nuxt|@remix-run) ]]; then
+    if [[ "$deps" =~ ((^|,)(next|nuxt)(,|$)|@remix-run) ]]; then
         echo "backend"
         return 0
     fi
@@ -389,16 +408,16 @@ detect_framework() {
     elif [[ "$deps" =~ hono ]]; then
         framework="Hono"
     # Full-stack frameworks
-    elif [[ "$deps" =~ next ]]; then
+    elif [[ "$deps" =~ (^|,)next(,|$) ]]; then
         framework="Next.js"
-    elif [[ "$deps" =~ nuxt ]]; then
+    elif [[ "$deps" =~ (^|,)nuxt(,|$) ]]; then
         framework="Nuxt"
     elif [[ "$deps" =~ @remix-run ]]; then
         framework="Remix"
     # Frontend frameworks
-    elif [[ "$deps" =~ react ]]; then
+    elif [[ "$deps" =~ (^|,)react(,|$) ]]; then
         framework="React"
-    elif [[ "$deps" =~ vue ]]; then
+    elif [[ "$deps" =~ (^|,)vue(,|$) ]]; then
         framework="Vue"
     elif [[ "$deps" =~ svelte ]]; then
         framework="Svelte"
@@ -464,7 +483,12 @@ validate_ip_or_hostname() {
         # Validate each octet is 0-255
         IFS='.' read -ra OCTETS <<< "$input"
         for octet in "${OCTETS[@]}"; do
-            if [ "$octet" -lt 0 ] || [ "$octet" -gt 255 ]; then
+            # Ensure the octet contains only digits
+            if ! [[ "$octet" =~ ^[0-9]+$ ]]; then
+                return 1
+            fi
+            # Use base-10 to avoid octal interpretation of leading zeros
+            if ((10#$octet < 0 || 10#$octet > 255)); then
                 return 1
             fi
         done
@@ -1268,10 +1292,10 @@ prompt_with_default() {
     
     if [ -n "$default" ]; then
         read -p "$prompt [$default]: " input
-        eval "$varname=\"\${input:-$default}\""
+        printf -v "$varname" '%s' "${input:-$default}"
     else
         read -p "$prompt: " input
-        eval "$varname=\"\$input\""
+        printf -v "$varname" '%s' "$input"
     fi
 }
 
@@ -1296,7 +1320,7 @@ prompt_with_validation() {
         fi
         
         if $validator "$input"; then
-            eval "$varname=\"\$input\""
+            printf -v "$varname" '%s' "$input"
             break
         else
             warn "Invalid input, please try again"
@@ -1424,12 +1448,12 @@ cmd_init_interactive() {
     echo ""
     
     local ssh_user ssh_host ssh_port
-    prompt_with_default "SSH user" "root" "ssh_user"
     echo "  (The SSH user to connect with - typically 'root' or your username)"
-    prompt_with_validation "SSH host (IP or hostname)" "validate_ip_or_hostname" "ssh_host" ""
+    prompt_with_default "SSH user" "root" "ssh_user"
     echo "  (Your server's IP address or domain name - e.g. 192.168.1.100 or server.example.com)"
-    prompt_with_validation "SSH port" "validate_port" "ssh_port" "22"
+    prompt_with_validation "SSH host (IP or hostname)" "validate_ip_or_hostname" "ssh_host" ""
     echo "  (SSH port - default is 22)"
+    prompt_with_validation "SSH port" "validate_port" "ssh_port" "22"
     
     # 4. Deployment path
     echo ""
@@ -1439,15 +1463,15 @@ cmd_init_interactive() {
     
     # Try to get app name from package.json
     if [ -f "package.json" ] && command -v jq &> /dev/null; then
-        app_name=$(jq -r '.name // empty' package.json 2>/dev/null | tr -d '"' | tr ' ' '-')
+        app_name=$(jq -r '.name // empty' package.json 2>/dev/null | sed -E 's/^@[^/]+\/(.*)$/\1/' | tr ' ' '-' | tr -c 'A-Za-z0-9._-' '-')
     fi
     
     if [ -z "$app_name" ]; then
         app_name=$(basename "$PWD")
     fi
     
-    prompt_with_default "Remote deployment path" "/var/www/$app_name" "remote_path"
     echo "  (Directory on the server where your app will be deployed)"
+    prompt_with_default "Remote deployment path" "/var/www/$app_name" "remote_path"
     
     # 5. Backend-specific config
     local pm2_app_name backend_port domain
@@ -1464,10 +1488,10 @@ cmd_init_interactive() {
         local suggested_port
         suggested_port=$(suggest_port)
         
-        prompt_with_validation "Application port" "validate_port" "backend_port" "${suggested_port:-3000}"
         echo "  (Port your Node.js app will listen on - typically 3000, 5000, or 8080)"
-        prompt_with_validation "Domain (optional, press Enter to skip)" "validate_domain" "domain" ""
+        prompt_with_validation "Application port" "validate_port" "backend_port" "${suggested_port:-3000}"
         echo "  (Optional: Your domain name for HTTPS - e.g. api.myapp.com)"
+        prompt_with_validation "Domain (optional, press Enter to skip)" "validate_domain" "domain" ""
     fi
     
     # 6. Frontend-specific config
