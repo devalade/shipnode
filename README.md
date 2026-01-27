@@ -199,6 +199,35 @@ shipnode mkpasswd            # Generate password hash
 
 ## Zero-Downtime Deployment
 
+## Troubleshooting
+
+### Gum installation fails
+- Symptom: "Failed to install Gum. The interactive wizard will use fallback mode."
+- Cause: Package not available on your distro or missing sudo privileges
+- Fix:
+  - Install manually: Debian/Ubuntu `sudo apt install gum`, Fedora `sudo dnf install gum`, Arch `sudo pacman -S gum`, Alpine `sudo apk add gum`, macOS `brew install gum`
+  - Check installation log: `/tmp/shipnode_gum_install_<PID>.log`
+  - Continue without Gum: the wizard will automatically use classic prompts
+
+### Framework not detected
+- Ensure `package.json` is valid JSON (no trailing commas)
+- `jq` must be available on your local machine
+  - Install: `sudo apt install jq` or equivalent
+- The wizard still works without detection; select app type manually
+
+### Port not detected
+- The wizard supports common patterns: `PORT=3000`, `--port=5000`, `localhost:4000`, `listen(:3000)`
+- If your scripts differ, enter the port manually when prompted
+
+### CI/CD environments
+- Non-interactive environments have no TTY; Gum prompts are auto-disabled
+- Use `shipnode init --non-interactive` for fully scripted setups
+
+### SSH issues
+- Test connection: `ssh -p <port> <user>@<host>`
+- Ensure public key is deployed or correct password authentication is enabled
+- Verify firewall allows SSH port
+
 ShipNode uses atomic release-based deployments to ensure zero downtime during updates.
 
 ### How It Works
