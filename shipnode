@@ -1516,9 +1516,7 @@ cmd_init_interactive() {
             --width 50 \
             --margin "1 0" \
             --padding "1 2" \
-            "ShipNode Interactive Setup" \
-            "" \
-            "Powered by Gum ✨"
+            "ShipNode Interactive Setup"
     else
         echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
         echo -e "${BLUE}║  ShipNode Interactive Setup        ║${NC}"
@@ -1601,16 +1599,55 @@ cmd_init_interactive() {
     # 3. SSH connection details
     echo ""
     info "Server connection details"
-    echo "Enter SSH credentials for your deployment server"
+    if [ "$USE_GUM" = false ]; then
+        echo "Enter SSH credentials for your deployment server"
+    fi
     echo ""
     
     local ssh_user ssh_host ssh_port
-    echo "  (The SSH user to connect with - typically 'root' or your username)"
-    prompt_with_default "SSH user" "root" "ssh_user"
-    echo "  (Your server's IP address or domain name - e.g. 192.168.1.100 or server.example.com)"
-    prompt_with_validation "SSH host (IP or hostname)" "validate_ip_or_hostname" "ssh_host" ""
-    echo "  (SSH port - default is 22)"
-    prompt_with_validation "SSH port" "validate_port" "ssh_port" "22"
+    
+    # SSH User
+    if [ "$USE_GUM" = true ]; then
+        ssh_user=$(gum input --placeholder "root" --prompt "SSH user: " --value "root")
+    else
+        echo "  (The SSH user to connect with - typically 'root' or your username)"
+        prompt_with_default "SSH user" "root" "ssh_user"
+    fi
+    
+    # SSH Host with validation
+    while true; do
+        if [ "$USE_GUM" = true ]; then
+            ssh_host=$(gum input --placeholder "192.168.1.100 or server.example.com" --prompt "SSH host: ")
+        else
+            echo "  (Your server's IP address or domain name - e.g. 192.168.1.100 or server.example.com)"
+            read -p "SSH host (IP or hostname): " ssh_host
+        fi
+        
+        if validate_ip_or_hostname "$ssh_host"; then
+            break
+        else
+            warn "Invalid IP or hostname"
+        fi
+    done
+    
+    # SSH Port with validation
+    while true; do
+        if [ "$USE_GUM" = true ]; then
+            local port_input
+            port_input=$(gum input --placeholder "22" --prompt "SSH port: " --value "22")
+            ssh_port="${port_input:-22}"
+        else
+            echo "  (SSH port - default is 22)"
+            read -p "SSH port [22]: " ssh_port
+            ssh_port="${ssh_port:-22}"
+        fi
+        
+        if validate_port "$ssh_port"; then
+            break
+        else
+            warn "Invalid port number"
+        fi
+    done
     
     # 4. Deployment path
     echo ""
@@ -1627,46 +1664,106 @@ cmd_init_interactive() {
         app_name=$(basename "$PWD")
     fi
     
-    echo "  (Directory on the server where your app will be deployed)"
-    prompt_with_default "Remote deployment path" "/var/www/$app_name" "remote_path"
+    if [ "$USE_GUM" = true ]; then
+        remote_path=$(gum input --placeholder "/var/www/$app_name" --prompt "Deployment path: " --value "/var/www/$app_name")
+    else
+        echo "  (Directory on the server where your app will be deployed)"
+        prompt_with_default "Remote deployment path" "/var/www/$app_name" "remote_path"
+    fi
     
     # 5. Backend-specific config
     local pm2_app_name backend_port domain
     if [ "$app_type" = "backend" ]; then
         echo ""
         info "Backend configuration"
-        echo "Configure your Node.js backend application"
+        if [ "$USE_GUM" = false ]; then
+            echo "Configure your Node.js backend application"
+        fi
         echo ""
         
         pm2_app_name="$app_name"
-        prompt_with_validation "PM2 process name" "validate_pm2_app_name" "pm2_app_name" "$app_name"
+        
+        # PM2 process name with validation
+        while true; do
+            if [ "$USE_GUM" = true ]; then
+                pm2_app_name=$(gum input --placeholder "$app_name" --prompt "PM2 process name: " --value "$app_name")
+            else
+                read -p "PM2 process name [$app_name]: " pm2_input
+                pm2_app_name="${pm2_input:-$app_name}"
+            fi
+            
+            if validate_pm2_app_name "$pm2_app_name"; then
+                break
+            else
+                warn "Invalid PM2 process name"
+            fi
+        done
         
         # Try to detect port
         local suggested_port
         suggested_port=$(suggest_port)
         
-        echo "  (Port your Node.js app will listen on - typically 3000, 5000, or 8080)"
-        prompt_with_validation "Application port" "validate_port" "backend_port" "${suggested_port:-3000}"
-        echo "  (Optional: Your domain name for HTTPS - e.g. api.myapp.com)"
-        prompt_with_validation "Domain (optional, press Enter to skip)" "validate_domain" "domain" ""
+        # Backend port with validation
+        while true; do
+            if [ "$USE_GUM" = true ]; then
+                backend_port=$(gum input --placeholder "${suggested_port:-3000}" --prompt "Application port: " --value "${suggested_port:-3000}")
+            else
+                echo "  (Port your Node.js app will listen on - typically 3000, 5000, or 8080)"
+                read -p "Application port [${suggested_port:-3000}]: " backend_port
+                backend_port="${backend_port:-${suggested_port:-3000}}"
+            fi
+            
+            if validate_port "$backend_port"; then
+                break
+            else
+                warn "Invalid port number"
+            fi
+        done
+        
+        # Domain (optional)
+        while true; do
+            if [ "$USE_GUM" = true ]; then
+                domain=$(gum input --placeholder "api.myapp.com (optional)" --prompt "Domain: ")
+            else
+                echo "  (Optional: Your domain name for HTTPS - e.g. api.myapp.com)"
+                read -p "Domain (optional, press Enter to skip): " domain
+            fi
+            
+            if [ -z "$domain" ] || validate_domain "$domain"; then
+                break
+            else
+                warn "Invalid domain"
+            fi
+        done
     fi
     
     # 6. Frontend-specific config
     if [ "$app_type" = "frontend" ]; then
         echo ""
         info "Frontend configuration"
-        echo "Configure your static site deployment"
+        if [ "$USE_GUM" = false ]; then
+            echo "Configure your static site deployment"
+            echo ""
+            echo "Note: Domain is required for frontend deployments (needed for Caddy web server)"
+        fi
         echo ""
-        echo ""
-        echo "Note: Domain is required for frontend deployments (needed for Caddy web server)"
         
+        # Domain is required for frontend
         while true; do
-            echo "  (Your domain name - e.g. myapp.com or www.myapp.com)"
-            prompt_with_validation "Domain" "validate_domain" "domain" ""
-            if [ -n "$domain" ]; then
-                break
+            if [ "$USE_GUM" = true ]; then
+                domain=$(gum input --placeholder "myapp.com" --prompt "Domain (required): ")
+            else
+                echo "  (Your domain name - e.g. myapp.com or www.myapp.com)"
+                read -p "Domain: " domain
             fi
-            warn "Domain is required for frontend deployments"
+            
+            if [ -n "$domain" ] && validate_domain "$domain"; then
+                break
+            elif [ -z "$domain" ]; then
+                warn "Domain is required for frontend deployments"
+            else
+                warn "Invalid domain"
+            fi
         done
     fi
     
@@ -1680,31 +1777,57 @@ cmd_init_interactive() {
     
     # 7. Configuration summary
     echo ""
-    echo -e "${BLUE}════════════════════════════════════${NC}"
-    echo -e "${BLUE}Configuration Summary${NC}"
-    echo -e "${BLUE}════════════════════════════════════${NC}"
-    echo "App Type:      $app_type"
-    echo "SSH:           $ssh_user@$ssh_host:$ssh_port"
-    echo "Remote Path:   $remote_path"
-    
-    if [ "$app_type" = "backend" ]; then
-        echo "PM2 Name:      $pm2_app_name"
-        echo "Backend Port:  $backend_port"
+    if [ "$USE_GUM" = true ]; then
+        gum style \
+            --border rounded \
+            --border-foreground 99 \
+            --padding "1 2" \
+            --margin "1 0" \
+            "Configuration Summary" \
+            "" \
+            "App Type:      $app_type" \
+            "SSH:           $ssh_user@$ssh_host:$ssh_port" \
+            "Remote Path:   $remote_path" \
+            $([ "$app_type" = "backend" ] && echo "PM2 Name:      $pm2_app_name") \
+            $([ "$app_type" = "backend" ] && echo "Backend Port:  $backend_port") \
+            $([ -n "$domain" ] && echo "Domain:        $domain") \
+            "Zero-downtime: $zero_downtime" \
+            $([ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ] && echo "Health Checks: $health_path (${health_timeout}s, $health_retries retries)")
+    else
+        echo -e "${BLUE}════════════════════════════════════${NC}"
+        echo -e "${BLUE}Configuration Summary${NC}"
+        echo -e "${BLUE}════════════════════════════════════${NC}"
+        echo "App Type:      $app_type"
+        echo "SSH:           $ssh_user@$ssh_host:$ssh_port"
+        echo "Remote Path:   $remote_path"
+        
+        if [ "$app_type" = "backend" ]; then
+            echo "PM2 Name:      $pm2_app_name"
+            echo "Backend Port:  $backend_port"
+        fi
+        
+        [ -n "$domain" ] && echo "Domain:        $domain"
+        echo "Zero-downtime: $zero_downtime"
+        
+        if [ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ]; then
+            echo "Health Checks: $health_path (${health_timeout}s timeout, ${health_retries} retries)"
+        fi
+        
+        echo -e "${BLUE}════════════════════════════════════${NC}"
     fi
-    
-    [ -n "$domain" ] && echo "Domain:        $domain"
-    echo "Zero-downtime: $zero_downtime"
-    
-    if [ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ]; then
-        echo "Health Checks: $health_path (${health_timeout}s timeout, ${health_retries} retries)"
-    fi
-    
-    echo -e "${BLUE}════════════════════════════════════${NC}"
     echo ""
     
-    if ! prompt_yes_no "Create shipnode.conf with these settings?" "y"; then
-        warn "Configuration cancelled"
-        return 1
+    # Final confirmation
+    if [ "$USE_GUM" = true ]; then
+        if ! gum confirm "Create shipnode.conf with these settings?"; then
+            warn "Configuration cancelled"
+            return 1
+        fi
+    else
+        if ! prompt_yes_no "Create shipnode.conf with these settings?" "y"; then
+            warn "Configuration cancelled"
+            return 1
+        fi
     fi
     
     # 8. Write configuration file
