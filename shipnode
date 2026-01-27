@@ -102,6 +102,7 @@ install_gum() {
     fi
     
     local install_success=false
+    local log_file="/tmp/shipnode_gum_install_$$.log"
     
     case "$pkg_manager" in
         apt)
@@ -112,7 +113,7 @@ install_gum() {
                 echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list > /dev/null && \
                 sudo apt update && \
                 sudo apt install -y gum
-            } &> /dev/null && install_success=true
+            } &> "$log_file" && install_success=true
             ;;
         dnf|yum)
             info "Using $pkg_manager to install Gum..."
@@ -124,19 +125,19 @@ enabled=1
 gpgcheck=1
 gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo > /dev/null && \
                 sudo "$pkg_manager" install -y gum
-            } &> /dev/null && install_success=true
+            } &> "$log_file" && install_success=true
             ;;
         brew)
             info "Using Homebrew to install Gum..."
-            brew install gum &> /dev/null && install_success=true
+            brew install gum &> "$log_file" && install_success=true
             ;;
         apk)
             info "Using apk to install Gum..."
-            sudo apk add --no-cache gum &> /dev/null && install_success=true
+            sudo apk add --no-cache gum &> "$log_file" && install_success=true
             ;;
         pacman)
             info "Using pacman to install Gum..."
-            sudo pacman -S --noconfirm gum &> /dev/null && install_success=true
+            sudo pacman -S --noconfirm gum &> "$log_file" && install_success=true
             ;;
         *)
             warn "Unsupported package manager: $pkg_manager"
@@ -148,9 +149,13 @@ gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo
         success "Gum installed successfully! ($(gum --version 2>&1 | head -n1))"
         # Update the global flag
         USE_GUM=true
+        rm -f "$log_file"
         return 0
     else
         warn "Failed to install Gum. The interactive wizard will use fallback mode."
+        if [ -f "$log_file" ]; then
+            warn "Installation log available at: $log_file"
+        fi
         warn "You can install Gum manually from: https://github.com/charmbracelet/gum"
         return 1
     fi
