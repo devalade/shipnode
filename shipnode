@@ -1508,10 +1508,26 @@ cmd_init_interactive() {
     
     # Welcome banner
     echo ""
-    echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║  ShipNode Interactive Setup        ║${NC}"
-    echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
+    if [ "$USE_GUM" = true ]; then
+        gum style \
+            --border double \
+            --border-foreground 212 \
+            --align center \
+            --width 50 \
+            --margin "1 0" \
+            --padding "1 2" \
+            "ShipNode Interactive Setup" \
+            "" \
+            "Powered by Gum ✨"
+    else
+        echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
+        echo -e "${BLUE}║  ShipNode Interactive Setup        ║${NC}"
+        echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
+    fi
     echo ""
+    
+    # Show tip about Gum if not installed
+    show_gum_tip
     
     # 1. Framework detection
     local detected_framework detected_type
@@ -1525,31 +1541,62 @@ cmd_init_interactive() {
     
     # 2. Prompt for app type
     local app_type
-    echo "Application type:"
-    echo "  1) Backend (Node.js API with PM2)"
-    echo "  2) Frontend (Static site)"
-    echo ""
     
-    while true; do
+    if [ "$USE_GUM" = true ]; then
+        # Enhanced selection with Gum
+        local header="Select application type:"
         if [ "$detected_type" != "unknown" ]; then
-            read -p "Choose [1-2] (detected: $detected_type): " choice
-        else
-            read -p "Choose [1-2]: " choice
+            header="Select application type (detected: $detected_type):"
         fi
         
-        case "$choice" in
-            1|backend) app_type="backend"; break ;;
-            2|frontend) app_type="frontend"; break ;;
-            "") 
+        local selection
+        selection=$(gum choose \
+            "Backend (Node.js API with PM2)" \
+            "Frontend (Static site)" \
+            --header "$header" \
+            --cursor-prefix "→ " \
+            --selected-prefix "✓ ")
+        
+        case "$selection" in
+            "Backend"*) app_type="backend" ;;
+            "Frontend"*) app_type="frontend" ;;
+            *) 
+                # Default to detected type if available
                 if [ "$detected_type" != "unknown" ]; then
                     app_type="$detected_type"
-                    break
+                else
+                    app_type="backend"
                 fi
-                warn "Please choose an option"
                 ;;
-            *) warn "Invalid choice" ;;
         esac
-    done
+    else
+        # Classic bash selection
+        echo "Application type:"
+        echo "  1) Backend (Node.js API with PM2)"
+        echo "  2) Frontend (Static site)"
+        echo ""
+        
+        while true; do
+            if [ "$detected_type" != "unknown" ]; then
+                read -p "Choose [1-2] (detected: $detected_type): " choice
+            else
+                read -p "Choose [1-2]: " choice
+            fi
+            
+            case "$choice" in
+                1|backend) app_type="backend"; break ;;
+                2|frontend) app_type="frontend"; break ;;
+                "") 
+                    if [ "$detected_type" != "unknown" ]; then
+                        app_type="$detected_type"
+                        break
+                    fi
+                    warn "Please choose an option"
+                    ;;
+                *) warn "Invalid choice" ;;
+            esac
+        done
+    fi
     
     # 3. SSH connection details
     echo ""
