@@ -3,8 +3,12 @@
 # Build output
 dist/
 
+# Bundled version (auto-generated via build.sh)
+shipnode-bundled
+
 # Config files (contain sensitive server info)
 shipnode.conf
+users.yml
 
 # Log files
 *.log
