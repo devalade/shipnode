@@ -5,6 +5,50 @@ All notable changes to ShipNode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Interactive Initialization Wizard
+- **Framework auto-detection**: Automatically detects Express, NestJS, Fastify, Koa, Hapi, Hono, AdonisJS, Next.js, Nuxt, Remix, Astro, React, React Router, TanStack Router, Vue, Svelte, SolidJS, and Angular from package.json dependencies
+- **Smart defaults**: Auto-suggests app type (backend/frontend) based on detected framework
+- **Port detection**: Attempts to detect application port from package.json scripts
+- **Guided prompts**: Step-by-step configuration with validation and helpful defaults
+- **Input validation**: Real-time validation for IP addresses, hostnames, ports, domains, and PM2 app names
+- **Configuration summary**: Review all settings before creating shipnode.conf
+- **User-friendly interface**: Colored output, clear instructions, and error messages
+- **Integrated users.yml wizard**: Optionally set up deployment users in one flow
+- **Backward compatible**: Use `shipnode init --non-interactive` for legacy non-interactive behavior
+
+#### Framework Detection Functions
+- `detect_framework()`: Parses package.json to identify framework and suggest app type
+- `parse_package_json()`: Safely extracts dependencies using jq
+- `suggest_app_type()`: Determines backend vs frontend based on dependencies
+- `suggest_port()`: Auto-detects port from npm scripts patterns
+
+#### Validation Functions
+- `validate_ip_or_hostname()`: Validates IPv4 addresses and hostnames
+- `validate_port()`: Ensures valid port range (1-65535)
+- `validate_domain()`: Validates domain names (no protocol prefix)
+- `validate_pm2_app_name()`: Ensures valid PM2 process names
+- `test_ssh_connection()`: Optional SSH connectivity test
+
+#### Interactive Prompt Helpers
+- `prompt_with_default()`: Generic prompt with default value support
+- `prompt_with_validation()`: Prompt with automatic validation retry loop
+
+#### Gum UI Framework Integration
+- **Enhanced interactive wizard**: Beautiful UI powered by [charmbracelet/gum](https://github.com/charmbracelet/gum) with graceful fallback to classic bash prompts
+- **Automatic installation**: Gum is automatically installed during `shipnode setup` on supported platforms (Debian/Ubuntu, RedHat/Fedora, Arch, Alpine, macOS)
+- **Multi-platform support**: OS and package manager detection (apt, yum, dnf, brew, apk, pacman)
+- **Non-blocking**: Wizard continues with classic prompts if Gum installation fails
+- **Gum wrappers**: `gum_input()`, `gum_choose()`, `gum_confirm()`, `gum_style()` functions with automatic fallback
+
+### Changed
+- `shipnode init` now launches interactive wizard by default
+- Added `--non-interactive` flag to preserve v1.1.0 behavior
+- Help command updated with new init options and usage examples
+
 ## [1.1.0] - 2026-01-24
 
 ### Added

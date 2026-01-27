@@ -30,6 +30,137 @@ warn() {
     echo -e "${YELLOW}⚠ $1${NC}"
 }
 
+# Gum detection for enhanced UI
+has_gum() {
+    command -v gum &> /dev/null
+}
+
+# Check if enhanced UI is available
+USE_GUM=false
+if has_gum; then
+    USE_GUM=true
+fi
+
+# Detect operating system and package manager
+detect_os() {
+    local os_type=""
+    local pkg_manager=""
+    
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        if command -v apt &> /dev/null; then
+            os_type="debian"
+            pkg_manager="apt"
+        elif command -v dnf &> /dev/null; then
+            os_type="redhat"
+            pkg_manager="dnf"
+        elif command -v yum &> /dev/null; then
+            os_type="redhat"
+            pkg_manager="yum"
+        elif command -v apk &> /dev/null; then
+            os_type="alpine"
+            pkg_manager="apk"
+        elif command -v pacman &> /dev/null; then
+            os_type="arch"
+            pkg_manager="pacman"
+        else
+            os_type="unknown"
+            pkg_manager=""
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        os_type="macos"
+        if command -v brew &> /dev/null; then
+            pkg_manager="brew"
+        else
+            pkg_manager=""
+        fi
+    else
+        os_type="unknown"
+        pkg_manager=""
+    fi
+    
+    echo "${os_type}|${pkg_manager}"
+}
+
+# Install Gum UI framework
+install_gum() {
+    # Check if already installed
+    if has_gum; then
+        info "Gum is already installed ($(gum --version 2>&1 | head -n1))"
+        return 0
+    fi
+    
+    info "Installing Gum for enhanced UI experience..."
+    
+    # Detect OS and package manager
+    local os_info pkg_manager
+    IFS='|' read -r os_info pkg_manager <<< "$(detect_os)"
+    
+    if [ -z "$pkg_manager" ]; then
+        warn "Could not detect package manager. Gum installation skipped."
+        warn "You can install Gum manually from: https://github.com/charmbracelet/gum"
+        return 1
+    fi
+    
+    local install_success=false
+    local log_file="/tmp/shipnode_gum_install_$$.log"
+    
+    case "$pkg_manager" in
+        apt)
+            info "Using apt to install Gum..."
+            {
+                sudo mkdir -p /etc/apt/keyrings && \
+                curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg && \
+                echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list > /dev/null && \
+                sudo apt update && \
+                sudo apt install -y gum
+            } &> "$log_file" && install_success=true
+            ;;
+        dnf|yum)
+            info "Using $pkg_manager to install Gum..."
+            {
+                echo '[charm]
+name=Charm
+baseurl=https://repo.charm.sh/yum/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo > /dev/null && \
+                sudo "$pkg_manager" install -y gum
+            } &> "$log_file" && install_success=true
+            ;;
+        brew)
+            info "Using Homebrew to install Gum..."
+            brew install gum &> "$log_file" && install_success=true
+            ;;
+        apk)
+            info "Using apk to install Gum..."
+            sudo apk add --no-cache gum &> "$log_file" && install_success=true
+            ;;
+        pacman)
+            info "Using pacman to install Gum..."
+            sudo pacman -S --noconfirm gum &> "$log_file" && install_success=true
+            ;;
+        *)
+            warn "Unsupported package manager: $pkg_manager"
+            return 1
+            ;;
+    esac
+    
+    if [ "$install_success" = true ] && has_gum; then
+        success "Gum installed successfully! ($(gum --version 2>&1 | head -n1))"
+        # Update the global flag
+        USE_GUM=true
+        rm -f "$log_file"
+        return 0
+    else
+        warn "Failed to install Gum. The interactive wizard will use fallback mode."
+        if [ -f "$log_file" ]; then
+            warn "Installation log available at: $log_file"
+        fi
+        warn "You can install Gum manually from: https://github.com/charmbracelet/gum"
+        return 1
+    fi
+}
+
 # Release management helper functions
 generate_release_timestamp() {
     date +"%Y%m%d%H%M%S"
@@ -300,6 +431,349 @@ read_key_file() {
 
     cat "$file_path"
     return 0
+}
+
+# ============================================================================
+# FRAMEWORK DETECTION & AUTO-CONFIGURATION
+# ============================================================================
+
+# Parse package.json safely and extract dependencies
+# Validates JSON format and extracts both dependencies and devDependencies
+# Args:
+#   $1: Path to package.json file (default: ./package.json)
+# Returns:
+#   Comma-separated list of package names, or empty string on failure
+# Exit codes:
+#   0: Success, dependencies found
+#   1: File not found, invalid JSON, or no dependencies
+parse_package_json() {
+    local pkg_file="${1:-package.json}"
+    
+    if [ ! -f "$pkg_file" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        warn "jq not found, cannot parse package.json"
+        echo ""
+        return 1
+    fi
+    
+    # Validate JSON format first
+    if ! jq empty "$pkg_file" 2>/dev/null; then
+        warn "Invalid JSON format in $pkg_file"
+        echo ""
+        return 1
+    fi
+    
+    # Extract dependencies and devDependencies, combine them
+    local jq_err
+    jq_err=$(mktemp 2>/dev/null || printf "/tmp/shipnode_jq_err.%s" "$$")
+    local deps
+    deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys | join(",")' "$pkg_file" 2>"$jq_err")
+    local jq_status=$?
+    
+    if [ $jq_status -ne 0 ]; then
+        local jq_err_msg
+        jq_err_msg=$(cat "$jq_err" 2>/dev/null || printf "")
+        rm -f "$jq_err"
+        if [ -n "$jq_err_msg" ]; then
+            warn "Failed to parse $pkg_file: $jq_err_msg"
+        else
+            warn "Failed to parse $pkg_file with jq"
+        fi
+        echo ""
+        return 1
+    fi
+    
+    rm -f "$jq_err"
+    
+    if [ -z "$deps" ]; then
+        echo ""
+        return 1
+    fi
+    
+    echo "$deps"
+    return 0
+}
+
+# Suggest app type based on dependencies
+suggest_app_type() {
+    local deps=$1
+    
+    # Backend frameworks
+    if [[ "$deps" =~ (express|@nestjs/core|@nestjs/common|fastify|koa|@hapi/hapi|hono|@adonisjs/core) ]]; then
+        echo "backend"
+        return 0
+    fi
+    
+    # Full-stack frameworks (suggest backend for reverse proxy)
+    if [[ "$deps" =~ ((^|,)(next|nuxt|astro)(,|$)|@remix-run) ]]; then
+        echo "backend"
+        return 0
+    fi
+    
+    # Frontend frameworks
+    if [[ "$deps" =~ (react-router|tanstack.*router|react|vue|svelte|solid-js|@angular/core) ]]; then
+        echo "frontend"
+        return 0
+    fi
+    
+    echo "unknown"
+    return 0
+}
+
+# Detect framework from package.json dependencies
+# Identifies 18 popular frameworks and suggests appropriate app type
+# Args:
+#   $1: Path to package.json file (default: ./package.json)
+# Returns:
+#   "framework_name|app_type" where:
+#     - framework_name: Express, NestJS, React, Next.js, etc. or "none"
+#     - app_type: backend, frontend, or unknown
+# Examples:
+#   Express project → "Express|backend"
+#   React project → "React|frontend"
+#   No framework → "none|unknown"
+detect_framework() {
+    local pkg_file="${1:-package.json}"
+    
+    # Parse dependencies
+    local deps=$(parse_package_json "$pkg_file")
+    
+    if [ -z "$deps" ]; then
+        echo "none|unknown"
+        return 0
+    fi
+    
+    # Detect specific frameworks
+    local framework="none"
+    
+    # Backend frameworks
+    if [[ "$deps" =~ express ]]; then
+        framework="Express"
+    elif [[ "$deps" =~ @nestjs/core ]]; then
+        framework="NestJS"
+    elif [[ "$deps" =~ fastify ]]; then
+        framework="Fastify"
+    elif [[ "$deps" =~ koa ]]; then
+        framework="Koa"
+    elif [[ "$deps" =~ @hapi/hapi ]]; then
+        framework="Hapi"
+    elif [[ "$deps" =~ hono ]]; then
+        framework="Hono"
+    elif [[ "$deps" =~ @adonisjs/core ]]; then
+        framework="AdonisJS"
+    # Full-stack frameworks
+    elif [[ "$deps" =~ (^|,)next(,|$) ]]; then
+        framework="Next.js"
+    elif [[ "$deps" =~ (^|,)nuxt(,|$) ]]; then
+        framework="Nuxt"
+    elif [[ "$deps" =~ @remix-run ]]; then
+        framework="Remix"
+    elif [[ "$deps" =~ (^|,)astro(,|$) ]]; then
+        framework="Astro"
+    # Frontend frameworks
+    elif [[ "$deps" =~ (^|,)react(,|$) ]]; then
+        framework="React"
+    elif [[ "$deps" =~ react-router ]]; then
+        framework="React Router"
+    elif [[ "$deps" =~ tanstack.*router ]]; then
+        framework="TanStack Router"
+    elif [[ "$deps" =~ (^|,)vue(,|$) ]]; then
+        framework="Vue"
+    elif [[ "$deps" =~ svelte ]]; then
+        framework="Svelte"
+    elif [[ "$deps" =~ solid-js ]]; then
+        framework="SolidJS"
+    elif [[ "$deps" =~ @angular/core ]]; then
+        framework="Angular"
+    fi
+    
+    # Suggest app type
+    local app_type=$(suggest_app_type "$deps")
+    
+    echo "${framework}|${app_type}"
+    return 0
+}
+
+# Auto-detect port from package.json scripts
+# Searches start/dev scripts for common port declaration patterns
+# Args:
+#   $1: Path to package.json file (default: ./package.json)
+# Returns:
+#   Port number (1-65535) if detected, empty string otherwise
+# Detection patterns (priority order):
+#   1. PORT=3000
+#   2. --port=5000 or --port 8080
+#   3. localhost:4000 or 127.0.0.1:9000
+#   4. listen(:3000)
+suggest_port() {
+    local pkg_file="${1:-package.json}"
+    
+    if [ ! -f "$pkg_file" ] || ! command -v jq &> /dev/null; then
+        echo ""
+        return 1
+    fi
+    
+    # Extract start and dev scripts
+    local scripts=$(jq -r '.scripts // {} | .start // .dev // ""' "$pkg_file" 2>/dev/null)
+    
+    if [ -z "$scripts" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Look for PORT= or :port patterns
+    local port=""
+    
+    # Priority 1: Environment variable PORT=3000
+    if [[ "$scripts" =~ PORT=([0-9]+) ]]; then
+        port="${BASH_REMATCH[1]}"
+    # Priority 2: CLI flag --port 3000 or --port=3000
+    elif [[ "$scripts" =~ --port[[:space:]]*=?[[:space:]]*([0-9]+) ]]; then
+        port="${BASH_REMATCH[1]}"
+    # Priority 3: localhost:3000 or 127.0.0.1:3000
+    elif [[ "$scripts" =~ (localhost|127\.0\.0\.1):([0-9]+) ]]; then
+        port="${BASH_REMATCH[2]}"
+    # Priority 4: listen on :3000 (common in Node)
+    elif [[ "$scripts" =~ listen[[:space:]]*\([[:space:]]*[\'\"]?:([0-9]+) ]]; then
+        port="${BASH_REMATCH[1]}"
+    fi
+    
+    # Validate port is in valid range
+    if [ -n "$port" ] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+        echo "$port"
+    else
+        echo ""
+    fi
+    return 0
+}
+
+# ============================================================================
+# INPUT VALIDATION FUNCTIONS
+# ============================================================================
+
+# Validate IP address or hostname
+# Accepts both IPv4 addresses and RFC-compliant hostnames
+# Args:
+#   $1: IP address or hostname to validate
+# Returns:
+#   Exit code 0 if valid, 1 if invalid
+# Examples:
+#   192.168.1.1 → valid
+#   example.com → valid
+#   999.999.999.999 → invalid
+validate_ip_or_hostname() {
+    local input=$1
+    
+    if [ -z "$input" ]; then
+        return 1
+    fi
+    
+    # Check if it's a valid IPv4 address
+    if [[ "$input" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        # Validate each octet is 0-255
+        IFS='.' read -ra OCTETS <<< "$input"
+        for octet in "${OCTETS[@]}"; do
+            # Ensure the octet contains only digits
+            if ! [[ "$octet" =~ ^[0-9]+$ ]]; then
+                return 1
+            fi
+            # Use base-10 to avoid octal interpretation of leading zeros
+            if ((10#$octet < 0 || 10#$octet > 255)); then
+                return 1
+            fi
+        done
+        return 0
+    fi
+    
+    # Check if it's a valid hostname
+    if [[ "$input" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Validate port number
+validate_port() {
+    local port=$1
+    
+    if [ -z "$port" ]; then
+        return 1
+    fi
+    
+    # Must be numeric
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    
+    # Must be in valid range
+    if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate domain name
+validate_domain() {
+    local domain=$1
+    
+    # Empty is allowed (optional field)
+    if [ -z "$domain" ]; then
+        return 0
+    fi
+    
+    # Must not contain protocol
+    if [[ "$domain" =~ ^https?:// ]]; then
+        return 1
+    fi
+    
+    # Basic domain format
+    if [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Validate PM2 app name
+validate_pm2_app_name() {
+    local name=$1
+    
+    if [ -z "$name" ]; then
+        return 1
+    fi
+    
+    # Alphanumeric, dash, underscore only
+    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        return 1
+    fi
+    
+    # Max length 64 chars
+    if [ ${#name} -gt 64 ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Test SSH connection (optional)
+test_ssh_connection() {
+    local user=$1
+    local host=$2
+    local port=${3:-22}
+    
+    # Try connection with 5 second timeout
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes -p "$port" "$user@$host" "exit" 2>/dev/null; then
+        return 0
+    fi
+    
+    return 1
 }
 
 # Parse users.yml file
@@ -1001,8 +1475,189 @@ EOF
     info "Review users.yml and run: shipnode user sync"
 }
 
-# Initialize config file
-cmd_init() {
+# ============================================================================
+# INTERACTIVE PROMPT HELPERS
+# ============================================================================
+
+# Prompt with default value
+prompt_with_default() {
+    local prompt=$1
+    local default=$2
+    local varname=$3
+    
+    if [ -n "$default" ]; then
+        read -p "$prompt [$default]: " input
+        printf -v "$varname" '%s' "${input:-$default}"
+    else
+        read -p "$prompt: " input
+        printf -v "$varname" '%s' "$input"
+    fi
+}
+
+# Prompt with validation loop
+prompt_with_validation() {
+    local prompt=$1
+    local validator=$2
+    local varname=$3
+    local default=${4:-}
+    
+    while true; do
+        if [ -n "$default" ]; then
+            read -p "$prompt [$default]: " input
+            input="${input:-$default}"
+        else
+            read -p "$prompt: " input
+        fi
+        
+        if [ -z "$input" ] && [ -z "$default" ]; then
+            warn "This field is required"
+            continue
+        fi
+        
+        if $validator "$input"; then
+            printf -v "$varname" '%s' "$input"
+            break
+        else
+            warn "Invalid input, please try again"
+        fi
+    done
+}
+
+# =============================================================================
+# GUM UI WRAPPERS (with fallback)
+# ============================================================================
+
+# Enhanced input with Gum (or fallback to classic)
+# Provides beautiful input prompts with Gum when available and TTY present
+# Args:
+#   $1: Prompt text
+#   $2: Default value (optional)
+#   $3: Placeholder text (optional, defaults to $2)
+# Returns:
+#   User input or default value
+# Notes:
+#   - Auto-fallback to classic prompts if Gum unavailable or no TTY
+#   - TTY check ensures compatibility with CI/CD environments
+gum_input() {
+    local prompt=$1
+    local default=${2:-}
+    local placeholder=${3:-$default}
+    
+    # Check if we have a TTY (interactive terminal)
+    if [ "$USE_GUM" = true ] && [ -t 0 ]; then
+        local value=""
+        if [ -n "$default" ]; then
+            value=$(gum input --placeholder "$placeholder" --prompt "$prompt: " --value "$default" 2>/dev/null || echo "$default")
+        else
+            value=$(gum input --placeholder "$placeholder" --prompt "$prompt: " 2>/dev/null || echo "")
+        fi
+        echo "$value"
+    else
+        # Fallback to classic bash
+        local result
+        if [ -n "$default" ]; then
+            read -p "$prompt [$default]: " result
+            echo "${result:-$default}"
+        else
+            read -p "$prompt: " result
+            echo "$result"
+        fi
+    fi
+}
+
+# Enhanced selection with Gum (or fallback to classic)
+# Provides arrow-key selection menu with Gum when available
+# Args:
+#   $1: Header text
+#   $@: Options to choose from (remaining arguments)
+# Returns:
+#   Selected option, or first option if selection fails
+# Notes:
+#   - Auto-fallback to numbered menu if Gum unavailable or no TTY
+#   - Returns first option as default on error
+gum_choose() {
+    local header=$1
+    shift
+    local options=("$@")
+    
+    # Check if we have a TTY (interactive terminal)
+    if [ "$USE_GUM" = true ] && [ -t 0 ]; then
+        gum choose "${options[@]}" --header "$header" --cursor "> " 2>/dev/null || echo "${options[0]}"
+    else
+        # Fallback to classic bash
+        echo "$header"
+        local i=1
+        for opt in "${options[@]}"; do
+            echo "  $i) $opt"
+            ((i++))
+        done
+        read -p "Choose: " choice
+        
+        # Return the selected option
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
+            echo "${options[$((choice-1))]}"
+        else
+            echo "${options[0]}"
+        fi
+    fi
+}
+
+# Enhanced confirmation with Gum (or fallback to classic)
+# Provides yes/no confirmation prompt with Gum when available
+# Args:
+#   $1: Confirmation message
+#   $2: Default value (y or n, default: y)
+# Returns:
+#   Exit code 0 for yes, 1 for no
+# Notes:
+#   - Auto-fallback to classic y/n prompt if Gum unavailable or no TTY
+#   - Uses existing prompt_yes_no function as fallback
+gum_confirm() {
+    local message=$1
+    local default=${2:-y}
+    
+    # Check if we have a TTY (interactive terminal)
+    if [ "$USE_GUM" = true ] && [ -t 0 ]; then
+        if [ "$default" = "y" ]; then
+            gum confirm "$message" 2>/dev/null && return 0 || return 1
+        else
+            gum confirm "$message" --default=false 2>/dev/null && return 0 || return 1
+        fi
+    else
+        # Fallback to existing function
+        prompt_yes_no "$message" "$default"
+    fi
+}
+
+# Enhanced styling with Gum (or fallback to classic)
+gum_style() {
+    local text=$1
+    shift
+    local args=("$@")
+    
+    if [ "$USE_GUM" = true ]; then
+        gum style "${args[@]}" "$text" 2>/dev/null || echo "$text"
+    else
+        # Fallback to classic echo
+        echo "$text"
+    fi
+}
+
+# Show informative message about Gum if not installed
+show_gum_tip() {
+    if [ "$USE_GUM" = false ]; then
+        echo ""
+        info "💡 Tip: Install gum for enhanced interactive experience"
+        echo "   https://github.com/charmbracelet/gum"
+        echo ""
+    fi
+}
+
+# INITIALIZATION COMMANDS
+# ============================================================================
+
+# Legacy non-interactive init (backward compatibility)
+cmd_init_legacy() {
     if [ -f "shipnode.conf" ]; then
         read -p "shipnode.conf already exists. Overwrite? (y/N) " -n 1 -r
         echo
@@ -1054,6 +1709,429 @@ EOF
     fi
 }
 
+# Interactive initialization wizard
+cmd_init_interactive() {
+    # Check for existing config
+    if [ -f "shipnode.conf" ]; then
+        warn "shipnode.conf already exists"
+        if ! prompt_yes_no "Overwrite?"; then
+            info "Aborted"
+            return 0
+        fi
+    fi
+    
+    # Welcome banner
+    echo ""
+    if [ "$USE_GUM" = true ]; then
+        gum style \
+            --border double \
+            --border-foreground 212 \
+            --align center \
+            --width 50 \
+            --margin "1 0" \
+            --padding "1 2" \
+            "ShipNode Interactive Setup"
+    else
+        echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
+        echo -e "${BLUE}║  ShipNode Interactive Setup        ║${NC}"
+        echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
+    fi
+    echo ""
+    
+    # Show tip about Gum if not installed
+    show_gum_tip
+    
+    # 1. Framework detection
+    local detected_framework detected_type
+    IFS='|' read -r detected_framework detected_type <<< "$(detect_framework)"
+    
+    if [ "$detected_framework" != "none" ]; then
+        info "Detected framework: $detected_framework"
+        info "Suggested app type: $detected_type"
+        echo ""
+    fi
+    
+    # 2. Prompt for app type
+    local app_type
+    
+    if [ "$USE_GUM" = true ]; then
+        # Enhanced selection with Gum
+        local header="Select application type:"
+        if [ "$detected_type" != "unknown" ]; then
+            header="Select application type (detected: $detected_type):"
+        fi
+        
+        local selection
+        selection=$(gum choose \
+            "Backend (Node.js API with PM2)" \
+            "Frontend (Static site)" \
+            --header "$header" \
+            --cursor-prefix "→ " \
+            --selected-prefix "✓ ")
+        
+        case "$selection" in
+            "Backend"*) app_type="backend" ;;
+            "Frontend"*) app_type="frontend" ;;
+            *) 
+                # Default to detected type if available
+                if [ "$detected_type" != "unknown" ]; then
+                    app_type="$detected_type"
+                else
+                    app_type="backend"
+                fi
+                ;;
+        esac
+    else
+        # Classic bash selection
+        echo "Application type:"
+        echo "  1) Backend (Node.js API with PM2)"
+        echo "  2) Frontend (Static site)"
+        echo ""
+        
+        while true; do
+            if [ "$detected_type" != "unknown" ]; then
+                read -p "Choose [1-2] (detected: $detected_type): " choice
+            else
+                read -p "Choose [1-2]: " choice
+            fi
+            
+            case "$choice" in
+                1|backend) app_type="backend"; break ;;
+                2|frontend) app_type="frontend"; break ;;
+                "") 
+                    if [ "$detected_type" != "unknown" ]; then
+                        app_type="$detected_type"
+                        break
+                    fi
+                    warn "Please choose an option"
+                    ;;
+                *) warn "Invalid choice" ;;
+            esac
+        done
+    fi
+    
+    # 3. SSH connection details
+    echo ""
+    info "Server connection details"
+    if [ "$USE_GUM" = false ]; then
+        echo "Enter SSH credentials for your deployment server"
+    fi
+    echo ""
+    
+    local ssh_user ssh_host ssh_port
+    
+    # SSH User
+    if [ "$USE_GUM" = true ]; then
+        ssh_user=$(gum input --placeholder "root" --prompt "SSH user: " --value "root")
+    else
+        echo "  (The SSH user to connect with - typically 'root' or your username)"
+        prompt_with_default "SSH user" "root" "ssh_user"
+    fi
+    
+    # SSH Host with validation
+    while true; do
+        if [ "$USE_GUM" = true ]; then
+            ssh_host=$(gum input --placeholder "192.168.1.100 or server.example.com" --prompt "SSH host: ")
+        else
+            echo "  (Your server's IP address or domain name - e.g. 192.168.1.100 or server.example.com)"
+            read -p "SSH host (IP or hostname): " ssh_host
+        fi
+        
+        if validate_ip_or_hostname "$ssh_host"; then
+            break
+        else
+            warn "Invalid IP or hostname"
+        fi
+    done
+    
+    # SSH Port with validation
+    while true; do
+        if [ "$USE_GUM" = true ]; then
+            local port_input
+            port_input=$(gum input --placeholder "22" --prompt "SSH port: " --value "22")
+            ssh_port="${port_input:-22}"
+        else
+            echo "  (SSH port - default is 22)"
+            read -p "SSH port [22]: " ssh_port
+            ssh_port="${ssh_port:-22}"
+        fi
+        
+        if validate_port "$ssh_port"; then
+            break
+        else
+            warn "Invalid port number"
+        fi
+    done
+    
+    # 4. Deployment path
+    echo ""
+    info "Deployment configuration"
+    echo ""
+    local remote_path app_name
+    
+    # Try to get app name from package.json
+    if [ -f "package.json" ] && command -v jq &> /dev/null; then
+        app_name=$(jq -r '.name // empty' package.json 2>/dev/null \
+            | sed -E 's/^@[^/]+\///' \
+            | tr ' ' '-' \
+            | sed -E 's/[^A-Za-z0-9._-]+/-/g' \
+            | sed -E 's/-+/-/g' \
+            | sed -E 's/^-+|-+$//g')
+    fi
+    
+    if [ -z "$app_name" ]; then
+        app_name=$(basename "$PWD")
+    fi
+    
+    if [ "$USE_GUM" = true ]; then
+        remote_path=$(gum input --placeholder "/var/www/$app_name" --prompt "Deployment path: " --value "/var/www/$app_name")
+    else
+        echo "  (Directory on the server where your app will be deployed)"
+        prompt_with_default "Remote deployment path" "/var/www/$app_name" "remote_path"
+    fi
+    
+    # 5. Backend-specific config
+    local pm2_app_name backend_port domain
+    if [ "$app_type" = "backend" ]; then
+        echo ""
+        info "Backend configuration"
+        if [ "$USE_GUM" = false ]; then
+            echo "Configure your Node.js backend application"
+        fi
+        echo ""
+        
+        pm2_app_name="$app_name"
+        
+        # PM2 process name with validation
+        while true; do
+            if [ "$USE_GUM" = true ]; then
+                pm2_app_name=$(gum input --placeholder "$app_name" --prompt "PM2 process name: " --value "$app_name")
+            else
+                read -p "PM2 process name [$app_name]: " pm2_input
+                pm2_app_name="${pm2_input:-$app_name}"
+            fi
+            
+            if validate_pm2_app_name "$pm2_app_name"; then
+                break
+            else
+                warn "Invalid PM2 process name"
+            fi
+        done
+        
+        # Try to detect port
+        local suggested_port
+        suggested_port=$(suggest_port)
+        
+        # Backend port with validation
+        while true; do
+            if [ "$USE_GUM" = true ]; then
+                backend_port=$(gum input --placeholder "${suggested_port:-3000}" --prompt "Application port: " --value "${suggested_port:-3000}")
+            else
+                echo "  (Port your Node.js app will listen on - typically 3000, 5000, or 8080)"
+                read -p "Application port [${suggested_port:-3000}]: " backend_port
+                backend_port="${backend_port:-${suggested_port:-3000}}"
+            fi
+            
+            if validate_port "$backend_port"; then
+                break
+            else
+                warn "Invalid port number"
+            fi
+        done
+        
+        # Domain (optional)
+        while true; do
+            if [ "$USE_GUM" = true ]; then
+                domain=$(gum input --placeholder "api.myapp.com (optional)" --prompt "Domain: ")
+            else
+                echo "  (Optional: Your domain name for HTTPS - e.g. api.myapp.com)"
+                read -p "Domain (optional, press Enter to skip): " domain
+            fi
+            
+            if [ -z "$domain" ] || validate_domain "$domain"; then
+                break
+            else
+                warn "Invalid domain"
+            fi
+        done
+    fi
+    
+    # 6. Frontend-specific config
+    if [ "$app_type" = "frontend" ]; then
+        echo ""
+        info "Frontend configuration"
+        if [ "$USE_GUM" = false ]; then
+            echo "Configure your static site deployment"
+            echo ""
+            echo "Note: Domain is required for frontend deployments (needed for Caddy web server)"
+        fi
+        echo ""
+        
+        # Domain is required for frontend
+        while true; do
+            if [ "$USE_GUM" = true ]; then
+                domain=$(gum input --placeholder "myapp.com" --prompt "Domain (required): ")
+            else
+                echo "  (Your domain name - e.g. myapp.com or www.myapp.com)"
+                read -p "Domain: " domain
+            fi
+            
+            if [ -n "$domain" ] && validate_domain "$domain"; then
+                break
+            elif [ -z "$domain" ]; then
+                warn "Domain is required for frontend deployments"
+            else
+                warn "Invalid domain"
+            fi
+        done
+    fi
+    
+    # Use defaults for advanced options
+    local zero_downtime="true"
+    local keep_releases="5"
+    local health_enabled="true"
+    local health_path="/health"
+    local health_timeout="30"
+    local health_retries="3"
+    
+    # 7. Configuration summary
+    echo ""
+    if [ "$USE_GUM" = true ]; then
+        gum style \
+            --border rounded \
+            --border-foreground 99 \
+            --padding "1 2" \
+            --margin "1 0" \
+            "Configuration Summary" \
+            "" \
+            "App Type:      $app_type" \
+            "SSH:           $ssh_user@$ssh_host:$ssh_port" \
+            "Remote Path:   $remote_path" \
+            $([ "$app_type" = "backend" ] && echo "PM2 Name:      $pm2_app_name") \
+            $([ "$app_type" = "backend" ] && echo "Backend Port:  $backend_port") \
+            $([ -n "$domain" ] && echo "Domain:        $domain") \
+            "Zero-downtime: $zero_downtime" \
+            $([ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ] && echo "Health Checks: $health_path (${health_timeout}s, $health_retries retries)")
+    else
+        echo -e "${BLUE}════════════════════════════════════${NC}"
+        echo -e "${BLUE}Configuration Summary${NC}"
+        echo -e "${BLUE}════════════════════════════════════${NC}"
+        echo "App Type:      $app_type"
+        echo "SSH:           $ssh_user@$ssh_host:$ssh_port"
+        echo "Remote Path:   $remote_path"
+        
+        if [ "$app_type" = "backend" ]; then
+            echo "PM2 Name:      $pm2_app_name"
+            echo "Backend Port:  $backend_port"
+        fi
+        
+        [ -n "$domain" ] && echo "Domain:        $domain"
+        echo "Zero-downtime: $zero_downtime"
+        
+        if [ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ]; then
+            echo "Health Checks: $health_path (${health_timeout}s timeout, ${health_retries} retries)"
+        fi
+        
+        echo -e "${BLUE}════════════════════════════════════${NC}"
+    fi
+    echo ""
+    
+    # Final confirmation
+    if [ "$USE_GUM" = true ]; then
+        if ! gum confirm "Create shipnode.conf with these settings?"; then
+            warn "Configuration cancelled"
+            return 1
+        fi
+    else
+        if ! prompt_yes_no "Create shipnode.conf with these settings?" "y"; then
+            warn "Configuration cancelled"
+            return 1
+        fi
+    fi
+    
+    # 8. Write configuration file
+    cat > shipnode.conf <<EOF
+# ShipNode Configuration
+# Generated by interactive wizard
+
+# Application type
+APP_TYPE=$app_type
+
+# SSH Connection
+SSH_USER=$ssh_user
+SSH_HOST=$ssh_host
+SSH_PORT=$ssh_port
+
+# Deployment path
+REMOTE_PATH=$remote_path
+EOF
+
+    # Backend-specific settings
+    if [ "$app_type" = "backend" ]; then
+        cat >> shipnode.conf <<EOF
+
+# Backend settings
+PM2_APP_NAME=$pm2_app_name
+BACKEND_PORT=$backend_port
+EOF
+    fi
+
+    # Domain (for both types if provided)
+    if [ -n "$domain" ]; then
+        cat >> shipnode.conf <<EOF
+
+# Domain
+DOMAIN=$domain
+EOF
+    fi
+
+    # Zero-downtime settings
+    cat >> shipnode.conf <<EOF
+
+# Zero-downtime deployment
+ZERO_DOWNTIME=$zero_downtime
+KEEP_RELEASES=$keep_releases
+EOF
+
+    # Health check settings (backend only)
+    if [ "$app_type" = "backend" ] && [ "$health_enabled" = "true" ]; then
+        cat >> shipnode.conf <<EOF
+
+# Health checks
+HEALTH_CHECK_ENABLED=$health_enabled
+HEALTH_CHECK_PATH=$health_path
+HEALTH_CHECK_TIMEOUT=$health_timeout
+HEALTH_CHECK_RETRIES=$health_retries
+EOF
+    fi
+
+    success "Created shipnode.conf"
+    
+    # 9. Users.yml wizard
+    echo ""
+    if prompt_yes_no "Add deployment users now?"; then
+        init_users_yaml
+    else
+        info "You can add users later with: shipnode user sync"
+    fi
+    
+    echo ""
+    success "Initialization complete!"
+    info "Next steps:"
+    echo "  1. Review shipnode.conf"
+    echo "  2. Run: shipnode setup"
+    echo "  3. Run: shipnode deploy"
+}
+
+# Initialize config file (router)
+cmd_init() {
+    if [ "$1" = "--non-interactive" ]; then
+        cmd_init_legacy
+    else
+        cmd_init_interactive
+    fi
+}
+
 # Setup server (first-time)
 cmd_setup() {
     load_config
@@ -1066,6 +2144,13 @@ cmd_setup() {
     fi
 
     success "SSH connection successful"
+
+    # Install Gum for enhanced UI (optional, non-blocking)
+    echo ""
+    info "Checking for Gum UI framework..."
+    if ! install_gum; then
+        warn "Continuing without Gum. The wizard will use classic prompts."
+    fi
 
     # Install Node.js, PM2, and Caddy
     info "Installing dependencies on server..."
@@ -1787,8 +2872,9 @@ ShipNode v$VERSION - Simple Node.js Deployment Tool
 Usage: shipnode <command> [options]
 
 Commands:
-    init                Create shipnode.conf (+ optional users.yml)
-    setup               First-time server setup (Node, PM2, Caddy, jq)
+    init                     Create shipnode.conf (interactive wizard)
+    init --non-interactive   Create basic shipnode.conf without prompts
+    setup                    First-time server setup (Node, PM2, Caddy, jq)
     deploy              Deploy the application
     deploy --skip-build Deploy without running build step
     env                 Upload .env file to server
@@ -1846,7 +2932,7 @@ EOF
 main() {
     case "${1:-}" in
         init)
-            cmd_init
+            cmd_init "$2"
             ;;
         setup)
             cmd_setup

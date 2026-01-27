@@ -5,6 +5,7 @@ Simple, zero-config deployment tool for Node.js backends and static frontends. D
 ## Features
 
 - **Single CLI tool** for both backend and frontend deployments
+- **Enhanced interactive UI** powered by [Gum](https://github.com/charmbracelet/gum) (automatically installed) ✨
 - **Zero-downtime deployments** with atomic release switching
 - **Automatic rollback** on health check failure
 - **Release management** with configurable retention
@@ -82,14 +83,64 @@ cd /path/to/your/project
 shipnode init
 ```
 
-This creates `shipnode.conf` with default settings.
+The **interactive wizard** will guide you through configuration:
 
-### 2. Configure
+- Auto-detects your framework (Express, NestJS, AdonisJS, React, React Router, TanStack Router, Next.js, Nuxt, Astro, Remix, Vue, Svelte, SolidJS, Angular, etc.)
+- Suggests smart defaults based on your `package.json`
+- Validates all inputs in real-time
+- Shows configuration summary before creating files
 
-Edit `shipnode.conf`:
+**Example output:**
+```
+╔════════════════════════════════════╗
+║  ShipNode Interactive Setup        ║
+╚════════════════════════════════════╝
+
+→ Detected framework: Express
+→ Suggested app type: backend
+
+Application type:
+  1) Backend (Node.js API with PM2)
+  2) Frontend (Static site)
+
+Choose [1-2] (detected: backend): 
+SSH user [root]: 
+SSH host (IP or hostname): 203.0.113.10
+SSH port [22]: 
+Remote deployment path [/var/www/myapp]: 
+PM2 process name [myapp]: 
+Application port [3000]: 
+Domain (optional, press Enter to skip): api.myapp.com
+
+════════════════════════════════════
+Configuration Summary
+════════════════════════════════════
+App Type:      backend
+SSH:           root@203.0.113.10:22
+Remote Path:   /var/www/myapp
+PM2 Name:      myapp
+Backend Port:  3000
+Domain:        api.myapp.com
+Zero-downtime: true
+Health Checks: /health (30s timeout, 3 retries)
+════════════════════════════════════
+
+Create shipnode.conf with these settings? (Y/n): 
+```
+
+**For CI/CD or scripts** (non-interactive mode):
+```bash
+shipnode init --non-interactive
+```
+
+This creates `shipnode.conf` with default settings that you can edit manually.
+
+### 2. Configure (if needed)
+
+The wizard creates an optimized `shipnode.conf`. Only edit manually if using `--non-interactive`:
 
 ```bash
-# For a backend app
+# Example backend configuration
 APP_TYPE=backend
 SSH_USER=root
 SSH_HOST=123.45.67.89
@@ -98,7 +149,7 @@ PM2_APP_NAME=myapp
 BACKEND_PORT=3000
 DOMAIN=api.myapp.com  # optional
 
-# For a frontend app
+# Example frontend configuration
 APP_TYPE=frontend
 SSH_USER=root
 SSH_HOST=123.45.67.89
@@ -147,6 +198,35 @@ shipnode mkpasswd            # Generate password hash
 ```
 
 ## Zero-Downtime Deployment
+
+## Troubleshooting
+
+### Gum installation fails
+- Symptom: "Failed to install Gum. The interactive wizard will use fallback mode."
+- Cause: Package not available on your distro or missing sudo privileges
+- Fix:
+  - Install manually: Debian/Ubuntu `sudo apt install gum`, Fedora `sudo dnf install gum`, Arch `sudo pacman -S gum`, Alpine `sudo apk add gum`, macOS `brew install gum`
+  - Check installation log: `/tmp/shipnode_gum_install_<PID>.log`
+  - Continue without Gum: the wizard will automatically use classic prompts
+
+### Framework not detected
+- Ensure `package.json` is valid JSON (no trailing commas)
+- `jq` must be available on your local machine
+  - Install: `sudo apt install jq` or equivalent
+- The wizard still works without detection; select app type manually
+
+### Port not detected
+- The wizard supports common patterns: `PORT=3000`, `--port=5000`, `localhost:4000`, `listen(:3000)`
+- If your scripts differ, enter the port manually when prompted
+
+### CI/CD environments
+- Non-interactive environments have no TTY; Gum prompts are auto-disabled
+- Use `shipnode init --non-interactive` for fully scripted setups
+
+### SSH issues
+- Test connection: `ssh -p <port> <user>@<host>`
+- Ensure public key is deployed or correct password authentication is enabled
+- Verify firewall allows SSH port
 
 ShipNode uses atomic release-based deployments to ensure zero downtime during updates.
 
