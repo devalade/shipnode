@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Interactive Initialization Wizard
-- **Framework auto-detection**: Automatically detects Express, NestJS, Fastify, Koa, Hapi, Hono, Next.js, Nuxt, Remix, React, Vue, Svelte, SolidJS, and Angular from package.json dependencies
+- **Framework auto-detection**: Automatically detects Express, NestJS, Fastify, Koa, Hapi, Hono, AdonisJS, Next.js, Nuxt, Remix, Astro, React, React Router, TanStack Router, Vue, Svelte, SolidJS, and Angular from package.json dependencies
 - **Smart defaults**: Auto-suggests app type (backend/frontend) based on detected framework
 - **Port detection**: Attempts to detect application port from package.json scripts
 - **Guided prompts**: Step-by-step configuration with validation and helpful defaults

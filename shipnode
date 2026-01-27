@@ -504,19 +504,19 @@ suggest_app_type() {
     local deps=$1
     
     # Backend frameworks
-    if [[ "$deps" =~ (express|@nestjs/core|@nestjs/common|fastify|koa|@hapi/hapi|hono) ]]; then
+    if [[ "$deps" =~ (express|@nestjs/core|@nestjs/common|fastify|koa|@hapi/hapi|hono|@adonisjs/core) ]]; then
         echo "backend"
         return 0
     fi
     
     # Full-stack frameworks (suggest backend for reverse proxy)
-    if [[ "$deps" =~ ((^|,)(next|nuxt)(,|$)|@remix-run) ]]; then
+    if [[ "$deps" =~ ((^|,)(next|nuxt|astro)(,|$)|@remix-run) ]]; then
         echo "backend"
         return 0
     fi
     
     # Frontend frameworks
-    if [[ "$deps" =~ (react|vue|svelte|solid-js|@angular/core) ]]; then
+    if [[ "$deps" =~ (react-router|tanstack.*router|react|vue|svelte|solid-js|@angular/core) ]]; then
         echo "frontend"
         return 0
     fi
@@ -526,7 +526,7 @@ suggest_app_type() {
 }
 
 # Detect framework from package.json dependencies
-# Identifies 14 popular frameworks and suggests appropriate app type
+# Identifies 18 popular frameworks and suggests appropriate app type
 # Args:
 #   $1: Path to package.json file (default: ./package.json)
 # Returns:
@@ -564,6 +564,8 @@ detect_framework() {
         framework="Hapi"
     elif [[ "$deps" =~ hono ]]; then
         framework="Hono"
+    elif [[ "$deps" =~ @adonisjs/core ]]; then
+        framework="AdonisJS"
     # Full-stack frameworks
     elif [[ "$deps" =~ (^|,)next(,|$) ]]; then
         framework="Next.js"
@@ -571,9 +573,15 @@ detect_framework() {
         framework="Nuxt"
     elif [[ "$deps" =~ @remix-run ]]; then
         framework="Remix"
+    elif [[ "$deps" =~ (^|,)astro(,|$) ]]; then
+        framework="Astro"
     # Frontend frameworks
     elif [[ "$deps" =~ (^|,)react(,|$) ]]; then
         framework="React"
+    elif [[ "$deps" =~ react-router ]]; then
+        framework="React Router"
+    elif [[ "$deps" =~ tanstack.*router ]]; then
+        framework="TanStack Router"
     elif [[ "$deps" =~ (^|,)vue(,|$) ]]; then
         framework="Vue"
     elif [[ "$deps" =~ svelte ]]; then

@@ -85,7 +85,7 @@ shipnode init
 
 The **interactive wizard** will guide you through configuration:
 
-- Auto-detects your framework (Express, NestJS, React, Next.js, etc.)
+- Auto-detects your framework (Express, NestJS, AdonisJS, React, React Router, TanStack Router, Next.js, Nuxt, Astro, Remix, Vue, Svelte, SolidJS, Angular, etc.)
 - Suggests smart defaults based on your `package.json`
 - Validates all inputs in real-time
 - Shows configuration summary before creating files
