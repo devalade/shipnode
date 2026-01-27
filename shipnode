@@ -587,15 +587,26 @@ suggest_port() {
     # Look for PORT= or :port patterns
     local port=""
     
-    # Match PORT=3000
+    # Priority 1: Environment variable PORT=3000
     if [[ "$scripts" =~ PORT=([0-9]+) ]]; then
         port="${BASH_REMATCH[1]}"
-    # Match standalone :3000 while avoiding URLs/timestamps
-    elif [[ "$scripts" =~ (^|[[:space:]])\:([0-9]{2,5})([[:space:]]|$) ]]; then
+    # Priority 2: CLI flag --port 3000 or --port=3000
+    elif [[ "$scripts" =~ --port[[:space:]]*=?[[:space:]]*([0-9]+) ]]; then
+        port="${BASH_REMATCH[1]}"
+    # Priority 3: localhost:3000 or 127.0.0.1:3000
+    elif [[ "$scripts" =~ (localhost|127\.0\.0\.1):([0-9]+) ]]; then
         port="${BASH_REMATCH[2]}"
+    # Priority 4: listen on :3000 (common in Node)
+    elif [[ "$scripts" =~ listen[[:space:]]*\([[:space:]]*[\'\"]?:([0-9]+) ]]; then
+        port="${BASH_REMATCH[1]}"
     fi
     
-    echo "$port"
+    # Validate port is in valid range
+    if [ -n "$port" ] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+        echo "$port"
+    else
+        echo ""
+    fi
     return 0
 }
 
