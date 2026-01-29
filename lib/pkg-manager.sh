@@ -90,6 +90,72 @@ get_pkg_start_cmd() {
     esac
 }
 
+# Install package manager on remote server
+install_remote_pkg_manager() {
+    local pkg_manager=$1
+
+    # npm comes with Node.js, no need to install separately
+    if [ "$pkg_manager" = "npm" ]; then
+        return 0
+    fi
+
+    info "Installing $pkg_manager on remote server..."
+
+    if ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        set -e
+
+        # Detect if running as root and set sudo prefix
+        SUDO=""
+        if [ "\$EUID" -ne 0 ]; then
+            SUDO="sudo"
+        fi
+
+        # Check if already installed
+        if command -v $pkg_manager > /dev/null 2>&1; then
+            echo "ALREADY_INSTALLED:\$($pkg_manager --version 2>/dev/null || $pkg_manager -v)"
+            exit 0
+        fi
+
+        # Install based on package manager type
+        case "$pkg_manager" in
+            yarn)
+                echo "Installing yarn..."
+                \$SUDO npm install -g yarn
+                ;;
+            pnpm)
+                echo "Installing pnpm..."
+                \$SUDO npm install -g pnpm
+                ;;
+            bun)
+                echo "Installing bun..."
+                curl -fsSL https://bun.sh/install | bash
+                # Add bun to PATH for current session
+                export BUN_INSTALL="\$HOME/.bun"
+                export PATH="\$BUN_INSTALL/bin:\$PATH"
+                ;;
+            *)
+                echo "Unknown package manager: $pkg_manager"
+                exit 1
+                ;;
+        esac
+
+        # Verify installation - check both command -v and bun-specific path
+        if command -v $pkg_manager > /dev/null 2>&1; then
+            echo "NEWLY_INSTALLED:\$($pkg_manager --version 2>/dev/null || $pkg_manager -v)"
+        elif [ "$pkg_manager" = "bun" ] && [ -x "\$HOME/.bun/bin/bun" ]; then
+            echo "NEWLY_INSTALLED:\$(\$HOME/.bun/bin/bun --version)"
+        else
+            echo "Failed to install $pkg_manager"
+            exit 1
+        fi
+ENDSSH
+    then
+        success "$pkg_manager is available on remote server"
+    else
+        error "Failed to install $pkg_manager on remote server"
+    fi
+}
+
 # Verify package manager is installed on remote server
 verify_remote_pkg_manager() {
     local pkg_manager=$1

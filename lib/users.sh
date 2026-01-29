@@ -82,6 +82,7 @@ parse_users_yaml() {
     local in_users=false
     local in_user=false
     local in_authorized_keys=false
+    local waiting_for_username=false
 
     local username="" email="" password="" sudo="false"
     local authorized_key="" authorized_key_file="" authorized_keys=""
@@ -89,7 +90,18 @@ parse_users_yaml() {
     while IFS= read -r line; do
         # Skip comments and empty lines
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+
+        # Strip inline comments (but not inside quotes)
+        # Simple approach: remove everything after # if not in quotes
+        if [[ "$line" =~ ^([^\"#]*)(#.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^(\"[^\"]*\"|[^#]*)(#.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+
+        # Trim trailing whitespace
+        line="${line%"${line##*[![:space:]]}"}"
 
         # Check if we're in users section
         if [[ "$line" =~ ^users: ]]; then
@@ -100,7 +112,23 @@ parse_users_yaml() {
         # Skip if not in users section
         [ "$in_users" = false ] && continue
 
-        # Detect start of new user entry
+        # Detect bare-dash entry (start of new user block)
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*$ ]]; then
+            # Output previous user if exists
+            if [ -n "$username" ]; then
+                echo "$username|$email|$password|$sudo|$authorized_key|$authorized_key_file|$authorized_keys"
+            fi
+
+            # Reset for new user, wait for username on next line
+            username="" email="" password="" sudo="false"
+            authorized_key="" authorized_key_file="" authorized_keys=""
+            in_user=true
+            in_authorized_keys=false
+            waiting_for_username=true
+            continue
+        fi
+
+        # Detect start of new user entry (dash + username on same line)
         if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+username:[[:space:]]*(.+)$ ]]; then
             # Output previous user if exists
             if [ -n "$username" ]; then
@@ -109,44 +137,55 @@ parse_users_yaml() {
 
             # Reset for new user
             username="${BASH_REMATCH[1]}"
+            username="${username%%[[:space:]]}"  # Trim trailing whitespace
             email="" password="" sudo="false"
             authorized_key="" authorized_key_file="" authorized_keys=""
             in_user=true
             in_authorized_keys=false
+            waiting_for_username=false
             continue
         fi
 
         # Continue parsing user fields
         if [ "$in_user" = true ]; then
-            # username (standalone line after dash)
+            # username (standalone line after bare dash)
             if [[ "$line" =~ ^[[:space:]]+username:[[:space:]]*(.+)$ ]]; then
                 username="${BASH_REMATCH[1]}"
+                username="${username%%[[:space:]]}"
+                waiting_for_username=false
 
             # email
             elif [[ "$line" =~ ^[[:space:]]+email:[[:space:]]*(.+)$ ]]; then
                 email="${BASH_REMATCH[1]}"
+                email="${email%%[[:space:]]}"
 
             # password
             elif [[ "$line" =~ ^[[:space:]]+password:[[:space:]]*\"(.+)\"$ ]]; then
                 password="${BASH_REMATCH[1]}"
+                password="${password%%[[:space:]]}"
             elif [[ "$line" =~ ^[[:space:]]+password:[[:space:]]*(.+)$ ]]; then
                 password="${BASH_REMATCH[1]}"
+                password="${password%%[[:space:]]}"
 
             # sudo
-            elif [[ "$line" =~ ^[[:space:]]+sudo:[[:space:]]*(true|false)$ ]]; then
+            elif [[ "$line" =~ ^[[:space:]]+sudo:[[:space:]]*(true|false) ]]; then
                 sudo="${BASH_REMATCH[1]}"
 
             # authorized_key (single key)
             elif [[ "$line" =~ ^[[:space:]]+authorized_key:[[:space:]]*\"(.+)\"$ ]]; then
                 authorized_key="${BASH_REMATCH[1]}"
+                authorized_key="${authorized_key%%[[:space:]]}"
             elif [[ "$line" =~ ^[[:space:]]+authorized_key:[[:space:]]*(.+)$ ]]; then
                 authorized_key="${BASH_REMATCH[1]}"
+                authorized_key="${authorized_key%%[[:space:]]}"
 
             # authorized_key_file
             elif [[ "$line" =~ ^[[:space:]]+authorized_key_file:[[:space:]]*\"(.+)\"$ ]]; then
                 authorized_key_file="${BASH_REMATCH[1]}"
+                authorized_key_file="${authorized_key_file%%[[:space:]]}"
             elif [[ "$line" =~ ^[[:space:]]+authorized_key_file:[[:space:]]*(.+)$ ]]; then
                 authorized_key_file="${BASH_REMATCH[1]}"
+                authorized_key_file="${authorized_key_file%%[[:space:]]}"
 
             # authorized_keys (array start)
             elif [[ "$line" =~ ^[[:space:]]+authorized_keys:[[:space:]]*$ ]]; then
@@ -156,12 +195,14 @@ parse_users_yaml() {
             # authorized_keys array item
             elif [ "$in_authorized_keys" = true ] && [[ "$line" =~ ^[[:space:]]+-[[:space:]]+\"(.+)\"$ ]]; then
                 local key="${BASH_REMATCH[1]}"
+                key="${key%%[[:space:]]}"
                 [ -n "$authorized_keys" ] && authorized_keys+=":::"
                 authorized_keys+="$key"
 
             # authorized_keys array item (unquoted)
             elif [ "$in_authorized_keys" = true ] && [[ "$line" =~ ^[[:space:]]+-[[:space:]]+(.+)$ ]]; then
                 local key="${BASH_REMATCH[1]}"
+                key="${key%%[[:space:]]}"
                 [ -n "$authorized_keys" ] && authorized_keys+=":::"
                 authorized_keys+="$key"
 
