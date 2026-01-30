@@ -48,14 +48,14 @@ shipnode (main entry)
 - **framework.sh**: Framework detection from package.json (Express, NestJS, Next.js, React, etc.)
 - **validation.sh**: Input validation (IP, port, domain, SSH), user creation/management
 - **prompts.sh**: Interactive prompts with Gum UI fallback
-- **pkg-manager.sh**: Package manager detection (npm/yarn/pnpm/bun) from lockfiles
+- **pkg-manager.sh**: Package manager detection (npm/yarn/pnpm/bun) from lockfiles, installation on remote server
 - **templates.sh**: Framework templates for init
 
 ### Command Modules (lib/commands/)
 - **config.sh**: `load_config()` - sources shipnode.conf
 - **main.sh**: `main()` - command dispatcher (case statement)
 - **init.sh**: `cmd_init()` - interactive/legacy project setup
-- **setup.sh**: `cmd_setup()` - first-time server setup (Node, PM2, Caddy, jq)
+- **setup.sh**: `cmd_setup()` - first-time server setup (Node, PM2, Caddy, jq, package manager)
 - **deploy.sh**: `cmd_deploy()` - backend/frontend deployment (legacy/zero-downtime)
 - **status.sh**: `cmd_status/logs/restart/stop()` - app management
 - **rollback.sh**: `cmd_rollback/releases()` - release management
@@ -173,8 +173,9 @@ Sourced as bash, key variables:
 - `DB_SETUP_ENABLED`: true/false
 - `DB_NAME`, `DB_USER`, `DB_PASSWORD`: PostgreSQL config
 
-## Package Manager Detection Flow
+## Package Manager Detection & Installation
 
+### Detection Flow
 1. Check `PKG_MANAGER` in shipnode.conf
 2. Validate override (npm/yarn/pnpm/bun)
 3. If invalid/unset, detect from lockfiles:
@@ -186,6 +187,15 @@ Sourced as bash, key variables:
    - Install: `bun install --production` | `pnpm install --prod` | `yarn install --production` | `npm install --omit=dev`
    - Run: `<pm> run <script>`
    - PM2: `pm2 start bun -- start` | `pm2 start npm -- start` | etc.
+
+### Installation During Setup
+- `shipnode setup` detects package manager from local lockfiles
+- Automatically installs yarn/pnpm/bun on remote server if needed
+- npm comes with Node.js, no separate installation required
+- Installation methods:
+  - **yarn**: `npm install -g yarn`
+  - **pnpm**: `npm install -g pnpm`
+  - **bun**: `curl -fsSL https://bun.sh/install | bash`
 
 ## Zero-Downtime Deployment Model
 

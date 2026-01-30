@@ -84,6 +84,20 @@ cmd_setup() {
         fi
 ENDSSH
 
+    # Install package manager if project needs one other than npm
+    if [ -f "package.json" ]; then
+        local detected_pm=$(detect_pkg_manager)
+        info "Detected package manager: $detected_pm"
+
+        if [ "$detected_pm" != "npm" ]; then
+            install_remote_pkg_manager "$detected_pm"
+        else
+            success "npm already available (comes with Node.js)"
+        fi
+    else
+        info "No package.json found, skipping package manager setup"
+    fi
+
     # Setup PostgreSQL if enabled
     setup_postgresql
 
