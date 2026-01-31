@@ -73,6 +73,9 @@ detect_os() {
         else
             pkg_manager=""
         fi
+    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+        os_type="windows"
+        pkg_manager=""
     else
         os_type="unknown"
         pkg_manager=""
