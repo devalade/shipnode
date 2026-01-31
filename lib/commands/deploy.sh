@@ -32,16 +32,23 @@ deploy_backend() {
     # Verify package manager is installed on remote server
     verify_remote_pkg_manager "$PKG_MANAGER"
 
-    # Check if port is available on the server
-    if ! check_remote_port_available "$BACKEND_PORT"; then
+    # Check if port is available or already used by this app
+    if ! check_port_owner "$BACKEND_PORT" "$PM2_APP_NAME"; then
         local suggested_port
         suggested_port=$(suggest_available_port "$BACKEND_PORT")
+        local current_owner
+        current_owner=$(get_remote_port_process "$BACKEND_PORT")
         error "Port $BACKEND_PORT is already in use on $SSH_HOST
+
+Current owner: $current_owner
+Your app: $PM2_APP_NAME
 
 Suggested fix:
   1. Update shipnode.conf: BACKEND_PORT=$suggested_port
-  2. Check what's using the port:
-     ssh $SSH_USER@$SSH_HOST -p $SSH_PORT 'ss -tln | grep :$BACKEND_PORT'
+  2. Check running apps:
+     ssh $SSH_USER@$SSH_HOST -p $SSH_PORT 'pm2 list'
+  3. Or stop the conflicting app:
+     ssh $SSH_USER@$SSH_HOST -p $SSH_PORT 'pm2 stop $current_owner'
 
 Deployment blocked to prevent port conflict."
     fi

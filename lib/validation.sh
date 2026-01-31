@@ -160,6 +160,89 @@ check_remote_port_available() {
     return 0  # Port is available
 }
 
+# Check which process is using a port on the remote server
+# Returns: process name or empty string
+# Args:
+#   $1: Port number to check
+#   $2: SSH user (optional, uses SSH_USER if not provided)
+#   $3: SSH host (optional, uses SSH_HOST if not provided)
+#   $4: SSH port (optional, uses SSH_PORT if not provided)
+get_remote_port_process() {
+    local port=$1
+    local user=${2:-$SSH_USER}
+    local host=${3:-$SSH_HOST}
+    local ssh_port=${4:-$SSH_PORT}
+    
+    if [ -z "$port" ] || [ -z "$user" ] || [ -z "$host" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Get the process using the port
+    local process
+    process=$(ssh -o ConnectTimeout=5 -p "$ssh_port" "$user@$host" "
+        # Try to find PID using the port, then get process name
+        if command -v ss >/dev/null 2>&1; then
+            pid=\$(ss -tlnp | grep \":$port \" | head -1 | grep -oP 'pid=\K[0-9]+')
+        elif command -v netstat >/dev/null 2>&1; then
+            pid=\$(netstat -tlnp 2>/dev/null | grep \":$port \" | head -1 | awk '{print \$7}' | cut -d'/' -f1)
+        fi
+        
+        if [ -n \"\$pid\" ]; then
+            # Check if it's a PM2 process
+            if pm2 describe \$pid >/dev/null 2>&1 || pm2 list | grep -q \"\$pid\"; then
+                # Get PM2 app name
+                pm2 list | grep \"\$pid\" | awk '{print \$4}' | head -1
+            else
+                # Get process name from PID
+                ps -p \$pid -o comm= 2>/dev/null || echo \"unknown\"
+            fi
+        fi
+    " 2>/dev/null)
+    
+    echo "$process"
+}
+
+# Check if port is used by our app (allowing redeployment)
+# Returns: 0 if same app or available, 1 if different app
+# Args:
+#   $1: Port number to check
+#   $2: PM2 app name to compare
+#   $3: SSH user (optional, uses SSH_USER if not provided)
+#   $4: SSH host (optional, uses SSH_HOST if not provided)
+#   $5: SSH port (optional, uses SSH_PORT if not provided)
+check_port_owner() {
+    local port=$1
+    local expected_app=$2
+    local user=${3:-$SSH_USER}
+    local host=${4:-$SSH_HOST}
+    local ssh_port=${5:-$SSH_PORT}
+    
+    if [ -z "$port" ]; then
+        return 0
+    fi
+    
+    # Check if port is available
+    if check_remote_port_available "$port" "$user" "$host" "$ssh_port"; then
+        return 0  # Port is free, allow deployment
+    fi
+    
+    # Port is in use, check who owns it
+    local owner
+    owner=$(get_remote_port_process "$port" "$user" "$host" "$ssh_port")
+    
+    if [ -z "$owner" ]; then
+        return 1  # Unknown owner, block to be safe
+    fi
+    
+    # Check if owner matches our expected app
+    if [ "$owner" = "$expected_app" ]; then
+        return 0  # Same app, allow redeployment
+    fi
+    
+    return 1  # Different app using the port
+}
+
 # Suggest an available port on the remote server
 # Tries ports in range 3000-3010, then falls back to random high port
 # Args:
