@@ -216,4 +216,44 @@ suggest_port() {
     return 0
 }
 
+# Detect ORM/database tool from package.json dependencies
+# Returns ORM name and migration/generate commands in format:
+#   "ORM_NAME|migrate_cmd|generate_cmd"
+# Examples:
+#   "Prisma|npx prisma migrate deploy|npx prisma generate"
+#   "Drizzle|npx drizzle-kit migrate|"
+#   "none||" (if no ORM detected)
+detect_orm() {
+    local pkg_file="${1:-package.json}"
+
+    # Parse dependencies
+    local deps=$(parse_package_json "$pkg_file")
+
+    if [ -z "$deps" ]; then
+        echo "none||"
+        return 0
+    fi
+
+    # Detect specific ORMs (order matters - check specific ones first)
+    if [[ "$deps" =~ (^|,)(prisma|@prisma/client)(,|$) ]]; then
+        echo "Prisma|npx prisma migrate deploy|npx prisma generate"
+    elif [[ "$deps" =~ drizzle-orm ]]; then
+        echo "Drizzle|npx drizzle-kit migrate|npx drizzle-kit generate"
+    elif [[ "$deps" =~ typeorm ]]; then
+        echo "TypeORM|npx typeorm migration:run|"
+    elif [[ "$deps" =~ sequelize ]]; then
+        echo "Sequelize|npx sequelize-cli db:migrate|"
+    elif [[ "$deps" =~ (^|,)knex(,|$) ]]; then
+        echo "Knex|npx knex migrate:latest|"
+    elif [[ "$deps" =~ mongoose ]]; then
+        echo "Mongoose||"
+    elif [[ "$deps" =~ @adonisjs/lucid ]]; then
+        echo "AdonisJS Lucid|node ace migration:run --force|"
+    else
+        echo "none||"
+    fi
+
+    return 0
+}
+
 # ============================================================================

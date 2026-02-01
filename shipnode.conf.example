@@ -53,6 +53,13 @@ DOMAIN=myapp.com
 # BUILD_DIR=dist
 
 # ============================================
+# Optional: Environment File
+# ============================================
+# Local environment file to upload to server
+# Default: .env
+# ENV_FILE=.env.production
+
+# ============================================
 # Zero-Downtime Deployment
 # ============================================
 # Enable atomic release-based deployments with health checks
@@ -73,30 +80,30 @@ HEALTH_CHECK_RETRIES=3
 # ============================================
 # Pre/Post Deploy Hooks
 # ============================================
-# Custom scripts that run on the remote server during deployment
-# 
+# ShipNode automatically uses .shipnode/pre-deploy.sh and .shipnode/post-deploy.sh
+# if they exist. Run 'shipnode init' to auto-generate these with ORM-specific
+# migration commands based on your package.json dependencies.
+#
 # Pre-deploy hook: Runs after code is deployed and dependencies installed,
 # but BEFORE the new release is activated. If this hook fails, the
 # deployment is aborted and rolled back.
-# Use for: database migrations, cache warming, asset compilation
+# Use for: database migrations, Prisma generate, cache warming
 #
 # Post-deploy hook: Runs after the deployment completes successfully.
 # If this hook fails, a warning is logged but the deployment is still
 # considered successful.
 # Use for: notifications, cache clearing, cleanup tasks
 #
-# Default paths (if not specified):
-#   PRE_DEPLOY_SCRIPT=.shipnode/pre-deploy.sh
-#   POST_DEPLOY_SCRIPT=.shipnode/post-deploy.sh
-#
 # Environment variables available to hooks:
 #   RELEASE_PATH     - Path to the release being deployed
 #   REMOTE_PATH      - Base deployment path on server
 #   PM2_APP_NAME     - PM2 process name (backend only)
 #   BACKEND_PORT     - Application port (backend only)
+#   SHARED_ENV_PATH  - Path to shared .env file
 #
-#PRE_DEPLOY_SCRIPT=.shipnode/pre-deploy.sh
-#POST_DEPLOY_SCRIPT=.shipnode/post-deploy.sh
+# Advanced: Override default hook paths (rarely needed)
+# PRE_DEPLOY_SCRIPT=.shipnode/pre-deploy.sh
+# POST_DEPLOY_SCRIPT=.shipnode/post-deploy.sh
 
 # ============================================
 # PostgreSQL Database Setup

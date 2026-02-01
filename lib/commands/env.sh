@@ -1,12 +1,15 @@
 cmd_env() {
     load_config
 
-    # Check if .env file exists locally
-    if [ ! -f .env ]; then
-        error ".env file not found in current directory"
+    # Resolve environment file path (default to .env)
+    LOCAL_ENV="${ENV_FILE:-.env}"
+
+    # Check if environment file exists locally
+    if [ ! -f "$LOCAL_ENV" ]; then
+        error "Environment file not found: $LOCAL_ENV"
     fi
 
-    info "Uploading .env file to server..."
+    info "Uploading $LOCAL_ENV to server..."
 
     # Determine target path based on deployment mode
     if [ "$ZERO_DOWNTIME" = "true" ]; then
@@ -19,10 +22,10 @@ cmd_env() {
         ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p $REMOTE_PATH"
     fi
 
-    # Upload the .env file
-    scp -P "$SSH_PORT" .env "$SSH_USER@$SSH_HOST:$TARGET_PATH"
+    # Upload the environment file
+    scp -P "$SSH_PORT" "$LOCAL_ENV" "$SSH_USER@$SSH_HOST:$TARGET_PATH"
 
-    success ".env file uploaded to $TARGET_PATH"
+    success "Uploaded $LOCAL_ENV to $TARGET_PATH"
 
     # Restart backend app if running to reload env vars
     if [ "$APP_TYPE" = "backend" ]; then

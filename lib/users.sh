@@ -220,4 +220,133 @@ parse_users_yaml() {
     fi
 }
 
+# Create user on remote server
+# Returns: "EXISTS" if user exists, "CREATED" if newly created
+create_remote_user() {
+    local username=$1
+    local email=$2
+    local password=$3
+
+    # Check if user exists
+    local user_exists=$(ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "id -u $username >/dev/null 2>&1 && echo 'yes' || echo 'no'")
+
+    if [ "$user_exists" = "yes" ]; then
+        echo "EXISTS"
+        return 0
+    fi
+
+    # Create user with password or without
+    if [ -n "$password" ]; then
+        # Create user with encrypted password, force password change on first login
+        ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+            sudo useradd -m -s /bin/bash -p '$password' -c '$email' $username
+            sudo chage -d 0 $username
+ENDSSH
+    else
+        # Create user without password (SSH key auth only)
+        ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+            sudo useradd -m -s /bin/bash -c '$email' $username
+            sudo passwd -l $username
+ENDSSH
+    fi
+
+    echo "CREATED"
+}
+
+# Setup SSH directory for user
+setup_user_ssh_dir() {
+    local username=$1
+
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        sudo mkdir -p /home/$username/.ssh
+        sudo touch /home/$username/.ssh/authorized_keys
+        sudo chmod 700 /home/$username/.ssh
+        sudo chmod 600 /home/$username/.ssh/authorized_keys
+        sudo chown -R $username:$username /home/$username/.ssh
+ENDSSH
+}
+
+# Add SSH key to user's authorized_keys
+add_user_ssh_key() {
+    local username=$1
+    local ssh_key=$2
+
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        echo '$ssh_key' | sudo tee -a /home/$username/.ssh/authorized_keys > /dev/null
+        sudo chmod 600 /home/$username/.ssh/authorized_keys
+        sudo chown $username:$username /home/$username/.ssh/authorized_keys
+ENDSSH
+}
+
+# Grant deployment permissions to user
+grant_deploy_permissions() {
+    local username=$1
+
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        # Add user to www-data group for web deployment access
+        sudo usermod -aG www-data $username 2>/dev/null || true
+
+        # Grant access to deployment directory
+        if [ -d "$REMOTE_PATH" ]; then
+            # Ensure www-data group exists and owns the directory
+            sudo chgrp -R www-data "$REMOTE_PATH" 2>/dev/null || true
+
+            # Set group permissions: directories get 2775 (setgid), files get 664
+            sudo find "$REMOTE_PATH" -type d -exec chmod 2775 {} \; 2>/dev/null || true
+            sudo find "$REMOTE_PATH" -type f -exec chmod 664 {} \; 2>/dev/null || true
+
+            # Ensure specific subdirectories have proper permissions
+            for dir in releases shared current .shipnode; do
+                if [ -d "$REMOTE_PATH/\$dir" ]; then
+                    sudo chmod -R g+rwX "$REMOTE_PATH/\$dir" 2>/dev/null || true
+                fi
+            done
+        fi
+
+        # Grant PM2 access by adding to the primary user's group
+        PRIMARY_GROUP=\$(id -gn $SSH_USER)
+        sudo usermod -aG \$PRIMARY_GROUP $username 2>/dev/null || true
+ENDSSH
+}
+
+# Grant sudo access to user
+grant_sudo_access() {
+    local username=$1
+
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        # Add user to sudo group
+        sudo usermod -aG sudo $username
+
+        # Create sudoers file with password requirement (safer)
+        echo "$username ALL=(ALL:ALL) ALL" | sudo tee /etc/sudoers.d/$username > /dev/null
+        sudo chmod 440 /etc/sudoers.d/$username
+
+        # Note: For passwordless sudo, replace above with:
+        # echo "$username ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$username > /dev/null
+ENDSSH
+}
+
+# Revoke user access
+revoke_user_access() {
+    local username=$1
+
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+        # Remove from groups
+        sudo deluser $username sudo 2>/dev/null || true
+        sudo deluser $username www-data 2>/dev/null || true
+
+        # Lock account to prevent login
+        sudo usermod -L $username 2>/dev/null || true
+
+        # Remove SSH keys
+        sudo rm -f /home/$username/.ssh/authorized_keys 2>/dev/null || true
+
+        # Remove sudoers file
+        sudo rm -f /etc/sudoers.d/$username 2>/dev/null || true
+
+        # Note: User home directory is preserved
+        # To completely delete user: sudo userdel -r $username
+ENDSSH
+}
+
 # ============================================================================

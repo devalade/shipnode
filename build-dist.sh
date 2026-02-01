@@ -7,7 +7,7 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 DIST_DIR="dist"
 ARCHIVE_NAME="shipnode-payload.tar.gz"
 INSTALLER_NAME="shipnode-installer.sh"
@@ -33,6 +33,10 @@ cp shipnode.conf.example "$PACKAGE_DIR/"
 cp LICENSE "$PACKAGE_DIR/"
 cp README.md "$PACKAGE_DIR/"
 cp INSTALL.md "$PACKAGE_DIR/"
+
+# Copy lib directory
+mkdir -p "$PACKAGE_DIR/lib"
+cp -r lib/* "$PACKAGE_DIR/lib/"
 
 # Copy templates
 mkdir -p "$PACKAGE_DIR/templates"
@@ -62,7 +66,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 INSTALL_DIR="$HOME/.shipnode"
 
 echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
@@ -81,13 +85,28 @@ done
 # Extract embedded archive
 echo -e "${BLUE}→${NC} Extracting ShipNode..."
 
+# Get absolute path of this script before changing directory (portable for Linux and macOS)
+if command -v realpath &> /dev/null; then
+    SCRIPT_PATH="$(realpath "$0")"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS: construct absolute path manually since readlink -f doesn't exist
+    if [ -L "$0" ]; then
+        SCRIPT_PATH="$(cd "$(dirname "$0")" && cd "$(dirname "$(readlink "$0")")" && pwd)/$(basename "$(readlink "$0")")"
+    else
+        SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    fi
+else
+    # Linux: use readlink -f
+    SCRIPT_PATH="$(readlink -f "$0")"
+fi
+
 # Create temp directory
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR"
 
 # Extract the base64-encoded tar.gz from this script
-ARCHIVE_LINE=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
-tail -n +${ARCHIVE_LINE} "$0" | base64 -d | tar -xz
+ARCHIVE_LINE=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$SCRIPT_PATH")
+tail -n +${ARCHIVE_LINE} "$SCRIPT_PATH" | base64 -d | tar -xz
 
 # Check extraction
 if [ ! -d "shipnode" ]; then

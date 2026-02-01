@@ -1,7 +1,7 @@
 #!/bin/bash
 # ShipNode Pre-Deploy Hook
-# This script runs on the remote server BEFORE the new release is activated
-# If this script fails (exit code != 0), the deployment will be aborted
+# Runs BEFORE the app is activated (before PM2 reload)
+# Exit non-zero to abort deployment
 #
 # Available environment variables:
 #   RELEASE_PATH    - Path to the new release being deployed
@@ -19,19 +19,38 @@ if [ -f "$SHARED_ENV_PATH" ]; then
     set +a
 fi
 
+cd "$RELEASE_PATH"
+
 echo "Running pre-deploy hook for release: $RELEASE_PATH"
 
-# Example: Run database migrations
-# cd "$RELEASE_PATH" && npm run migrate
+# ── ORM Database Migrations ──────────────────────────────────────
 
-# Example: Run Prisma migrations
-# cd "$RELEASE_PATH" && npx prisma migrate deploy
+# Prisma (generate client + run migrations)
+# Detect package manager for Prisma commands
+# if [ -f "pnpm-lock.yaml" ]; then
+#     pnpm prisma generate && pnpm prisma migrate deploy
+# elif [ -f "yarn.lock" ]; then
+#     yarn prisma generate && yarn prisma migrate deploy
+# else
+#     npx prisma generate && npx prisma migrate deploy
+# fi
 
-# Example: Clear temporary cache
-# rm -rf /tmp/myapp-cache/*
+# Drizzle (run migrations)
+# npx drizzle-kit migrate
 
-# Example: Warm up caches or compile assets
-# cd "$RELEASE_PATH" && npm run build:assets
+# TypeORM (run migrations)
+# npx typeorm migration:run -d dist/data-source.js
+
+# Sequelize (run migrations)
+# npx sequelize-cli db:migrate
+
+# Knex (run migrations)
+# npx knex migrate:latest
+
+# AdonisJS Lucid (run migrations)
+# node ace migration:run --force
+
+# ─────────────────────────────────────────────────────────────────
 
 echo "Pre-deploy hook completed successfully"
 exit 0

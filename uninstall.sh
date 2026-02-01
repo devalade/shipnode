@@ -23,6 +23,19 @@ if [ -L "/usr/local/bin/shipnode" ]; then
     echo -e "${GREEN}✓${NC} Symlink removed"
 fi
 
+# Portable sed -i that works on both Linux and macOS
+portable_sed_inplace() {
+    local pattern=$1
+    local file=$2
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS requires empty string after -i
+        sed -i '' "$pattern" "$file"
+    else
+        # Linux
+        sed -i "$pattern" "$file"
+    fi
+}
+
 # Remove from shell configs
 remove_from_config() {
     local config_file=$1
@@ -32,8 +45,8 @@ remove_from_config() {
         if grep -q "$SCRIPT_DIR" "$config_file"; then
             echo -e "${BLUE}→${NC} Removing from $config_name..."
             # Remove the ShipNode comment and export line
-            sed -i '/# ShipNode/d' "$config_file"
-            sed -i "\|$SCRIPT_DIR|d" "$config_file"
+            portable_sed_inplace '/# ShipNode/d' "$config_file"
+            portable_sed_inplace "\|$SCRIPT_DIR|d" "$config_file"
             echo -e "${GREEN}✓${NC} Removed from $config_name"
         fi
     fi

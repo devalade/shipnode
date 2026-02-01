@@ -1,5 +1,212 @@
 # ============================================================================
 
+# Generate .shipnode/ directory with smart hook templates
+generate_shipnode_hooks() {
+    # Create .shipnode directory
+    mkdir -p .shipnode
+
+    # Detect ORM from package.json
+    local orm_info=""
+    local orm_name=""
+    local migrate_cmd=""
+    local generate_cmd=""
+
+    if [ -f "package.json" ]; then
+        orm_info=$(detect_orm)
+        IFS='|' read -r orm_name migrate_cmd generate_cmd <<< "$orm_info"
+    else
+        orm_name="none"
+    fi
+
+    # Generate pre-deploy.sh
+    cat > .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+#!/bin/bash
+# ShipNode Pre-Deploy Hook
+# Runs BEFORE the app is activated (before PM2 reload)
+# Exit non-zero to abort deployment
+#
+# Available environment variables:
+#   RELEASE_PATH    - Path to the new release being deployed
+#   REMOTE_PATH     - Base deployment directory
+#   PM2_APP_NAME    - PM2 process name (backend only)
+#   BACKEND_PORT    - Application port (backend only)
+#   SHARED_ENV_PATH - Path to the server's shared .env file
+
+set -e  # Exit on error
+
+# Source the server's shared .env to use same variables as the app
+if [ -f "$SHARED_ENV_PATH" ]; then
+    set -a
+    source "$SHARED_ENV_PATH"
+    set +a
+fi
+
+cd "$RELEASE_PATH"
+
+echo "Running pre-deploy hook for release: $RELEASE_PATH"
+
+# ── ORM Database Migrations ──────────────────────────────────────
+
+PREDEPLOY_EOF
+
+    # Add ORM-specific commands (uncommented if detected)
+    if [ "$orm_name" = "Prisma" ]; then
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Prisma (detected) - using package manager auto-detection
+if [ -f "pnpm-lock.yaml" ]; then
+    pnpm prisma generate
+    pnpm prisma migrate deploy
+elif [ -f "yarn.lock" ]; then
+    yarn prisma generate
+    yarn prisma migrate deploy
+else
+    npx prisma generate
+    npx prisma migrate deploy
+fi
+
+PREDEPLOY_EOF
+    else
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Prisma (generate client + run migrations)
+# if [ -f "pnpm-lock.yaml" ]; then
+#     pnpm prisma generate && pnpm prisma migrate deploy
+# elif [ -f "yarn.lock" ]; then
+#     yarn prisma generate && yarn prisma migrate deploy
+# else
+#     npx prisma generate && npx prisma migrate deploy
+# fi
+
+PREDEPLOY_EOF
+    fi
+
+    if [ "$orm_name" = "Drizzle" ]; then
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Drizzle (detected)
+npx drizzle-kit migrate
+
+PREDEPLOY_EOF
+    else
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Drizzle (run migrations)
+# npx drizzle-kit migrate
+
+PREDEPLOY_EOF
+    fi
+
+    if [ "$orm_name" = "TypeORM" ]; then
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# TypeORM (detected)
+npx typeorm migration:run
+
+PREDEPLOY_EOF
+    else
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# TypeORM (run migrations)
+# npx typeorm migration:run
+
+PREDEPLOY_EOF
+    fi
+
+    if [ "$orm_name" = "Sequelize" ]; then
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Sequelize (detected)
+npx sequelize-cli db:migrate
+
+PREDEPLOY_EOF
+    else
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Sequelize (run migrations)
+# npx sequelize-cli db:migrate
+
+PREDEPLOY_EOF
+    fi
+
+    if [ "$orm_name" = "Knex" ]; then
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Knex (detected)
+npx knex migrate:latest
+
+PREDEPLOY_EOF
+    else
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# Knex (run migrations)
+# npx knex migrate:latest
+
+PREDEPLOY_EOF
+    fi
+
+    if [ "$orm_name" = "AdonisJS Lucid" ]; then
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# AdonisJS Lucid (detected)
+node ace migration:run --force
+
+PREDEPLOY_EOF
+    else
+        cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# AdonisJS Lucid (run migrations)
+# node ace migration:run --force
+
+PREDEPLOY_EOF
+    fi
+
+    # Close pre-deploy.sh
+    cat >> .shipnode/pre-deploy.sh << 'PREDEPLOY_EOF'
+# ─────────────────────────────────────────────────────────────────
+
+echo "Pre-deploy hook completed successfully"
+exit 0
+PREDEPLOY_EOF
+
+    # Generate post-deploy.sh
+    cat > .shipnode/post-deploy.sh << 'POSTDEPLOY_EOF'
+#!/bin/bash
+# ShipNode Post-Deploy Hook
+# Runs AFTER deployment completes. Failure won't rollback.
+#
+# Available environment variables:
+#   RELEASE_PATH    - Path to the current release (symlinked as 'current')
+#   REMOTE_PATH     - Base deployment directory
+#   PM2_APP_NAME    - PM2 process name (backend only)
+#   BACKEND_PORT    - Application port (backend only)
+#   SHARED_ENV_PATH - Path to the server's shared .env file
+
+set -e  # Exit on error (but failure won't rollback deployment)
+
+# Source the server's shared .env to use same variables as the app
+if [ -f "$SHARED_ENV_PATH" ]; then
+    set -a
+    source "$SHARED_ENV_PATH"
+    set +a
+fi
+
+cd "$RELEASE_PATH"
+
+echo "Running post-deploy hook for release: $RELEASE_PATH"
+
+# ── Examples ─────────────────────────────────────────────────────
+
+# Seed database:          npx prisma db seed
+# Clear cache:            npm run cache:clear
+# Notify Slack:           curl -X POST https://hooks.slack.com/... -d '{"text":"Deployed!"}'
+# Cleanup old logs:       find /var/log/myapp -name "*.log" -mtime +7 -delete
+# Warm cache:             curl -sf http://localhost:${BACKEND_PORT}/api/warmup
+
+# ─────────────────────────────────────────────────────────────────
+
+echo "Post-deploy hook completed successfully"
+exit 0
+POSTDEPLOY_EOF
+
+    # Make hooks executable
+    chmod +x .shipnode/pre-deploy.sh .shipnode/post-deploy.sh
+
+    if [ "$orm_name" != "none" ]; then
+        success "Generated .shipnode/ hooks with $orm_name commands"
+    else
+        success "Generated .shipnode/ hooks (no ORM detected)"
+    fi
+}
+
 # Legacy non-interactive init (backward compatibility)
 cmd_init_legacy() {
     if [ -f "shipnode.conf" ]; then
@@ -32,6 +239,9 @@ BACKEND_PORT=3000
 
 # Frontend-specific (optional)
 DOMAIN=myapp.com
+
+# Environment file (optional)
+# ENV_FILE=.env
 
 # Zero-downtime deployment (optional)
 ZERO_DOWNTIME=true
@@ -369,6 +579,13 @@ DOMAIN=$domain
 EOF
     fi
 
+    # Environment file (optional)
+    cat >> shipnode.conf <<EOF
+
+# Environment file
+# ENV_FILE=.env
+EOF
+
     # Zero-downtime settings
     cat >> shipnode.conf <<EOF
 
@@ -390,6 +607,10 @@ EOF
     fi
 
     success "Created shipnode.conf"
+
+    # Generate .shipnode/ hooks
+    echo ""
+    generate_shipnode_hooks
 
     # Users.yml wizard
     echo ""
@@ -818,6 +1039,13 @@ DOMAIN=$domain
 EOF
     fi
 
+    # Environment file (optional)
+    cat >> shipnode.conf <<EOF
+
+# Environment file
+# ENV_FILE=.env
+EOF
+
     # Zero-downtime settings
     cat >> shipnode.conf <<EOF
 
@@ -839,15 +1067,19 @@ EOF
     fi
 
     success "Created shipnode.conf"
-    
-    # 9. Users.yml wizard
+
+    # 9. Generate .shipnode/ hooks
+    echo ""
+    generate_shipnode_hooks
+
+    # 10. Users.yml wizard
     echo ""
     if prompt_yes_no "Add deployment users now?"; then
         init_users_yaml
     else
         info "You can add users later with: shipnode user sync"
     fi
-    
+
     echo ""
     success "Initialization complete!"
     info "Next steps:"

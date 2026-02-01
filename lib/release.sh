@@ -115,17 +115,9 @@ rollback_to_release() {
     switch_symlink "$release_path"
 
     if [ "$APP_TYPE" = "backend" ]; then
-        # Delete and re-start to ensure PM2 picks up the rolled-back release cwd
-        local PKG_START_CMD=$(get_pkg_start_cmd "$PKG_MANAGER" "$PM2_APP_NAME")
         ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
             set -e
-            cd $REMOTE_PATH/current
-            pm2 delete $PM2_APP_NAME 2>/dev/null || true
-            if [ -f ecosystem.config.js ]; then
-                pm2 start ecosystem.config.js
-            else
-                $PKG_START_CMD
-            fi
+            pm2 startOrReload $REMOTE_PATH/shared/ecosystem.config.cjs --update-env
             pm2 save
 ENDSSH
     fi
