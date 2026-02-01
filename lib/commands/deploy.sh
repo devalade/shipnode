@@ -92,21 +92,15 @@ ENDSSH
 
     # Start or reload with PM2
     info "Starting application with PM2..."
-    local PKG_START_CMD=$(get_pkg_start_cmd "$PKG_MANAGER" "$PM2_APP_NAME")
 
-    ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
+    # Always regenerate ecosystem file to ensure it's up to date
+    info "Generating PM2 ecosystem config..."
+    generate_ecosystem_file "$PKG_MANAGER" "$PM2_APP_NAME" "$REMOTE_PATH" \
+        | ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "cat > $REMOTE_PATH/ecosystem.config.cjs"
+
+    ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         set -e
-        cd $REMOTE_PATH
-
-        # Delete and re-start to ensure PM2 picks up the correct cwd
-        pm2 delete $PM2_APP_NAME 2>/dev/null || true
-
-        if [ -f ecosystem.config.js ]; then
-            pm2 start ecosystem.config.js
-        else
-            $PKG_START_CMD
-        fi
-
+        pm2 startOrReload $REMOTE_PATH/ecosystem.config.cjs --update-env
         pm2 save
 ENDSSH
 
@@ -189,22 +183,14 @@ ENDSSH
     # Reload PM2
     info "Reloading application..."
 
-    # Generate PM2 start command based on package manager
-    local PKG_START_CMD=$(get_pkg_start_cmd "$PKG_MANAGER" "$PM2_APP_NAME")
+    # Always regenerate ecosystem file to ensure it's up to date
+    info "Generating PM2 ecosystem config..."
+    generate_ecosystem_file "$PKG_MANAGER" "$PM2_APP_NAME" "$REMOTE_PATH/current" \
+        | ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "cat > $REMOTE_PATH/shared/ecosystem.config.cjs"
 
     ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         set -e
-        cd $REMOTE_PATH/current
-
-        # Delete and re-start to ensure PM2 picks up the new release cwd
-        pm2 delete $PM2_APP_NAME 2>/dev/null || true
-
-        if [ -f ecosystem.config.js ]; then
-            pm2 start ecosystem.config.js
-        else
-            $PKG_START_CMD
-        fi
-
+        pm2 startOrReload $REMOTE_PATH/shared/ecosystem.config.cjs --update-env
         pm2 save
 ENDSSH
 

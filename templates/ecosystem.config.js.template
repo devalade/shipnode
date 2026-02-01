@@ -1,20 +1,15 @@
 module.exports = {
   apps: [{
     name: 'APP_NAME',
-    script: './index.js', // or your main entry file
-    instances: 1,
-    exec_mode: 'cluster',
+    script: 'npm', // npm|yarn|pnpm|bun
+    args: 'start',
+    cwd: '/var/www/app/current',
     env: {
       NODE_ENV: 'production',
-      PORT: APP_PORT
+      PORT: 3000
     },
-    error_file: './logs/error.log',
-    out_file: './logs/output.log',
-    log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-    merge_logs: true,
     autorestart: true,
     max_restarts: 10,
-    min_uptime: '10s',
-    max_memory_restart: '500M'
+    min_uptime: '10s'
   }]
 };

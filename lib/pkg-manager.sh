@@ -32,20 +32,23 @@ detect_pkg_manager() {
 }
 
 # Get install command for package manager
+# Note: We install ALL dependencies (including dev) because many projects need
+# devDependencies for build tools (TypeScript, Prisma, etc.) during deployment.
+# Pruning devDependencies can happen after build/migration if needed.
 get_pkg_install_cmd() {
     local pkg_manager=$1
     case "$pkg_manager" in
         bun)
-            echo "bun install --production"
+            echo "bun install"
             ;;
         pnpm)
-            echo "pnpm install --prod"
+            echo "pnpm install"
             ;;
         yarn)
-            echo "yarn install --production"
+            echo "yarn install"
             ;;
         *)
-            echo "npm install --omit=dev"
+            echo "npm install"
             ;;
     esac
 }
@@ -70,24 +73,31 @@ get_pkg_run_cmd() {
     esac
 }
 
-# Get PM2 start command for package manager
-get_pkg_start_cmd() {
+# Generate PM2 ecosystem file with symlink as cwd
+generate_ecosystem_file() {
     local pkg_manager=$1
     local app_name=$2
+    local cwd=$3
+    local interpreter
     case "$pkg_manager" in
-        bun)
-            echo "pm2 start bun --name \"$app_name\" -- start"
-            ;;
-        pnpm)
-            echo "pm2 start pnpm --name \"$app_name\" -- start"
-            ;;
-        yarn)
-            echo "pm2 start yarn --name \"$app_name\" -- start"
-            ;;
-        *)
-            echo "pm2 start npm --name \"$app_name\" -- start"
-            ;;
+        bun)  interpreter="bun" ;;
+        pnpm) interpreter="pnpm" ;;
+        yarn) interpreter="yarn" ;;
+        *)    interpreter="npm" ;;
     esac
+    cat << EOF
+module.exports = {
+  apps: [{
+    name: "$app_name",
+    script: "$interpreter",
+    args: "start",
+    cwd: "$cwd",
+    autorestart: true,
+    max_restarts: 10,
+    min_uptime: '10s'
+  }]
+};
+EOF
 }
 
 # Install package manager on remote server

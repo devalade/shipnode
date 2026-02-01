@@ -24,8 +24,13 @@ cmd_migrate() {
 
     local timestamp=$(generate_release_timestamp)
 
-    # Generate PM2 start command based on package manager
-    local PKG_START_CMD=$(get_pkg_start_cmd "$PKG_MANAGER" "$PM2_APP_NAME")
+    # Generate ecosystem file for backend apps (always regenerate to ensure it's up to date)
+    if [ "$APP_TYPE" = "backend" ]; then
+        info "Generating PM2 ecosystem config..."
+        ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p $REMOTE_PATH/shared"
+        generate_ecosystem_file "$PKG_MANAGER" "$PM2_APP_NAME" "$REMOTE_PATH/current" \
+            | ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "cat > $REMOTE_PATH/shared/ecosystem.config.cjs"
+    fi
 
     ssh -T -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << ENDSSH
         set -e
@@ -57,14 +62,8 @@ cmd_migrate() {
 
         # Update PM2 to use current directory if backend
         if [ "$APP_TYPE" = "backend" ]; then
-            cd current
             if pm2 describe $PM2_APP_NAME > /dev/null 2>&1; then
-                pm2 delete $PM2_APP_NAME
-                if [ -f ecosystem.config.js ]; then
-                    pm2 start ecosystem.config.js
-                else
-                    $PKG_START_CMD
-                fi
+                pm2 startOrReload $REMOTE_PATH/shared/ecosystem.config.cjs --update-env
                 pm2 save
             fi
         fi
