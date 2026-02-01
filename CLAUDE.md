@@ -44,9 +44,9 @@ shipnode (main entry)
 - **core.sh**: Globals, colors, logging (error/success/info/warn), OS detection, Gum install
 - **release.sh**: Zero-downtime deploy (timestamps, symlinks, health checks, rollback)
 - **database.sh**: PostgreSQL setup
-- **users.sh**: User provisioning helpers
+- **users.sh**: User provisioning (creation, SSH keys, permissions, sudo, revocation)
 - **framework.sh**: Framework detection from package.json (Express, NestJS, Next.js, React, etc.)
-- **validation.sh**: Input validation (IP, port, domain, SSH), user creation/management
+- **validation.sh**: Input validation (IP, port, domain, SSH, remote port checks)
 - **prompts.sh**: Interactive prompts with Gum UI fallback
 - **pkg-manager.sh**: Package manager detection (npm/yarn/pnpm/bun) from lockfiles, installation on remote server
 - **templates.sh**: Framework templates for init
@@ -184,7 +184,7 @@ Sourced as bash, key variables:
    - yarn.lock → yarn
    - default → npm
 4. Generate commands:
-   - Install: `bun install --production` | `pnpm install --prod` | `yarn install --production` | `npm install --omit=dev`
+   - Install: `bun install` | `pnpm install` | `yarn install` | `npm install`
    - Run: `<pm> run <script>`
    - PM2: `pm2 start bun -- start` | `pm2 start npm -- start` | etc.
 
@@ -302,6 +302,8 @@ Auto-detects port from package.json scripts.
 4. **Naming**: `cmd_<name>()` for commands, descriptive for helpers
 5. **Error handling**: `error()` for fatal, `warn()` for non-fatal
 6. **Comments**: Complex logic only, code should be self-documenting
+7. **Search before implementing**: Before writing any new function, search the entire codebase with Grep to check if it already exists. Functions may be defined in different modules than expected.
+8. **Changelog discipline**: CHANGELOG.md is for end users. Only log user-facing changes (features, behavior changes, bug fixes). Never log internal doc edits, CLAUDE.md updates, or refactors with no external effect.
 
 ## Troubleshooting
 
