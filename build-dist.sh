@@ -77,7 +77,7 @@ if [ ! -f "$0" ] || [ "$(basename "$0")" = "bash" ] || [ "$(basename "$0")" = "s
         exit 1
     fi
 
-    bash "$SELF_TEMP" "$@"
+    bash "$SELF_TEMP" --non-interactive "$@"
     EXIT_CODE=$?
     rm -f "$SELF_TEMP"
     exit $EXIT_CODE
@@ -92,6 +92,14 @@ NC='\033[0m'
 
 VERSION="1.1.1"
 INSTALL_DIR="$HOME/.shipnode"
+
+# Parse flags
+NON_INTERACTIVE=false
+for arg in "$@"; do
+    if [ "$arg" = "--non-interactive" ]; then
+        NON_INTERACTIVE=true
+    fi
+done
 
 echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║  ShipNode Installer v${VERSION}        ║${NC}"
@@ -142,41 +150,48 @@ fi
 echo -e "${GREEN}✓${NC} Extracted successfully"
 
 # Choose installation location
-echo
-echo "Choose installation location:"
-echo "  1) $HOME/.shipnode (recommended)"
-echo "  2) /opt/shipnode (system-wide, requires sudo)"
-echo "  3) Custom path"
-echo
+# If not interactive (e.g., piped from curl or --non-interactive flag), default to recommended location
+if [ "$NON_INTERACTIVE" = true ] || [ ! -t 0 ]; then
+    INSTALL_DIR="$HOME/.shipnode"
+    USE_SUDO=""
+    echo -e "${BLUE}→${NC} Non-interactive mode: installing to $INSTALL_DIR"
+else
+    echo
+    echo "Choose installation location:"
+    echo "  1) $HOME/.shipnode (recommended)"
+    echo "  2) /opt/shipnode (system-wide, requires sudo)"
+    echo "  3) Custom path"
+    echo
 
-read -p "Enter choice [1-3]: " -n 1 -r
-echo
+    read -p "Enter choice [1-3]: " -n 1 -r
+    echo
 
-case $REPLY in
-    1)
-        INSTALL_DIR="$HOME/.shipnode"
-        USE_SUDO=""
-        ;;
-    2)
-        INSTALL_DIR="/opt/shipnode"
-        USE_SUDO="sudo"
-        ;;
-    3)
-        read -p "Enter installation path: " INSTALL_DIR
-        INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
-
-        # Check if we need sudo
-        if [[ "$INSTALL_DIR" == /opt/* ]] || [[ "$INSTALL_DIR" == /usr/* ]]; then
-            USE_SUDO="sudo"
-        else
+    case $REPLY in
+        1)
+            INSTALL_DIR="$HOME/.shipnode"
             USE_SUDO=""
-        fi
-        ;;
-    *)
-        echo -e "${RED}Invalid choice${NC}"
-        exit 1
-        ;;
-esac
+            ;;
+        2)
+            INSTALL_DIR="/opt/shipnode"
+            USE_SUDO="sudo"
+            ;;
+        3)
+            read -p "Enter installation path: " INSTALL_DIR
+            INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
+
+            # Check if we need sudo
+            if [[ "$INSTALL_DIR" == /opt/* ]] || [[ "$INSTALL_DIR" == /usr/* ]]; then
+                USE_SUDO="sudo"
+            else
+                USE_SUDO=""
+            fi
+            ;;
+        *)
+            echo -e "${RED}Invalid choice${NC}"
+            exit 1
+            ;;
+    esac
+fi
 
 # Install
 echo -e "${BLUE}→${NC} Installing to $INSTALL_DIR..."
@@ -199,103 +214,34 @@ $USE_SUDO chmod +x "$INSTALL_DIR/shipnode"
 echo -e "${GREEN}✓${NC} Files installed"
 
 # Setup PATH
-echo
-echo "Choose how to make shipnode available:"
-echo "  1) Symlink to /usr/local/bin (recommended, may require sudo)"
-echo "  2) Add to PATH in ~/.bashrc"
-echo "  3) Add to PATH in ~/.zshrc"
-echo "  4) Both bashrc and zshrc"
-echo "  5) Skip (manual setup)"
-echo
-
-read -p "Enter choice [1-5]: " -n 1 -r
-echo
-
 SHIPNODE_BIN="$INSTALL_DIR/shipnode"
+EXPORT_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+ADDED_TO=""
 
-case $REPLY in
-    1)
-        echo -e "${BLUE}→${NC} Creating symlink to /usr/local/bin..."
-        sudo ln -sf "$SHIPNODE_BIN" /usr/local/bin/shipnode
-        echo -e "${GREEN}✓${NC} Symlink created"
+if [ -f ~/.bashrc ]; then
+    if ! grep -q "$INSTALL_DIR" ~/.bashrc 2>/dev/null; then
+        echo "" >> ~/.bashrc
+        echo "# ShipNode" >> ~/.bashrc
+        echo "$EXPORT_LINE" >> ~/.bashrc
+        ADDED_TO="~/.bashrc"
+    fi
+fi
 
-        # Verify
-        if command -v shipnode &> /dev/null; then
-            echo -e "${GREEN}✓${NC} Installation successful!"
-        else
-            echo -e "${YELLOW}⚠${NC} Symlink created but shipnode not in PATH. Check your PATH settings."
-        fi
-        ;;
-    2)
-        echo -e "${BLUE}→${NC} Adding to ~/.bashrc..."
-        EXPORT_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+if [ -f ~/.zshrc ]; then
+    if ! grep -q "$INSTALL_DIR" ~/.zshrc 2>/dev/null; then
+        echo "" >> ~/.zshrc
+        echo "# ShipNode" >> ~/.zshrc
+        echo "$EXPORT_LINE" >> ~/.zshrc
+        [ -n "$ADDED_TO" ] && ADDED_TO="$ADDED_TO and ~/.zshrc" || ADDED_TO="~/.zshrc"
+    fi
+fi
 
-        if grep -q "$INSTALL_DIR" ~/.bashrc 2>/dev/null; then
-            echo -e "${YELLOW}⚠${NC} Already in ~/.bashrc"
-        else
-            echo "" >> ~/.bashrc
-            echo "# ShipNode" >> ~/.bashrc
-            echo "$EXPORT_LINE" >> ~/.bashrc
-            echo -e "${GREEN}✓${NC} Added to ~/.bashrc"
-        fi
-
-        echo -e "\n${BLUE}Run:${NC} source ~/.bashrc"
-        echo -e "or restart your terminal to use shipnode"
-        ;;
-    3)
-        echo -e "${BLUE}→${NC} Adding to ~/.zshrc..."
-        EXPORT_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
-
-        if grep -q "$INSTALL_DIR" ~/.zshrc 2>/dev/null; then
-            echo -e "${YELLOW}⚠${NC} Already in ~/.zshrc"
-        else
-            echo "" >> ~/.zshrc
-            echo "# ShipNode" >> ~/.zshrc
-            echo "$EXPORT_LINE" >> ~/.zshrc
-            echo -e "${GREEN}✓${NC} Added to ~/.zshrc"
-        fi
-
-        echo -e "\n${BLUE}Run:${NC} source ~/.zshrc"
-        echo -e "or restart your terminal to use shipnode"
-        ;;
-    4)
-        echo -e "${BLUE}→${NC} Adding to both ~/.bashrc and ~/.zshrc..."
-        EXPORT_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
-
-        # Bashrc
-        if grep -q "$INSTALL_DIR" ~/.bashrc 2>/dev/null; then
-            echo -e "${YELLOW}⚠${NC} Already in ~/.bashrc"
-        else
-            echo "" >> ~/.bashrc
-            echo "# ShipNode" >> ~/.bashrc
-            echo "$EXPORT_LINE" >> ~/.bashrc
-            echo -e "${GREEN}✓${NC} Added to ~/.bashrc"
-        fi
-
-        # Zshrc
-        if grep -q "$INSTALL_DIR" ~/.zshrc 2>/dev/null; then
-            echo -e "${YELLOW}⚠${NC} Already in ~/.zshrc"
-        else
-            echo "" >> ~/.zshrc
-            echo "# ShipNode" >> ~/.zshrc
-            echo "$EXPORT_LINE" >> ~/.zshrc
-            echo -e "${GREEN}✓${NC} Added to ~/.zshrc"
-        fi
-
-        echo -e "\n${BLUE}Run:${NC} source ~/.bashrc (or ~/.zshrc)"
-        echo -e "or restart your terminal to use shipnode"
-        ;;
-    5)
-        echo -e "${YELLOW}⚠${NC} Skipping PATH setup"
-        echo -e "\nManual setup options:"
-        echo -e "  1. Symlink: ${BLUE}sudo ln -s $SHIPNODE_BIN /usr/local/bin/shipnode${NC}"
-        echo -e "  2. PATH: Add ${BLUE}export PATH=\"$INSTALL_DIR:\$PATH\"${NC} to your shell config"
-        ;;
-    *)
-        echo -e "${RED}Invalid choice${NC}"
-        exit 1
-        ;;
-esac
+if [ -n "$ADDED_TO" ]; then
+    echo -e "${GREEN}✓${NC} Added to PATH in $ADDED_TO"
+    echo -e "  Restart your terminal or run: ${BLUE}source $ADDED_TO${NC}"
+else
+    echo -e "${YELLOW}⚠${NC} Already in PATH or no shell config found"
+fi
 
 # Cleanup
 cd - > /dev/null
