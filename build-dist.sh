@@ -56,13 +56,27 @@ echo -e "${BLUE}→${NC} Creating self-extracting installer..."
 
 cat > "$DIST_DIR/$INSTALLER_NAME" << 'EOF'
 #!/usr/bin/env bash
-
+{
 set -e
 
-# Detect pipe execution and save to temp file
+# Detect pipe execution and re-download to temp file
 if [ ! -f "$0" ] || [ "$(basename "$0")" = "bash" ] || [ "$(basename "$0")" = "sh" ]; then
-    SELF_TEMP=$(mktemp)
-    cat > "$SELF_TEMP"
+    SELF_TEMP=$(mktemp /tmp/shipnode-installer.XXXXXX)
+    DOWNLOAD_URL="https://github.com/devalade/shipnode/releases/latest/download/shipnode-installer.sh"
+
+    # Colors for download message
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+    RED='\033[0;31m'
+
+    echo -e "${BLUE}→${NC} Downloading installer..."
+
+    if ! curl -fsSL "$DOWNLOAD_URL" -o "$SELF_TEMP"; then
+        echo -e "${RED}Error: Failed to download installer${NC}"
+        rm -f "$SELF_TEMP"
+        exit 1
+    fi
+
     bash "$SELF_TEMP" "$@"
     EXIT_CODE=$?
     rm -f "$SELF_TEMP"
@@ -301,7 +315,7 @@ echo "Documentation: https://github.com/devalade/shipnode"
 echo
 
 exit 0
-
+}
 __ARCHIVE_BELOW__
 EOF
 
