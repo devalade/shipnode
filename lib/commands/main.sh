@@ -58,6 +58,9 @@ main() {
         mkpasswd)
             cmd_mkpasswd
             ;;
+        upgrade)
+            cmd_upgrade
+            ;;
         help|--help|-h)
             cmd_help
             ;;

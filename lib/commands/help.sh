@@ -22,6 +22,7 @@ Commands:
     rollback [N]        Rollback to previous release (or N steps back)
     releases            List all available releases
     migrate             Migrate existing deployment to release structure
+    upgrade             Upgrade ShipNode to latest version
     help                Show this help message
 
 User Management:
