@@ -23,6 +23,23 @@ cmd_setup() {
     # Set default Node.js version if not specified
     local node_version="${NODE_VERSION:-lts}"
 
+
+    # Check if rsync is installed locally (especially for Windows users)
+    info "Checking for local rsync..."
+    if ! command -v rsync &> /dev/null; then
+        warn "rsync not found locally."
+        if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+            info "Attempting to install rsync via pacman."
+            pacman -S --noconfirm rsync
+        else
+            error "Please install rsync to continue."
+        fi
+    else
+        success "Local rsync found: $(rsync --version | head -n 1)"
+    fi
+    ##################################################################
+
+
     # Extract major version if full version is provided (e.g., 22.14.0 -> 22)
     if [[ "$node_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         node_version=$(echo "$node_version" | cut -d. -f1)
