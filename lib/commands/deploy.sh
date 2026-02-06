@@ -6,6 +6,9 @@ cmd_deploy() {
         SKIP_BUILD=true
     fi
 
+    # Ensure rsync is available
+    ensure_rsync
+
     # Detect package manager
     PKG_MANAGER=$(detect_pkg_manager)
     PKG_INSTALL_CMD=$(get_pkg_install_cmd "$PKG_MANAGER")

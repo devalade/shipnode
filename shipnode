@@ -12,6 +12,7 @@ LIB_DIR="$SHIPNODE_DIR/lib"
 
 # Source all library modules in order
 source "$LIB_DIR/core.sh"
+source "$LIB_DIR/rsync-installer.sh"
 source "$LIB_DIR/pkg-manager.sh"
 source "$LIB_DIR/release.sh"
 source "$LIB_DIR/database.sh"
