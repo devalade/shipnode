@@ -85,9 +85,18 @@ export class BackendStrategy implements DeploymentStrategy {
     await ctx.executor.exec(`echo '${escaped}' > "${ecosystemPath}"`);
 
     const cdPath = this.config.zeroDowntime ? `${this.config.remotePath}/current` : ctx.workDir;
+    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+
+    // Re-run install from the final directory so the pkg manager's module
+    // resolution state matches the path PM2 will use. Packages are already
+    // in the local store so this is a fast offline relink, not a download.
+    const installCmd = getInstallCommand(pkgManager);
     await ctx.executor.exec(
-      `cd "${cdPath}" && ` +
-      `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH" && ` +
+      `cd "${cdPath}" && ${mise} && ${installCmd} --prefer-offline`,
+    );
+
+    await ctx.executor.exec(
+      `cd "${cdPath}" && ${mise} && ` +
       `mise exec -- pm2 startOrReload "${ecosystemPath}" --update-env && ` +
       `mise exec -- pm2 save`,
     );
@@ -101,14 +110,11 @@ export class BackendStrategy implements DeploymentStrategy {
     const instances = this.config.pm2.instances ?? 1;
     const maxMemory = this.config.pm2.maxMemory ?? '512M';
 
-    // cluster mode requires a Node.js file; use fork for pkg manager scripts
-    const args = pkgManager === 'pnpm' ? 'run --no-run-check start' : 'start';
-
     return `module.exports = {
   apps: [{
     name: '${name}',
     script: '${pkgManager}',
-    args: '${args}',
+    args: 'start',
     instances: ${instances},
     exec_mode: 'fork',
     max_memory_restart: '${maxMemory}',
