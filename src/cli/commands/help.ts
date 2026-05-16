@@ -20,7 +20,7 @@ ${chalk.bold('RELEASE MANAGEMENT')}
   ${chalk.green('migrate')}           Migrate existing deploy to zero-downtime structure
 
 ${chalk.bold('ENVIRONMENT')}
-  ${chalk.green('env')}               Upload local .env file to the server
+  ${chalk.green('env')} [--file <p>]   Upload local .env file to the server
   ${chalk.green('run')} <cmd>         Run a one-off command on the production server
 
 ${chalk.bold('PROCESS MANAGEMENT')}

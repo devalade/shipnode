@@ -88,6 +88,7 @@ program
 program
   .command('env')
   .description('Upload local .env file to the server')
+  .option('--file <path>', 'Path to .env file to upload (default: .env from config)')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdEnv(process.cwd(), opts));
 

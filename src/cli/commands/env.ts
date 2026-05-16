@@ -6,18 +6,19 @@ import { ui } from '../ui.js';
 
 export async function cmdEnv(
   cwd: string,
-  options: { config?: string },
+  options: { file?: string; config?: string },
 ): Promise<void> {
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      const localEnvPath = resolve(cwd, config.envFile);
+      const envFile = options.file ?? config.envFile;
+      const localEnvPath = resolve(cwd, envFile);
 
       if (!(await pathExists(localEnvPath))) {
-        throw new Error(`Environment file not found: ${config.envFile}`);
+        throw new Error(`Environment file not found: ${envFile}`);
       }
 
-      ui.info(`Uploading ${config.envFile} to server...`);
+      ui.info(`Uploading ${envFile} to server...`);
 
       const content = await readFile(localEnvPath);
       const b64 = content.toString('base64');
