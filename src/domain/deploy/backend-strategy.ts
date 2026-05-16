@@ -98,7 +98,8 @@ export class BackendStrategy implements DeploymentStrategy {
 
     await ctx.executor.exec(
       `cd "${cdPath}" && ${mise} && ` +
-      `mise exec -- pm2 startOrReload "${ecosystemPath}" --update-env && ` +
+      `{ mise exec -- pm2 delete "${this.config.pm2!.name}" 2>/dev/null || true; } && ` +
+      `mise exec -- pm2 start "${ecosystemPath}" --update-env && ` +
       `mise exec -- pm2 save`,
     );
   }

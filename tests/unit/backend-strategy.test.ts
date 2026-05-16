@@ -196,7 +196,8 @@ describe('BackendStrategy.startApp', () => {
     expect(history).toHaveLength(3);
     expect(history[0].command).toContain('ecosystem.config.cjs');
     expect(history[1].command).toContain('--prefer-offline');
-    expect(history[2].command).toContain('pm2 startOrReload');
+    expect(history[2].command).toContain('pm2 delete');
+    expect(history[2].command).toContain('pm2 start');
     expect(history[2].command).toContain('pm2 save');
   });
 
