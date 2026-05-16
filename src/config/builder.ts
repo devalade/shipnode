@@ -4,6 +4,7 @@ import type {
   Pm2Config,
   HealthCheckConfig,
   DatabaseConfig,
+  RedisConfig,
   BackupConfig,
   CloudflareConfig,
   HookFn,
@@ -113,6 +114,11 @@ export class ShipnodeBuilder {
 
   database(opts: DatabaseConfig): this {
     this.config.database = opts;
+    return this;
+  }
+
+  redis(opts: RedisConfig): this {
+    this.config.redis = opts;
     return this;
   }
 

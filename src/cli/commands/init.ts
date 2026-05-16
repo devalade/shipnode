@@ -97,6 +97,9 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   let dbName: string | undefined;
   let dbUser: string | undefined;
   let dbPassword: string | undefined;
+  let redisHost: string | undefined;
+  let redisPort: number | undefined;
+  let redisPassword: string | undefined;
 
   if (appType === 'backend') {
     const pm2Val = await text({ message: 'PM2 app name', initialValue: appName });
@@ -151,6 +154,20 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
         dbName = sqliteVal as string;
       }
     }
+
+    const hasRedis = await confirm({ message: 'Configure Redis?', initialValue: false });
+    cancelIfNeeded(hasRedis);
+
+    if (hasRedis) {
+      const redisVals = await group({
+        redisHost: () => text({ message: 'Redis host', initialValue: 'localhost' }),
+        redisPort: () => text({ message: 'Redis port', initialValue: '6379' }),
+        redisPassword: () => text({ message: 'Redis password', placeholder: 'optional' }),
+      });
+      redisHost = redisVals.redisHost as string;
+      redisPort = parseInt(redisVals.redisPort as string, 10);
+      redisPassword = (redisVals.redisPassword as string) || undefined;
+    }
   } else {
     const domainVal = await text({ message: 'Domain', placeholder: 'example.com (optional)' });
     cancelIfNeeded(domainVal);
@@ -197,6 +214,9 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     dbName,
     dbUser,
     dbPassword: dbPassword || undefined,
+    redisHost,
+    redisPort,
+    redisPassword: redisPassword || undefined,
   });
 
   const configPath = resolve(cwd, 'shipnode.config.ts');
@@ -243,6 +263,9 @@ interface ConfigOptions {
   dbName?: string;
   dbUser?: string;
   dbPassword?: string;
+  redisHost?: string;
+  redisPort?: number;
+  redisPassword?: string;
 }
 
 async function generateShipnodeDir(
@@ -407,6 +430,15 @@ function generateConfig(opts: ConfigOptions): string {
       ];
       lines.push(`  .database({ ${dbOpts.join(', ')} })`);
     }
+  }
+
+  if (opts.redisHost !== undefined || opts.redisPort !== undefined) {
+    const redisOpts = [
+      `host: '${opts.redisHost ?? 'localhost'}'`,
+      `port: ${opts.redisPort ?? 6379}`,
+      ...(opts.redisPassword ? [`password: process.env.REDIS_PASSWORD ?? '${opts.redisPassword}'`] : [`// password: process.env.REDIS_PASSWORD`]),
+    ];
+    lines.push(`  .redis({ ${redisOpts.join(', ')} })`);
   }
 
   lines.push('  .build();');

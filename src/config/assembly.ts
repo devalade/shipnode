@@ -57,6 +57,7 @@ export function assembleConfig(partial: Partial<ShipnodeConfig>): ShipnodeConfig
     sharedFiles: partial.sharedFiles,
     buildDir: partial.buildDir,
     database: partial.database,
+    redis: partial.redis,
     backup: partial.backup,
     cloudflare: partial.cloudflare,
     hooks: partial.hooks,

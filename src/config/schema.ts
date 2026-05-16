@@ -37,6 +37,12 @@ export const DatabaseConfigSchema = z.object({
   password: z.string().optional(),
 }).optional();
 
+export const RedisConfigSchema = z.object({
+  host: z.string().default('localhost'),
+  port: z.number().int().min(1).max(65535).default(6379),
+  password: z.string().optional(),
+}).optional();
+
 export const BackupConfigSchema = z.object({
   s3Bucket: z.string().min(1, 'S3 bucket is required'),
   s3Prefix: z.string().optional(),
@@ -76,6 +82,7 @@ export const ShipnodeConfigSchema = z.object({
   sharedDirs: z.array(z.string()).optional(),
   sharedFiles: z.array(z.string()).optional(),
   database: DatabaseConfigSchema,
+  redis: RedisConfigSchema,
   backup: BackupConfigSchema,
   cloudflare: CloudflareConfigSchema,
   hooks: HooksConfigSchema,

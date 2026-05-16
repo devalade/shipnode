@@ -40,6 +40,12 @@ export interface DatabaseConfig {
   password?: string;
 }
 
+export interface RedisConfig {
+  host: string;
+  port: number;
+  password?: string;
+}
+
 export interface BackupConfig {
   s3Bucket: string;
   s3Prefix?: string;
@@ -100,6 +106,7 @@ export interface ShipnodeConfig {
   sharedDirs?: string[];
   sharedFiles?: string[];
   database?: DatabaseConfig;
+  redis?: RedisConfig;
   backup?: BackupConfig;
   cloudflare?: CloudflareConfig;
   hooks?: HooksConfig;
