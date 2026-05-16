@@ -1,4 +1,6 @@
 import { execa } from 'execa';
+import { pathExists } from 'fs-extra';
+import { resolve } from 'path';
 import type { ShipnodeConfig } from '../../shared/types.js';
 import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework/detector.js';
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
@@ -14,14 +16,20 @@ export class BackendStrategy implements DeploymentStrategy {
 
   async stage(ctx: StrategyContext): Promise<void> {
     const excludes = [...RSYNC_DEFAULT_EXCLUDES];
+    const ignoreFile = resolve(this.cwd, '.shipnodeignore');
+    const hasIgnoreFile = await pathExists(ignoreFile);
 
-    await execa('rsync', [
+    const args = [
       '-avz',
       '--progress',
+      '-e', `ssh -p ${this.config.ssh.port}`,
       ...excludes.flatMap((e) => ['--exclude', e]),
+      ...(hasIgnoreFile ? ['--exclude-from', ignoreFile] : []),
       `${this.cwd}/`,
       `${this.config.ssh.user}@${this.config.ssh.host}:${ctx.workDir}/`,
-    ]);
+    ];
+
+    await execa('rsync', args);
   }
 
   async setupEnvironment(ctx: StrategyContext): Promise<void> {

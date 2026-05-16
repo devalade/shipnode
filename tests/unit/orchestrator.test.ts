@@ -47,7 +47,7 @@ describe('DeployOrchestrator', () => {
       .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
-      .when((cmd) => cmd.includes('echo') && cmd.includes('releases.json'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('deploy.lock'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 42', exitCode: 0 });
@@ -92,7 +92,7 @@ describe('DeployOrchestrator', () => {
 
     executor
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
-      .when((cmd) => cmd.includes('echo') && cmd.includes('releases.json'), { stdout: '', exitCode: 0 });
+      .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 });
 
     const { ReleaseManager, DeployLock } = await import('../../src/domain/release/manager.js');
     const { HealthCheckService } = await import('../../src/services/health.service.js');
@@ -139,9 +139,9 @@ describe('DeployOrchestrator', () => {
       .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
-      .when((cmd) => cmd.includes('echo') && cmd.includes('releases.json'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('deploy.lock'), { stdout: '', exitCode: 0 });
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 });
 
     const { ReleaseManager, DeployLock } = await import('../../src/domain/release/manager.js');
     const { HealthCheckService } = await import('../../src/services/health.service.js');

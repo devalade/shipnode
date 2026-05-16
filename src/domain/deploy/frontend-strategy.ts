@@ -1,4 +1,6 @@
 import { execa } from 'execa';
+import { pathExists } from 'fs-extra';
+import { resolve } from 'path';
 import type { ShipnodeConfig } from '../../shared/types.js';
 import { getRunCommand, detectPkgManager } from '../framework/detector.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
@@ -17,15 +19,19 @@ export class FrontendStrategy implements DeploymentStrategy {
     }
 
     const buildDir = await this.detectFrontendBuildDir();
+    const ignoreFile = resolve(this.cwd, '.shipnodeignore');
+    const hasIgnoreFile = await pathExists(ignoreFile);
 
     await execa('rsync', [
       '-avz',
       '--progress',
       '--delete',
+      '-e', `ssh -p ${this.config.ssh.port}`,
       '--exclude', 'shared/',
       '--exclude', '.shipnode/',
       '--exclude', 'releases/',
       '--exclude', 'current',
+      ...(hasIgnoreFile ? ['--exclude-from', ignoreFile] : []),
       `${this.cwd}/${buildDir}/`,
       `${this.config.ssh.user}@${this.config.ssh.host}:${ctx.workDir}/`,
     ]);
@@ -42,8 +48,6 @@ export class FrontendStrategy implements DeploymentStrategy {
   }
 
   private async detectFrontendBuildDir(): Promise<string> {
-    const { pathExists } = await import('fs-extra');
-
     if (await pathExists(`${this.cwd}/build`)) return 'build';
     if (await pathExists(`${this.cwd}/public`)) return 'public';
     if (await pathExists(`${this.cwd}/dist`)) return 'dist';

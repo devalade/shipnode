@@ -4,6 +4,16 @@
   "description": "Deploy Node.js apps to a single VPS with zero configuration",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "bin": {
     "shipnode": "dist/cli/index.js"
   },
@@ -14,7 +24,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run lint && npm run test && npm run build"
+    "prepublishOnly": "pnpm lint && pnpm test && pnpm build"
   },
   "dependencies": {
     "chalk": "^5.3.0",

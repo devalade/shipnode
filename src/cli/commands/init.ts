@@ -1,8 +1,9 @@
-import { writeFile, pathExists } from 'fs-extra';
+import { writeFile, mkdir, pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { createInterface } from 'readline';
 import { detectFramework, detectPkgManager } from '../../domain/framework/detector.js';
 import { isValidIpOrHostname, isValidPort } from '../../domain/validation/ip.js';
+import { ORM_PATTERNS } from '../../shared/constants.js';
 import { ui } from '../ui.js';
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -48,6 +49,7 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
 
     await writeFile(configPath, config, 'utf-8');
     ui.success('Created shipnode.config.ts');
+    await generateShipnodeDir(cwd, detection.orm);
     return;
   }
 
@@ -120,6 +122,8 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
 
   await writeFile(configPath, config, 'utf-8');
   ui.success('Created shipnode.config.ts');
+
+  await generateShipnodeDir(cwd, detection.orm);
 }
 
 async function getAppName(cwd: string): Promise<string> {
@@ -150,6 +154,98 @@ interface ConfigOptions {
   zeroDowntime?: boolean;
   healthCheckPath?: string;
   pkgManager?: string;
+}
+
+async function generateShipnodeDir(cwd: string, detectedOrm?: string): Promise<void> {
+  const dir = resolve(cwd, '.shipnode');
+  await mkdir(dir, { recursive: true });
+
+  const preDeployPath = resolve(dir, 'pre-deploy.sh');
+  const postDeployPath = resolve(dir, 'post-deploy.sh');
+  const ignorePath = resolve(cwd, '.shipnodeignore');
+
+  if (!(await pathExists(preDeployPath))) {
+    await writeFile(preDeployPath, generatePreDeployHook(detectedOrm), 'utf-8');
+    await import('fs/promises').then((fs) => fs.chmod(preDeployPath, 0o755));
+  }
+
+  if (!(await pathExists(postDeployPath))) {
+    await writeFile(postDeployPath, generatePostDeployHook(), 'utf-8');
+    await import('fs/promises').then((fs) => fs.chmod(postDeployPath, 0o755));
+  }
+
+  if (!(await pathExists(ignorePath))) {
+    await writeFile(ignorePath, generateShipnodeIgnore(), 'utf-8');
+  }
+
+  const ormMsg = detectedOrm ? ` with ${detectedOrm} commands` : '';
+  ui.success(`Generated .shipnode/ hooks${ormMsg} and .shipnodeignore`);
+}
+
+function generatePreDeployHook(detectedOrm?: string): string {
+  const ormCommands = Object.entries(ORM_PATTERNS)
+    .filter(([, p]) => p.migrateCmd)
+    .map(([name, p]) => {
+      const active = name === detectedOrm;
+      const prefix = active ? '' : '# ';
+      const lines = [`${prefix}# ${name}${active ? ' (detected)' : ''}`];
+      if (p.generateCmd) lines.push(`${prefix}${p.generateCmd}`);
+      lines.push(`${prefix}${p.migrateCmd}`);
+      return lines.join('\n');
+    })
+    .join('\n\n');
+
+  return `#!/bin/bash
+# ShipNode Pre-Deploy Hook
+# Runs BEFORE the new release is activated. Exit non-zero to abort.
+#
+# Env vars: RELEASE_PATH  REMOTE_PATH  PM2_APP_NAME  BACKEND_PORT  SHARED_ENV_PATH
+set -e
+
+if [ -f "$SHARED_ENV_PATH" ]; then
+  set -a; source "$SHARED_ENV_PATH"; set +a
+fi
+
+echo "Pre-deploy: \${RELEASE_PATH}"
+
+# ── Database migrations ──────────────────────────────────────────
+${ormCommands}
+# ────────────────────────────────────────────────────────────────
+
+echo "Pre-deploy hook complete"
+`;
+}
+
+function generatePostDeployHook(): string {
+  return `#!/bin/bash
+# ShipNode Post-Deploy Hook
+# Runs AFTER deployment. Failure is logged but does NOT trigger rollback.
+#
+# Env vars: RELEASE_PATH  RELEASE_TIMESTAMP  REMOTE_PATH  PM2_APP_NAME  BACKEND_PORT
+set -e
+
+echo "Post-deploy: \${RELEASE_PATH}"
+
+# Examples:
+#   curl -s http://localhost:\${BACKEND_PORT}/api/warmup
+#   npm run cache:clear
+
+echo "Post-deploy hook complete"
+`;
+}
+
+function generateShipnodeIgnore(): string {
+  return `# .shipnodeignore — files excluded from rsync (same syntax as .gitignore)
+node_modules/
+.env
+.env.*
+.git/
+*.log
+dist/
+build/
+coverage/
+.DS_Store
+`;
 }
 
 function generateConfig(opts: ConfigOptions): string {

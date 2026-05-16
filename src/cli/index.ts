@@ -6,6 +6,9 @@ import { cmdDeploy } from './commands/deploy.js';
 import { cmdSetup } from './commands/setup.js';
 import { cmdDoctor } from './commands/doctor.js';
 import { cmdStatus } from './commands/status.js';
+import { cmdRollback } from './commands/rollback.js';
+import { cmdEnv } from './commands/env.js';
+import { cmdUnlock } from './commands/unlock.js';
 import { cmdHelp } from './commands/help.js';
 
 const program = new Command();
@@ -48,6 +51,25 @@ program
   .description('Check application status')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdStatus(process.cwd(), opts));
+
+program
+  .command('rollback')
+  .description('Roll back to a previous release')
+  .option('--steps <n>', 'Number of releases to go back', '1')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdRollback(process.cwd(), { steps: parseInt(opts.steps, 10), config: opts.config }));
+
+program
+  .command('env')
+  .description('Upload local .env file to the server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdEnv(process.cwd(), opts));
+
+program
+  .command('unlock')
+  .description('Clear a stuck deployment lock')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdUnlock(process.cwd(), opts));
 
 program
   .command('help')

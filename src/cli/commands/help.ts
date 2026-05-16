@@ -11,6 +11,9 @@ ${chalk.bold('COMMANDS')}
   ${chalk.green('init')}            Initialize a new shipnode.config.ts
   ${chalk.green('setup')}           Setup a new server with required dependencies
   ${chalk.green('deploy')}          Deploy your application
+  ${chalk.green('rollback')}        Roll back to a previous release
+  ${chalk.green('env')}             Upload local .env file to the server
+  ${chalk.green('unlock')}          Clear a stuck deployment lock
   ${chalk.green('doctor')}          Check local and remote configuration
   ${chalk.green('status')}          Check application status
   ${chalk.green('help')}            Show this help message
@@ -18,6 +21,10 @@ ${chalk.bold('COMMANDS')}
 ${chalk.bold('DEPLOY OPTIONS')}
   --dry-run          Show what would be deployed without making changes
   --skip-build       Skip the build step (use existing build output)
+  --config <path>    Use a specific config file
+
+${chalk.bold('ROLLBACK OPTIONS')}
+  --steps <n>        Number of releases to go back (default: 1)
   --config <path>    Use a specific config file
 
 ${chalk.bold('INIT OPTIONS')}
@@ -36,6 +43,18 @@ ${chalk.bold('EXAMPLES')}
 
   ${chalk.dim('# Deploy to production')}
   shipnode deploy
+
+  ${chalk.dim('# Roll back to previous release')}
+  shipnode rollback
+
+  ${chalk.dim('# Roll back 2 releases')}
+  shipnode rollback --steps 2
+
+  ${chalk.dim('# Push local .env to server')}
+  shipnode env
+
+  ${chalk.dim('# Clear a stuck deploy lock')}
+  shipnode unlock
 
   ${chalk.dim('# Check server health')}
   shipnode doctor

@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { Client, ConnectConfig, ClientChannel } from 'ssh2';
 import { SshError } from '../../shared/errors.js';
 import type { SshConfig, ExecResult } from '../../shared/types.js';
@@ -25,7 +26,7 @@ export class SshConnection implements RemoteExecutor {
     };
 
     if (config.identityFile) {
-      sshConfig.privateKey = config.identityFile;
+      sshConfig.privateKey = readFileSync(config.identityFile);
     }
 
     if (config.proxyMode === 'cloudflare') {

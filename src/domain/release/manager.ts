@@ -27,20 +27,6 @@ export class ReleaseManager {
     await this.executor.exec(`mv -Tf "${tmpLink}" "${this.remotePath}/current"`);
   }
 
-  async getPreviousRelease(): Promise<string | undefined> {
-    try {
-      const result = await this.executor.exec(
-        `readlink "${this.remotePath}/current" 2>/dev/null || true`
-      );
-      if (result.exitCode === 0 && result.stdout) {
-        return result.stdout;
-      }
-    } catch {
-      // No previous release
-    }
-    return undefined;
-  }
-
   async recordRelease(record: ReleaseRecord): Promise<void> {
     const releasesFile = `${this.remotePath}/.shipnode/releases.json`;
 
@@ -55,9 +41,8 @@ export class ReleaseManager {
 
     releases.push(record);
 
-    const json = JSON.stringify(releases, null, 2);
-    const escaped = json.replace(/'/g, "'\"'\"'");
-    await this.executor.exec(`echo '${escaped}' > "${releasesFile}"`);
+    const b64 = Buffer.from(JSON.stringify(releases, null, 2)).toString('base64');
+    await this.executor.exec(`printf '%s' '${b64}' | base64 -d > "${releasesFile}"`);
   }
 
   async cleanupOldReleases(): Promise<void> {
@@ -96,25 +81,30 @@ export class DeployLock {
 
   async acquire(): Promise<void> {
     const lockFile = `${this.remotePath}/.shipnode/deploy.lock`;
-    const pid = process.pid.toString();
+    const staleAfterSeconds = 3600;
 
     const result = await this.executor.exec(
       `mkdir -p "${this.remotePath}/.shipnode" && ` +
       `if [ -f "${lockFile}" ]; then ` +
-      `  lock_pid=$(cat "${lockFile}"); ` +
-      `  if kill -0 "$lock_pid" 2>/dev/null; then ` +
-      `    echo "Deployment already in progress (PID: $lock_pid)"; ` +
-      `    exit 1; ` +
+      `  age=$(( $(date +%s) - $(stat -c %Y "${lockFile}") )); ` +
+      `  if [ "$age" -lt ${staleAfterSeconds} ]; then ` +
+      `    echo "LOCKED:$age"; exit 1; ` +
       `  else ` +
-      `    echo "Stale lock found (PID: $lock_pid), removing"; ` +
       `    rm -f "${lockFile}"; ` +
       `  fi; ` +
       `fi && ` +
-      `echo "${pid}" > "${lockFile}"`
+      `date -u +%Y-%m-%dT%H:%M:%SZ > "${lockFile}" && echo "OK"`,
     );
 
+    if (result.stdout.startsWith('LOCKED:')) {
+      const age = result.stdout.split(':')[1];
+      throw new LockError(
+        `Deployment already in progress (lock age: ${age}s). Run 'shipnode unlock' to clear.`,
+      );
+    }
+
     if (result.exitCode !== 0) {
-      throw new LockError(result.stdout || 'Failed to acquire deployment lock');
+      throw new LockError(result.stderr || 'Failed to acquire deployment lock');
     }
   }
 
