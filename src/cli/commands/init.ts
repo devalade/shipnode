@@ -1,4 +1,4 @@
-import { writeFile, readFile as readFileNode } from 'node:fs/promises';
+import { writeFile, readFile as readFileNode, chmod } from 'node:fs/promises';
 import { ensureDir, pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { createInterface } from 'readline';
@@ -6,6 +6,7 @@ import { detectFramework, detectPkgManager } from '../../domain/framework/detect
 import { isValidIpOrHostname, isValidPort } from '../../domain/validation/ip.js';
 import { ORM_PATTERNS } from '../../shared/constants.js';
 import { ui } from '../ui.js';
+import type { DatabaseType } from '../../shared/types.js';
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -83,6 +84,12 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   let domain = '';
   let zeroDowntime = true;
   let healthCheckPath = '/health';
+  let dbType: DatabaseType | undefined;
+  let dbHost: string | undefined;
+  let dbPort: number | undefined;
+  let dbName: string | undefined;
+  let dbUser: string | undefined;
+  let dbPassword: string | undefined;
 
   if (appType === 'backend') {
     pm2Name = await ask('PM2 app name', appName);
@@ -92,6 +99,25 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     zeroDowntime = zd.toLowerCase().startsWith('y');
     if (zeroDowntime) {
       healthCheckPath = await ask('Health check path', '/health');
+    }
+
+    const hasDb = (await ask('Configure a database?', 'no')).toLowerCase().startsWith('y');
+    if (hasDb) {
+      const dbTypeRaw = await ask('Database type (postgres/mysql/sqlite/mongodb)', 'postgres');
+      dbType = (['postgres', 'mysql', 'sqlite', 'mongodb'].includes(dbTypeRaw)
+        ? dbTypeRaw
+        : 'postgres') as DatabaseType;
+
+      if (dbType !== 'sqlite') {
+        dbHost = await ask('Database host', 'localhost');
+        const defaultDbPort = dbType === 'postgres' ? '5432' : dbType === 'mysql' ? '3306' : '27017';
+        dbPort = parseInt(await ask('Database port', defaultDbPort), 10);
+        dbName = await ask('Database name', appName);
+        dbUser = await ask('Database user', appName);
+        dbPassword = await ask('Database password (optional)', '');
+      } else {
+        dbName = await ask('SQLite file path', './data.db');
+      }
     }
   } else {
     domain = await ask('Domain (optional)', '');
@@ -112,6 +138,12 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     zeroDowntime,
     healthCheckPath,
     pkgManager: pkgManager ?? undefined,
+    dbType,
+    dbHost,
+    dbPort,
+    dbName,
+    dbUser,
+    dbPassword: dbPassword || undefined,
   });
 
   const configPath = resolve(cwd, 'shipnode.config.ts');
@@ -154,6 +186,12 @@ interface ConfigOptions {
   zeroDowntime?: boolean;
   healthCheckPath?: string;
   pkgManager?: string;
+  dbType?: DatabaseType;
+  dbHost?: string;
+  dbPort?: number;
+  dbName?: string;
+  dbUser?: string;
+  dbPassword?: string;
 }
 
 async function generateShipnodeDir(cwd: string, detectedOrm?: string): Promise<void> {
@@ -166,12 +204,12 @@ async function generateShipnodeDir(cwd: string, detectedOrm?: string): Promise<v
 
   if (!(await pathExists(preDeployPath))) {
     await writeFile(preDeployPath, generatePreDeployHook(detectedOrm), 'utf-8');
-    await import('fs/promises').then((fs) => fs.chmod(preDeployPath, 0o755));
+    await chmod(preDeployPath, 0o755);
   }
 
   if (!(await pathExists(postDeployPath))) {
     await writeFile(postDeployPath, generatePostDeployHook(), 'utf-8');
-    await import('fs/promises').then((fs) => fs.chmod(postDeployPath, 0o755));
+    await chmod(postDeployPath, 0o755);
   }
 
   if (!(await pathExists(ignorePath))) {
@@ -291,6 +329,22 @@ function generateConfig(opts: ConfigOptions): string {
 
   if (opts.pkgManager) {
     lines.push(`  .pkgManager('${opts.pkgManager}')`);
+  }
+
+  if (opts.dbType) {
+    if (opts.dbType === 'sqlite') {
+      lines.push(`  .database({ type: 'sqlite', host: 'localhost', port: 0, name: '${opts.dbName ?? './data.db'}', user: '' })`);
+    } else {
+      const dbOpts = [
+        `type: '${opts.dbType}'`,
+        `host: '${opts.dbHost ?? 'localhost'}'`,
+        `port: ${opts.dbPort ?? 5432}`,
+        `name: '${opts.dbName ?? ''}'`,
+        `user: '${opts.dbUser ?? ''}'`,
+        ...(opts.dbPassword ? [`password: process.env.DB_PASSWORD ?? '${opts.dbPassword}'`] : [`// password: process.env.DB_PASSWORD`]),
+      ];
+      lines.push(`  .database({ ${dbOpts.join(', ')} })`);
+    }
   }
 
   lines.push('  .build();');
