@@ -4,6 +4,38 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Added
+- `shipnode init` now prompts for SSH users to add during setup, generating `.shipnode/users.yml`
+- Database configuration prompts in `shipnode init` (PostgreSQL, MySQL, SQLite, MongoDB)
+
+### Changed
+- CLI UI overhauled: replaced plain `console.log` output with `@clack/prompts` (spinners, notes, banners) and `listr2` task lists — all commands now render structured, coloured output
+
+### Fixed
+- SSH authentication: when no `identityFile` is set, connection now tries the running SSH agent (`SSH_AUTH_SOCK`) first, then falls back to default key files (`~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`, `id_dsa`)
+
+## [2.0.3] - 2026-05-16
+
+### Fixed
+- `shipnode init` generated config always includes SSH `port:` field (was missing)
+- `shipnode init` generated config always includes `.port()` call for backend apps
+- `shipnode init` generated config now includes `.build()` terminator
+- `shipnode init` generated config now includes `.pkgManager()` when detected
+- Restored database prompts in interactive `shipnode init` flow
+- Fixed `chmod` import: now imported from `node:fs/promises` at module top level (was broken dynamic import)
+
+## [2.0.2] - 2026-05-15
+
+### Fixed
+- `writeFile` and `readFile` imported from `node:fs/promises` instead of `fs-extra` — these are not named ESM exports in `fs-extra`
+
+## [2.0.1] - 2026-05-15
+
+### Fixed
+- `mkdir` replaced with `ensureDir` from `fs-extra` — `mkdir` is not a named ESM export in `fs-extra`
+- CI: pinned pnpm to v10 to match lockfile format and avoid pnpm v11 build approval errors
+- CI: bumped Node.js to 22 in all workflows
+
 ## [2.0.0] - 2026-05-16
 
 Complete rewrite in TypeScript with full feature parity with v1 and new capabilities.

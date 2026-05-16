@@ -29,11 +29,11 @@ export class SshConnection implements RemoteExecutor {
 
     if (config.identityFile) {
       sshConfig.privateKey = readFileSync(config.identityFile);
-    } else if (process.env['SSH_AUTH_SOCK']) {
-      // Use the running SSH agent (covers all keys added via ssh-add)
-      sshConfig.agent = process.env['SSH_AUTH_SOCK'];
     } else {
-      // Fall back to default key files in ~/.ssh
+      if (process.env['SSH_AUTH_SOCK']) {
+        sshConfig.agent = process.env['SSH_AUTH_SOCK'];
+      }
+      // Also try default key files — agent may be set but have no keys loaded
       const defaults = ['id_ed25519', 'id_ecdsa', 'id_rsa', 'id_dsa'];
       for (const name of defaults) {
         const keyPath = join(homedir(), '.ssh', name);
@@ -41,6 +41,11 @@ export class SshConnection implements RemoteExecutor {
           sshConfig.privateKey = readFileSync(keyPath);
           break;
         }
+      }
+      if (!sshConfig.agent && !sshConfig.privateKey) {
+        throw new SshError(
+          'No SSH auth method found. Set identityFile in config, run ssh-add, or place a key in ~/.ssh/',
+        );
       }
     }
 
