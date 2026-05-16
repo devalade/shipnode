@@ -16,9 +16,14 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ### Fixed
 - `shipnode deploy` error output is now always visible — spinner is stopped before the error propagates
-- Health check failure now shows last 30 lines of PM2 logs inline so the cause of a failed start is immediately visible
+- Health check failure now reads PM2 log files directly (`~/.pm2/logs/*.log`) instead of `pm2 logs --nostream` which was streaming indefinitely
 - Health check adds a 2-second delay between retries
 - SSH authentication: when no `identityFile` is set, connection now tries the running SSH agent (`SSH_AUTH_SOCK`) first, then falls back to default key files (`~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`, `id_dsa`)
+- SSH auth: agent and key files are now tried independently — previously an active agent socket blocked key file fallback
+- PM2 ecosystem uses `exec_mode: fork` instead of `cluster` — cluster mode requires a Node.js file, not a package manager script
+- PM2 ecosystem now runs `pnpm start` (or `npm start` / `yarn start` / `bun start`) instead of a hardcoded entry point file
+- pnpm/yarn/bun are now installed globally on the remote server if not already present before running `install`
+- pnpm `runDepsStatusCheck` failure at PM2 startup fixed: `pnpm install --prefer-offline` is re-run from `current/` after the symlink switch so pnpm's module resolution state matches the directory PM2 uses
 
 ## [2.0.3] - 2026-05-16
 
