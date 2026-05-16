@@ -83,7 +83,10 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
           );
           await executor.exec(
             'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
-            '$SUDO mkdir -p /etc/caddy/conf.d /var/log/caddy',
+            '$SUDO mkdir -p /etc/caddy/conf.d /var/log/caddy && ' +
+            'grep -q "import /etc/caddy/conf.d" /etc/caddy/Caddyfile 2>/dev/null || ' +
+            'echo "import /etc/caddy/conf.d/*.caddy" | $SUDO tee -a /etc/caddy/Caddyfile > /dev/null && ' +
+            '$SUDO systemctl reload caddy 2>/dev/null || true',
           );
         },
       },

@@ -96,9 +96,11 @@ export class BackendStrategy implements DeploymentStrategy {
     );
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
 
+    const port = this.config.backend?.port ?? 3000;
     await ctx.executor.exec(
       `cd "${cdPath}" && ${mise} && ` +
       `{ mise exec -- pm2 delete "${this.config.pm2!.name}" 2>/dev/null || true; } && ` +
+      `{ ss -tlnp | grep -q ":${port} " && echo "Port ${port} is already in use by another process" && false || true; } && ` +
       `mise exec -- pm2 start "${ecosystemPath}" --update-env && ` +
       `mise exec -- pm2 save`,
     );
