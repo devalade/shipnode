@@ -259,7 +259,7 @@ function generateConfig(opts: ConfigOptions): string {
   const sshOpts: string[] = [];
   if (opts.sshHost) sshOpts.push(`host: '${opts.sshHost}'`);
   if (opts.sshUser) sshOpts.push(`user: '${opts.sshUser}'`);
-  if (opts.sshPort && opts.sshPort !== 22) sshOpts.push(`port: ${opts.sshPort}`);
+  sshOpts.push(`port: ${opts.sshPort ?? 22}`);
 
   if (sshOpts.length > 0) {
     lines.push(`  .ssh({ ${sshOpts.join(', ')} })`);
