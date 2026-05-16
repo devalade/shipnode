@@ -250,7 +250,7 @@ coverage/
 
 function generateConfig(opts: ConfigOptions): string {
   const lines = [
-    "import { shipnode } from 'shipnode';",
+    "import { shipnode } from '@devalade/shipnode';",
     '',
     'export default shipnode',
     `  .${opts.app}()`,

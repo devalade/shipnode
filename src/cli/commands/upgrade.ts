@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import { ui } from '../ui.js';
 
-const PACKAGE_NAME = 'shipnode';
+const PACKAGE_NAME = '@devalade/shipnode';
 
 async function fetchLatestVersion(): Promise<string> {
   const res = await fetch(`https://registry.npmjs.org/${PACKAGE_NAME}/latest`);
