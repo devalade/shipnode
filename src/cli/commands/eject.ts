@@ -1,4 +1,5 @@
-import { writeFile, pathExists, ensureDir } from 'fs-extra';
+import { writeFile } from 'node:fs/promises';
+import { pathExists, ensureDir } from 'fs-extra';
 import { resolve } from 'path';
 import { ui } from '../ui.js';
 

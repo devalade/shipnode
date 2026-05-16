@@ -1,4 +1,5 @@
-import { readFile, pathExists } from 'fs-extra';
+import { readFile } from 'node:fs/promises';
+import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';

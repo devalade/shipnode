@@ -1,4 +1,5 @@
-import { writeFile, ensureDir, pathExists } from 'fs-extra';
+import { writeFile, readFile as readFileNode } from 'node:fs/promises';
+import { ensureDir, pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { createInterface } from 'readline';
 import { detectFramework, detectPkgManager } from '../../domain/framework/detector.js';
@@ -128,9 +129,8 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
 
 async function getAppName(cwd: string): Promise<string> {
   try {
-    const { readFile } = await import('fs/promises');
     const pkgPath = resolve(cwd, 'package.json');
-    const content = await readFile(pkgPath, 'utf-8');
+    const content = await readFileNode(pkgPath, 'utf-8');
     const pkg = JSON.parse(content);
     if (pkg.name) {
       return pkg.name.replace(/^@[^/]+\//, '').replace(/[^a-zA-Z0-9._-]/g, '-');

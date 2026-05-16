@@ -1,5 +1,6 @@
 import { resolve } from 'path';
-import { readFile, writeFile, pathExists, ensureDir } from 'fs-extra';
+import { readFile, writeFile } from 'node:fs/promises';
+import { pathExists, ensureDir } from 'fs-extra';
 import { execa } from 'execa';
 import { loadConfig } from '../../config/loader.js';
 import { confirm } from '../prompt.js';
