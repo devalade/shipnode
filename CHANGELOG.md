@@ -4,7 +4,7 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
-## [2.0.12] - 2026-05-16
+## [2.0.13] - 2026-05-16
 
 ### Added
 - `shipnode env --file <path>` — upload a specific `.env` file instead of the default from config
