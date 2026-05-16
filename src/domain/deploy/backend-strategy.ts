@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { readFile } from 'node:fs/promises';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import type { ShipnodeConfig } from '../../shared/types.js';
@@ -52,6 +53,15 @@ export class BackendStrategy implements DeploymentStrategy {
       commands.push(`ln -sf "${this.config.remotePath}/shared/.env" .env`);
     }
 
+    // Ensure third-party package managers are available on the remote
+    if (pkgManager === 'pnpm') {
+      commands.push(`command -v pnpm &>/dev/null || npm install -g pnpm`);
+    } else if (pkgManager === 'yarn') {
+      commands.push(`command -v yarn &>/dev/null || npm install -g yarn`);
+    } else if (pkgManager === 'bun') {
+      commands.push(`command -v bun &>/dev/null || npm install -g bun`);
+    }
+
     commands.push(installCmd);
 
     if (!ctx.skipBuild) {
@@ -66,7 +76,8 @@ export class BackendStrategy implements DeploymentStrategy {
   async startApp(ctx: StrategyContext): Promise<void> {
     if (!this.config.pm2) return;
 
-    const ecosystemContent = this.generateEcosystemFile();
+    const script = await this.resolveEntryPoint();
+    const ecosystemContent = this.generateEcosystemFile(script);
     const ecosystemPath = this.config.zeroDowntime
       ? `${this.config.remotePath}/shared/ecosystem.config.cjs`
       : `${ctx.workDir}/ecosystem.config.cjs`;
@@ -83,7 +94,17 @@ export class BackendStrategy implements DeploymentStrategy {
     );
   }
 
-  private generateEcosystemFile(): string {
+  private async resolveEntryPoint(): Promise<string> {
+    try {
+      const pkg = JSON.parse(await readFile(resolve(this.cwd, 'package.json'), 'utf-8'));
+      if (pkg.main) return pkg.main;
+    } catch {
+      // ignore
+    }
+    return 'index.js';
+  }
+
+  private generateEcosystemFile(script: string): string {
     if (!this.config.pm2) return '';
 
     const port = this.config.backend?.port ?? 3000;
@@ -94,7 +115,7 @@ export class BackendStrategy implements DeploymentStrategy {
     return `module.exports = {
   apps: [{
     name: '${name}',
-    script: 'index',
+    script: '${script}',
     instances: ${instances},
     exec_mode: 'cluster',
     max_memory_restart: '${maxMemory}',

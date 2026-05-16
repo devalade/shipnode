@@ -44,16 +44,15 @@ export class HealthCheckService {
       }
     }
 
-    // Fetch PM2 logs to help diagnose why the app didn't start
+    // Read PM2 log files directly to avoid streaming behaviour of `pm2 logs`
     let diagnostics = '';
     if (this.config.pm2?.name) {
-      const nodeVersion = this.config.nodeVersion === 'lts' ? '24' : this.config.nodeVersion;
-      const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+      const name = this.config.pm2.name;
       const logResult = await this.executor.exec(
-        `${mise}; mise exec node@${nodeVersion} -- pm2 logs ${this.config.pm2.name} --lines 30 --nostream 2>&1 || true`,
+        `{ tail -15 ~/.pm2/logs/${name}-error.log 2>/dev/null; tail -15 ~/.pm2/logs/${name}-out.log 2>/dev/null; } || true`,
       ).catch(() => ({ stdout: '', stderr: '' }));
       const logs = logResult.stdout.trim();
-      if (logs) diagnostics = `\n\nPM2 logs (last 30 lines):\n${logs}`;
+      if (logs) diagnostics = `\n\nPM2 logs:\n${logs}`;
     }
 
     throw new HealthCheckError(
