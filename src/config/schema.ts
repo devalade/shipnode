@@ -37,6 +37,24 @@ export const DatabaseConfigSchema = z.object({
   password: z.string().optional(),
 }).optional();
 
+export const BackupConfigSchema = z.object({
+  s3Bucket: z.string().min(1, 'S3 bucket is required'),
+  s3Prefix: z.string().optional(),
+  s3Endpoint: z.string().optional(),
+  schedule: z.enum(['hourly', 'daily', 'weekly']).default('daily'),
+  retentionDays: z.number().int().min(1).default(14),
+}).optional();
+
+export const CloudflareConfigSchema = z.object({
+  zone: z.string().min(1, 'Cloudflare zone is required'),
+  appHostname: z.string().optional(),
+  sshHostname: z.string().optional(),
+  tunnelName: z.string().optional(),
+  lockdownFirewall: z.boolean().default(false),
+  accessEmails: z.array(z.string().email()).optional(),
+  bootstrapSshHost: z.string().optional(),
+}).optional();
+
 export const HooksConfigSchema = z.object({
   preDeploy: z.function().args(z.any()).returns(z.promise(z.void()).or(z.void())).optional(),
   postDeploy: z.function().args(z.any()).returns(z.promise(z.void()).or(z.void())).optional(),
@@ -59,6 +77,8 @@ export const ShipnodeConfigSchema = z.object({
   sharedDirs: z.array(z.string()).optional(),
   sharedFiles: z.array(z.string()).optional(),
   database: DatabaseConfigSchema,
+  backup: BackupConfigSchema,
+  cloudflare: CloudflareConfigSchema,
   hooks: HooksConfigSchema,
 });
 

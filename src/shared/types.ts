@@ -40,6 +40,24 @@ export interface DatabaseConfig {
   password?: string;
 }
 
+export interface BackupConfig {
+  s3Bucket: string;
+  s3Prefix?: string;
+  s3Endpoint?: string;
+  schedule?: 'hourly' | 'daily' | 'weekly';
+  retentionDays?: number;
+}
+
+export interface CloudflareConfig {
+  zone: string;
+  appHostname?: string;
+  sshHostname?: string;
+  tunnelName?: string;
+  lockdownFirewall?: boolean;
+  accessEmails?: string[];
+  bootstrapSshHost?: string;
+}
+
 export interface HookContext {
   config: ShipnodeConfig;
   release?: string;
@@ -83,6 +101,8 @@ export interface ShipnodeConfig {
   sharedDirs?: string[];
   sharedFiles?: string[];
   database?: DatabaseConfig;
+  backup?: BackupConfig;
+  cloudflare?: CloudflareConfig;
   hooks?: HooksConfig;
 }
 
