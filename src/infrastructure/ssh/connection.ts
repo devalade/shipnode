@@ -1,4 +1,6 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { Client, ConnectConfig, ClientChannel } from 'ssh2';
 import { SshError } from '../../shared/errors.js';
 import type { SshConfig, ExecResult } from '../../shared/types.js';
@@ -27,6 +29,19 @@ export class SshConnection implements RemoteExecutor {
 
     if (config.identityFile) {
       sshConfig.privateKey = readFileSync(config.identityFile);
+    } else if (process.env['SSH_AUTH_SOCK']) {
+      // Use the running SSH agent (covers all keys added via ssh-add)
+      sshConfig.agent = process.env['SSH_AUTH_SOCK'];
+    } else {
+      // Fall back to default key files in ~/.ssh
+      const defaults = ['id_ed25519', 'id_ecdsa', 'id_rsa', 'id_dsa'];
+      for (const name of defaults) {
+        const keyPath = join(homedir(), '.ssh', name);
+        if (existsSync(keyPath)) {
+          sshConfig.privateKey = readFileSync(keyPath);
+          break;
+        }
+      }
     }
 
     if (config.proxyMode === 'cloudflare') {
