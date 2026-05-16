@@ -179,7 +179,7 @@ describe('getInstallCommand', () => {
   });
 
   it('returns correct command for pnpm', () => {
-    expect(getInstallCommand('pnpm')).toBe('pnpm install --prod');
+    expect(getInstallCommand('pnpm')).toBe('pnpm install');
   });
 
   it('returns correct command for bun', () => {

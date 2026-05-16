@@ -82,6 +82,6 @@ export const ORM_PATTERNS = {
 export const PKG_MANAGER_COMMANDS: Record<string, { install: string; run: string }> = {
   npm: { install: 'npm ci --production', run: 'npm run' },
   yarn: { install: 'yarn install --production', run: 'yarn' },
-  pnpm: { install: 'pnpm install --prod', run: 'pnpm' },
+  pnpm: { install: 'pnpm install', run: 'pnpm' },
   bun: { install: 'bun install --production', run: 'bun run' },
 } as const;
