@@ -1,8 +1,9 @@
 import chalk from 'chalk';
+import { ui } from '../ui.js';
 
 export function cmdHelp(): void {
-  console.log(`
-${chalk.bold.blue('ShipNode')} v2.0.0 - Deploy Node.js apps to a single VPS
+  ui.banner();
+  console.log(`${chalk.bold.blue('ShipNode')} — Deploy Node.js apps to a single VPS
 
 ${chalk.bold('USAGE')}
   shipnode <command> [options]

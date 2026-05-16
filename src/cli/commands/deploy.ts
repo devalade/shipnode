@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import { loadConfig } from '../../config/loader.js';
 import { DeployService } from '../../services/deploy.service.js';
 import { runRemoteCommand } from '../runner.js';
@@ -15,94 +16,90 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      ui.info(`Deploying ${config.app} to ${config.ssh.user}@${config.ssh.host}...`);
-      ui.info('Connecting to server...');
-      ui.success('Connected');
+      ui.banner();
+
+      const spin = ui.spinner();
+      spin.start(`Deploying ${chalk.bold(config.pm2?.name ?? config.app)} → ${config.ssh.user}@${config.ssh.host}`);
 
       const deployer = new DeployService(executor, config, cwd);
       await deployer.execute(options.skipBuild ?? false);
 
-      ui.success('Deployment complete');
+      spin.stop(`Deployed ${chalk.bold(config.pm2?.name ?? config.app)}`);
+
+      const lines = [
+        `host     ${config.ssh.user}@${config.ssh.host}`,
+        config.domain ? `url      https://${config.domain}` : '',
+      ].filter(Boolean).join('\n');
+
+      ui.note(lines, 'Done');
+      ui.outro('Run shipnode status to check your app.');
     },
     { configPath: options.config },
   );
 }
 
 function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
-  console.log('\n===========================================');
-  console.log('        DEPLOYMENT DRY RUN MODE');
-  console.log('===========================================\n');
+  ui.banner();
 
-  console.log('Configuration:');
-  console.log(`  App Type:        ${config.app}`);
-  console.log(`  SSH User:        ${config.ssh.user}`);
-  console.log(`  SSH Host:        ${config.ssh.host}`);
-  console.log(`  SSH Port:        ${config.ssh.port}`);
-  console.log(`  Remote Path:     ${config.remotePath}`);
-  console.log(`  Zero Downtime:   ${config.zeroDowntime}`);
+  const serverRows: [string, string][] = [
+    ['App type', config.app],
+    ['Host', `${config.ssh.user}@${config.ssh.host}:${config.ssh.port}`],
+    ['Remote path', config.remotePath],
+    ['Mode', config.zeroDowntime ? `zero-downtime (keep ${config.keepReleases})` : 'legacy'],
+  ];
 
   if (config.app === 'backend') {
-    console.log(`  PM2 App Name:    ${config.pm2?.name ?? 'N/A'}`);
-    console.log(`  Backend Port:    ${config.backend?.port ?? 3000}`);
+    if (config.pm2?.name) serverRows.push(['PM2 name', config.pm2.name]);
+    serverRows.push(['Port', String(config.backend?.port ?? 3000)]);
   }
 
-  if (config.domain) {
-    console.log(`  Domain:          ${config.domain}`);
-  }
+  if (config.domain) serverRows.push(['Domain', config.domain]);
 
-  console.log('\nLocal Build Commands:');
+  const buildRows: [string, string][] = [];
   if (skipBuild) {
-    console.log('  [SKIPPED via --skip-build flag]');
+    buildRows.push(['', chalk.dim('skipped (--skip-build)')]);
   } else if (config.app === 'frontend') {
-    console.log('  1. npm run build (or detected package manager)');
-    console.log('  2. Detected build output: dist/');
+    buildRows.push(['', 'npm run build']);
+    buildRows.push(['output', config.buildDir ?? 'dist/ (auto-detected)']);
   } else {
-    console.log('  [Backend builds happen on remote server]');
+    buildRows.push(['', chalk.dim('runs on remote server')]);
   }
 
-  console.log('\nRemote Deployment Commands:');
-  if (config.zeroDowntime) {
-    console.log('  Mode: Zero-Downtime Deployment');
-    console.log('\n  Deployment Flow:');
-    console.log('    1. Acquire deployment lock');
-    console.log('    2. Create new release directory');
-    console.log('    3. Setup release structure');
-    console.log('    4. Rsync local files to release directory');
-    console.log('    5. Link shared resources');
-    console.log('    6. Install dependencies');
-    if (config.app === 'backend') {
-      console.log('    7. Run pre-deploy hook (if configured)');
-      console.log('    8. Atomic symlink switch');
-      console.log('    9. Reload PM2');
-      console.log('   10. Health check');
-      console.log('   11. Record release');
-      console.log('   12. Cleanup old releases');
-      console.log('   13. Run post-deploy hook (if configured)');
-      console.log('   14. Release deployment lock');
-    } else {
-      console.log('    7. Atomic symlink switch');
-      console.log('    8. Record release');
-      console.log('    9. Cleanup old releases');
-      console.log('   10. Run post-deploy hook (if configured)');
-      console.log('   11. Release deployment lock');
-    }
-  } else {
-    console.log('  Mode: Legacy Deployment (Non-Zero-Downtime)');
-    console.log('\n  Deployment Steps:');
-    console.log('    1. Rsync files to remote path');
-    console.log('    2. Install dependencies');
-    if (config.app === 'backend') {
-      console.log('    3. Reload PM2');
-    }
-    console.log('    4. Run post-deploy hook (if configured)');
-  }
+  const steps = config.zeroDowntime
+    ? [
+        'Acquire deploy lock',
+        'Create release directory',
+        'Rsync files',
+        'Install dependencies',
+        config.hooks?.preDeploy ? 'Run preDeploy hook' : '',
+        'Switch symlink (atomic)',
+        config.app === 'backend' ? 'Reload PM2' : '',
+        config.healthCheck.enabled ? `Health check ${config.healthCheck.path}` : '',
+        'Record release',
+        'Clean old releases',
+        config.hooks?.postDeploy ? 'Run postDeploy hook' : '',
+        'Release lock',
+      ].filter(Boolean)
+    : [
+        'Rsync files',
+        'Install dependencies',
+        config.app === 'backend' ? 'Reload PM2' : '',
+        config.hooks?.postDeploy ? 'Run postDeploy hook' : '',
+      ].filter(Boolean);
 
-  if (config.domain) {
-    console.log('\nCaddy Configuration:');
-    console.log(`  - Reverse proxy: ${config.domain} -> localhost:${config.backend?.port ?? 3000}`);
-  }
+  const flowRows: [string, string][] = steps.map((s, i) => [`${i + 1}.`, s as string]);
 
-  console.log('\n===========================================');
-  console.log('  DRY RUN COMPLETE - No changes made');
-  console.log('===========================================\n');
+  ui.note(
+    [
+      chalk.bold('Server'),
+      ...serverRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(12))} ${v}`),
+      '',
+      chalk.bold('Build'),
+      ...buildRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(12))} ${v}`),
+      '',
+      chalk.bold('Deploy flow'),
+      ...flowRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(4))} ${v}`),
+    ].join('\n'),
+    'Dry run — no changes will be made',
+  );
 }

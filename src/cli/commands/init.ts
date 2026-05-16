@@ -1,30 +1,23 @@
 import { writeFile, readFile as readFileNode, chmod } from 'node:fs/promises';
 import { ensureDir, pathExists } from 'fs-extra';
 import { resolve } from 'path';
-import { createInterface } from 'readline';
+import { text, select, confirm, isCancel, group } from '@clack/prompts';
 import { detectFramework, detectPkgManager } from '../../domain/framework/detector.js';
 import { isValidIpOrHostname, isValidPort } from '../../domain/validation/ip.js';
 import { ORM_PATTERNS } from '../../shared/constants.js';
 import { ui } from '../ui.js';
 import type { DatabaseType } from '../../shared/types.js';
 
-const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-function ask(question: string, defaultValue?: string): Promise<string> {
-  return new Promise((resolve) => {
-    const prompt = defaultValue ? `${question} (${defaultValue}): ` : `${question}: `;
-    rl.question(prompt, (answer) => {
-      resolve(answer.trim() || defaultValue || '');
-    });
-  });
+function cancelIfNeeded(v: unknown): asserts v is string | boolean | number {
+  if (isCancel(v)) {
+    ui.warn('Cancelled.');
+    process.exit(0);
+  }
 }
 
 export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; print?: boolean }): Promise<void> {
-  ui.info('Initializing ShipNode configuration...');
-
   const detection = await detectFramework(cwd);
   const pkgManager = await detectPkgManager(cwd);
-
   const isBackend = detection.appType === 'backend';
   const appName = await getAppName(cwd);
   const defaultPort = detection.port ?? 3000;
@@ -43,8 +36,7 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     }
 
     const configPath = resolve(cwd, 'shipnode.config.ts');
-    const exists = await pathExists(configPath);
-    if (exists) {
+    if (await pathExists(configPath)) {
       ui.warn('shipnode.config.ts already exists. Use --force to overwrite.');
       return;
     }
@@ -55,29 +47,45 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     return;
   }
 
-  ui.info(`Detected: ${detection.name} (${detection.appType})`);
-  if (detection.orm) {
-    ui.info(`ORM: ${detection.orm}`);
-  }
+  ui.banner();
+  ui.note(
+    `Detected: ${detection.name} (${detection.appType})` +
+    (detection.orm ? `\nORM: ${detection.orm}` : ''),
+    'Project',
+  );
 
-  const appType = await ask('App type', isBackend ? 'backend' : 'frontend');
-  const sshHost = await ask('SSH host');
+  // ── Server ─────────────────────────────────────────────────────
+  const appTypeVal = await select({
+    message: 'App type',
+    initialValue: isBackend ? 'backend' : 'frontend',
+    options: [
+      { value: 'backend', label: 'Backend', hint: 'Node.js server, PM2 managed' },
+      { value: 'frontend', label: 'Frontend', hint: 'Static files, served by Caddy' },
+    ],
+  });
+  cancelIfNeeded(appTypeVal);
+  const appType = appTypeVal as string;
 
-  if (!isValidIpOrHostname(sshHost)) {
+  const sshHost = await text({ message: 'SSH host', placeholder: '1.2.3.4' });
+  cancelIfNeeded(sshHost);
+  if (!isValidIpOrHostname(sshHost as string)) {
     ui.error('Invalid host. Must be an IP address or hostname.');
     process.exit(1);
   }
 
-  const sshUser = await ask('SSH user', 'deploy');
-  const sshPortStr = await ask('SSH port', '22');
-  const sshPort = parseInt(sshPortStr, 10);
+  const sshUser = await text({ message: 'SSH user', initialValue: 'deploy' });
+  cancelIfNeeded(sshUser);
 
+  const sshPortStr = await text({ message: 'SSH port', initialValue: '22' });
+  cancelIfNeeded(sshPortStr);
+  const sshPort = parseInt(sshPortStr as string, 10);
   if (!isValidPort(sshPort)) {
     ui.error('Invalid port number.');
     process.exit(1);
   }
 
-  const remotePath = await ask('Remote deploy path', `/var/www/${appName}`);
+  const remotePath = await text({ message: 'Remote deploy path', initialValue: `/var/www/${appName}` });
+  cancelIfNeeded(remotePath);
 
   let pm2Name = '';
   let backendPort = defaultPort;
@@ -92,61 +100,99 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   let dbPassword: string | undefined;
 
   if (appType === 'backend') {
-    pm2Name = await ask('PM2 app name', appName);
-    backendPort = parseInt(await ask('Backend port', String(defaultPort)), 10);
-    domain = await ask('Domain (optional)', '');
-    const zd = await ask('Enable zero-downtime deployments?', 'yes');
-    zeroDowntime = zd.toLowerCase().startsWith('y');
+    const pm2Val = await text({ message: 'PM2 app name', initialValue: appName });
+    cancelIfNeeded(pm2Val);
+    pm2Name = pm2Val as string;
+
+    const portVal = await text({ message: 'Backend port', initialValue: String(defaultPort) });
+    cancelIfNeeded(portVal);
+    backendPort = parseInt(portVal as string, 10);
+
+    const domainVal = await text({ message: 'Domain', placeholder: 'api.example.com (optional)' });
+    cancelIfNeeded(domainVal);
+    domain = domainVal as string;
+
+    const zdVal = await confirm({ message: 'Enable zero-downtime deployments?' });
+    cancelIfNeeded(zdVal);
+    zeroDowntime = zdVal as boolean;
+
     if (zeroDowntime) {
-      healthCheckPath = await ask('Health check path', '/health');
+      const hcVal = await text({ message: 'Health check path', initialValue: '/health' });
+      cancelIfNeeded(hcVal);
+      healthCheckPath = hcVal as string;
     }
 
-    const hasDb = (await ask('Configure a database?', 'no')).toLowerCase().startsWith('y');
+    const hasDb = await confirm({ message: 'Configure a database?', initialValue: false });
+    cancelIfNeeded(hasDb);
+
     if (hasDb) {
-      const dbTypeRaw = await ask('Database type (postgres/mysql/sqlite/mongodb)', 'postgres');
-      dbType = (['postgres', 'mysql', 'sqlite', 'mongodb'].includes(dbTypeRaw)
-        ? dbTypeRaw
-        : 'postgres') as DatabaseType;
+      const dbTypeVal = await select({
+        message: 'Database type',
+        options: [
+          { value: 'postgres', label: 'PostgreSQL', hint: 'port 5432' },
+          { value: 'mysql', label: 'MySQL', hint: 'port 3306' },
+          { value: 'sqlite', label: 'SQLite', hint: 'file-based' },
+          { value: 'mongodb', label: 'MongoDB', hint: 'port 27017' },
+        ],
+      });
+      cancelIfNeeded(dbTypeVal);
+      dbType = dbTypeVal as DatabaseType;
 
       if (dbType !== 'sqlite') {
-        dbHost = await ask('Database host', 'localhost');
         const defaultDbPort = dbType === 'postgres' ? '5432' : dbType === 'mysql' ? '3306' : '27017';
-        dbPort = parseInt(await ask('Database port', defaultDbPort), 10);
-        dbName = await ask('Database name', appName);
-        dbUser = await ask('Database user', appName);
-        dbPassword = await ask('Database password (optional)', '');
+        const dbVals = await group({
+          dbHost: () => text({ message: 'Database host', initialValue: 'localhost' }),
+          dbPort: () => text({ message: 'Database port', initialValue: defaultDbPort }),
+          dbName: () => text({ message: 'Database name', initialValue: appName }),
+          dbUser: () => text({ message: 'Database user', initialValue: appName }),
+          dbPassword: () => text({ message: 'Database password', placeholder: 'optional' }),
+        });
+        dbHost = dbVals.dbHost as string;
+        dbPort = parseInt(dbVals.dbPort as string, 10);
+        dbName = dbVals.dbName as string;
+        dbUser = dbVals.dbUser as string;
+        dbPassword = (dbVals.dbPassword as string) || undefined;
       } else {
-        dbName = await ask('SQLite file path', './data.db');
+        const sqliteVal = await text({ message: 'SQLite file path', initialValue: './data.db' });
+        cancelIfNeeded(sqliteVal);
+        dbName = sqliteVal as string;
       }
     }
   } else {
-    domain = await ask('Domain (optional)', '');
+    const domainVal = await text({ message: 'Domain', placeholder: 'example.com (optional)' });
+    cancelIfNeeded(domainVal);
+    domain = domainVal as string;
   }
 
   // ── Users ──────────────────────────────────────────────────────
   const users: Array<{ username: string; publicKey: string; sudo: boolean }> = [];
-  const addUsers = (await ask('Add SSH users to the server?', 'no')).toLowerCase().startsWith('y');
+  const addUsers = await confirm({ message: 'Add SSH users to the server?', initialValue: false });
+  cancelIfNeeded(addUsers);
+
   if (addUsers) {
     let addMore = true;
     while (addMore) {
-      const username = await ask('Username');
-      if (!username) break;
-      const publicKey = await ask(`Public key for ${username}`);
-      const sudo = (await ask(`Grant sudo to ${username}?`, 'no')).toLowerCase().startsWith('y');
-      users.push({ username, publicKey, sudo });
-      addMore = (await ask('Add another user?', 'no')).toLowerCase().startsWith('y');
+      const username = await text({ message: 'Username' });
+      cancelIfNeeded(username);
+      if (!(username as string)) break;
+      const publicKey = await text({ message: `Public key for ${username as string}`, placeholder: 'ssh-ed25519 AAAA...' });
+      cancelIfNeeded(publicKey);
+      const sudo = await confirm({ message: `Grant sudo to ${username as string}?`, initialValue: false });
+      cancelIfNeeded(sudo);
+      users.push({ username: username as string, publicKey: publicKey as string, sudo: sudo as boolean });
+      const more = await confirm({ message: 'Add another user?', initialValue: false });
+      cancelIfNeeded(more);
+      addMore = more as boolean;
     }
   }
-
-  rl.close();
 
   const config = generateConfig({
     app: appType as 'backend' | 'frontend',
     appName,
-    sshHost,
-    sshUser,
+    sshHost: sshHost as string,
+    sshUser: sshUser as string,
     sshPort,
-    remotePath,
+    remotePath: remotePath as string,
     pm2Name,
     backendPort,
     domain: domain || undefined,
@@ -162,16 +208,15 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   });
 
   const configPath = resolve(cwd, 'shipnode.config.ts');
-  const exists = await pathExists(configPath);
-  if (exists) {
+  if (await pathExists(configPath)) {
     ui.warn('shipnode.config.ts already exists. Use --force to overwrite.');
     return;
   }
 
   await writeFile(configPath, config, 'utf-8');
-  ui.success('Created shipnode.config.ts');
-
   await generateShipnodeDir(cwd, detection.orm, users);
+
+  ui.outro('Ready! Run shipnode setup to provision your server.');
 }
 
 async function getAppName(cwd: string): Promise<string> {

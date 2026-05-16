@@ -1,11 +1,11 @@
-import { createInterface } from 'readline';
+import { confirm as clackConfirm, isCancel } from '@clack/prompts';
+import { ui } from './ui.js';
 
-export function confirm(question: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(`${question} (y/N) `, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
-    });
-  });
+export async function confirm(question: string): Promise<boolean> {
+  const result = await clackConfirm({ message: question });
+  if (isCancel(result)) {
+    ui.warn('Cancelled.');
+    process.exit(0);
+  }
+  return result as boolean;
 }
