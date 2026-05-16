@@ -22,7 +22,12 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
       spin.start(`Deploying ${chalk.bold(config.pm2?.name ?? config.app)} → ${config.ssh.user}@${config.ssh.host}`);
 
       const deployer = new DeployService(executor, config, cwd);
-      await deployer.execute(options.skipBuild ?? false);
+      try {
+        await deployer.execute(options.skipBuild ?? false);
+      } catch (err) {
+        spin.stop('Deploy failed');
+        throw err;
+      }
 
       spin.stop(`Deployed ${chalk.bold(config.pm2?.name ?? config.app)}`);
 

@@ -38,10 +38,26 @@ export class HealthCheckService {
       if (lastStatus >= 200 && lastStatus < 400) {
         return { attempts: attempt, responseMs: lastResponseMs };
       }
+
+      if (attempt < retries) {
+        await this.sleep(2000);
+      }
+    }
+
+    // Fetch PM2 logs to help diagnose why the app didn't start
+    let diagnostics = '';
+    if (this.config.pm2?.name) {
+      const nodeVersion = this.config.nodeVersion === 'lts' ? '24' : this.config.nodeVersion;
+      const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+      const logResult = await this.executor.exec(
+        `${mise}; mise exec node@${nodeVersion} -- pm2 logs ${this.config.pm2.name} --lines 30 --nostream 2>&1 || true`,
+      ).catch(() => ({ stdout: '', stderr: '' }));
+      const logs = logResult.stdout.trim();
+      if (logs) diagnostics = `\n\nPM2 logs (last 30 lines):\n${logs}`;
     }
 
     throw new HealthCheckError(
-      `Health check failed after ${retries} attempts. Last status: ${lastStatus}`,
+      `Health check failed after ${retries} attempts. Last status: ${lastStatus}` + diagnostics,
       retries,
       lastStatus,
     );
