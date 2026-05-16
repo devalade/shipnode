@@ -273,8 +273,8 @@ function generateConfig(opts: ConfigOptions): string {
     lines.push(`  .pm2('${opts.pm2Name}')`);
   }
 
-  if (opts.backendPort && opts.backendPort !== 3000) {
-    lines.push(`  .port(${opts.backendPort})`);
+  if (opts.app === 'backend') {
+    lines.push(`  .port(${opts.backendPort ?? 3000})`);
   }
 
   if (opts.domain) {
@@ -285,12 +285,15 @@ function generateConfig(opts: ConfigOptions): string {
     lines.push('  .zeroDowntime()');
   }
 
-  if (opts.healthCheckPath && opts.healthCheckPath !== '/health') {
-    lines.push(`  .healthCheck('${opts.healthCheckPath}')`);
-  } else if (opts.healthCheckPath) {
+  if (opts.healthCheckPath) {
     lines.push(`  .healthCheck('${opts.healthCheckPath}')`);
   }
 
+  if (opts.pkgManager) {
+    lines.push(`  .pkgManager('${opts.pkgManager}')`);
+  }
+
+  lines.push('  .build();');
   lines.push('');
   return lines.join('\n');
 }
