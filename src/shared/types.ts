@@ -79,6 +79,7 @@ export interface ShipnodeConfig {
   envFile: string;
   nodeVersion: string;
   pkgManager?: PkgManager;
+  buildDir?: string;
   sharedDirs?: string[];
   sharedFiles?: string[];
   database?: DatabaseConfig;

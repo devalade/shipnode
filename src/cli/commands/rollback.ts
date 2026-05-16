@@ -1,18 +1,8 @@
-import { createInterface } from 'readline';
 import { runRemoteCommand } from '../runner.js';
 import { ReleaseManager } from '../../domain/release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
 import { ui } from '../ui.js';
-
-function confirm(question: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(`${question} (y/N) `, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
-    });
-  });
-}
+import { confirm } from '../prompt.js';
 
 export async function cmdRollback(
   cwd: string,

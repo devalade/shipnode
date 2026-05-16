@@ -48,6 +48,7 @@ export class FrontendStrategy implements DeploymentStrategy {
   }
 
   private async detectFrontendBuildDir(): Promise<string> {
+    if (this.config.buildDir) return this.config.buildDir;
     if (await pathExists(`${this.cwd}/build`)) return 'build';
     if (await pathExists(`${this.cwd}/public`)) return 'public';
     if (await pathExists(`${this.cwd}/dist`)) return 'dist';

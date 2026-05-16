@@ -1,16 +1,6 @@
-import { createInterface } from 'readline';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
-
-function confirm(question: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(`${question} (y/N) `, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
-    });
-  });
-}
+import { confirm } from '../prompt.js';
 
 export async function cmdUnlock(
   cwd: string,

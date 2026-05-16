@@ -55,6 +55,7 @@ export const ShipnodeConfigSchema = z.object({
   envFile: z.string().default('.env'),
   nodeVersion: z.string().default('lts'),
   pkgManager: z.enum(['npm', 'yarn', 'pnpm', 'bun']).optional(),
+  buildDir: z.string().optional(),
   sharedDirs: z.array(z.string()).optional(),
   sharedFiles: z.array(z.string()).optional(),
   database: DatabaseConfigSchema,

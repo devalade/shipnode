@@ -7,60 +7,74 @@ ${chalk.bold.blue('ShipNode')} v2.0.0 - Deploy Node.js apps to a single VPS
 ${chalk.bold('USAGE')}
   shipnode <command> [options]
 
-${chalk.bold('COMMANDS')}
-  ${chalk.green('init')}            Initialize a new shipnode.config.ts
-  ${chalk.green('setup')}           Setup a new server with required dependencies
-  ${chalk.green('deploy')}          Deploy your application
-  ${chalk.green('rollback')}        Roll back to a previous release
-  ${chalk.green('env')}             Upload local .env file to the server
-  ${chalk.green('unlock')}          Clear a stuck deployment lock
-  ${chalk.green('doctor')}          Check local and remote configuration
-  ${chalk.green('status')}          Check application status
-  ${chalk.green('help')}            Show this help message
+${chalk.bold('CORE')}
+  ${chalk.green('init')}              Initialize a new shipnode.config.ts
+  ${chalk.green('setup')}             Setup a new server with required dependencies
+  ${chalk.green('deploy')}            Deploy your application
+  ${chalk.green('doctor')}            Check local and remote configuration
+  ${chalk.green('status')}            Check application status
 
-${chalk.bold('DEPLOY OPTIONS')}
-  --dry-run          Show what would be deployed without making changes
-  --skip-build       Skip the build step (use existing build output)
-  --config <path>    Use a specific config file
+${chalk.bold('RELEASE MANAGEMENT')}
+  ${chalk.green('rollback')}          Roll back to a previous release
+  ${chalk.green('migrate')}           Migrate existing deploy to zero-downtime structure
 
-${chalk.bold('ROLLBACK OPTIONS')}
-  --steps <n>        Number of releases to go back (default: 1)
-  --config <path>    Use a specific config file
+${chalk.bold('ENVIRONMENT')}
+  ${chalk.green('env')}               Upload local .env file to the server
+  ${chalk.green('run')} <cmd>         Run a one-off command on the production server
 
-${chalk.bold('INIT OPTIONS')}
-  --non-interactive  Generate config without prompts
-  --print            Print config to stdout without writing file
+${chalk.bold('PROCESS MANAGEMENT')}
+  ${chalk.green('logs')}              Show application logs
+  ${chalk.green('restart')}           Restart the application
+  ${chalk.green('stop')}              Stop the application
+  ${chalk.green('metrics')}           Open PM2 monitoring dashboard
 
-${chalk.bold('DOCTOR OPTIONS')}
-  --security         Run security audit instead of standard checks
+${chalk.bold('SECURITY & MAINTENANCE')}
+  ${chalk.green('harden')}            Apply server security hardening
+  ${chalk.green('unlock')}            Clear a stuck deployment lock
+
+${chalk.bold('CI/CD')}
+  ${chalk.green('ci github')}         Generate GitHub Actions deploy workflow
+  ${chalk.green('ci env-sync')}       Sync .env and config to GitHub secrets
+
+${chalk.bold('CONFIGURATION')}
+  ${chalk.green('config show')}       Show resolved configuration
+  ${chalk.green('config validate')}   Validate configuration file
+  ${chalk.green('config path')}       Print path to config file
+
+${chalk.bold('CUSTOMIZATION')}
+  ${chalk.green('eject')} [target]    Eject PM2/Caddy templates (pm2, caddy, all)
+
+${chalk.bold('OPTIONS')}
+  --dry-run            Show what would be deployed (deploy only)
+  --skip-build         Skip the build step (deploy only)
+  --steps <n>          Releases to go back (rollback only)
+  --lines <n>          Log lines to show (logs only, default: 100)
+  --tty                Force interactive TTY (run only)
+  --security           Run security audit (doctor only)
+  --all                Skip confirmation (ci env-sync only)
+  --config <path>      Use a specific config file
 
 ${chalk.bold('EXAMPLES')}
-  ${chalk.dim('# Initialize a new project')}
-  shipnode init
+  ${chalk.dim('# First deploy')}
+  shipnode init && shipnode setup && shipnode deploy
 
-  ${chalk.dim('# Deploy with dry run first')}
-  shipnode deploy --dry-run
-
-  ${chalk.dim('# Deploy to production')}
-  shipnode deploy
-
-  ${chalk.dim('# Roll back to previous release')}
+  ${chalk.dim('# Roll back one release')}
   shipnode rollback
 
-  ${chalk.dim('# Roll back 2 releases')}
-  shipnode rollback --steps 2
+  ${chalk.dim('# Run a database migration')}
+  shipnode run "npx prisma migrate deploy"
 
-  ${chalk.dim('# Push local .env to server')}
-  shipnode env
+  ${chalk.dim('# Open interactive shell on server')}
+  shipnode run bash
 
-  ${chalk.dim('# Clear a stuck deploy lock')}
-  shipnode unlock
+  ${chalk.dim('# Push .env then restart')}
+  shipnode env && shipnode restart
 
-  ${chalk.dim('# Check server health')}
-  shipnode doctor
+  ${chalk.dim('# Set up GitHub Actions CI')}
+  shipnode ci github && shipnode ci env-sync
 
-  ${chalk.dim('# Run security audit')}
-  shipnode doctor --security
+  ${chalk.dim('# Harden server security')}
+  shipnode harden
 
 ${chalk.bold('DOCUMENTATION')}
   https://github.com/devalade/shipnode
