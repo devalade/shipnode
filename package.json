@@ -1,6 +1,6 @@
 {
   "name": "@devalade/shipnode",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "Deploy Node.js apps to a single VPS with zero configuration",
   "type": "module",
   "main": "dist/index.js",
