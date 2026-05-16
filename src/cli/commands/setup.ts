@@ -112,26 +112,27 @@ function sh(s: string): string {
 }
 
 function buildDbSetupCommand(db: DatabaseConfig): string {
-  const sudo = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"';
+  // preamble uses ';' so the conditional SUDO/PG_RUN assignments don't break
+  // the '&&' chain when running as root (EUID=0 makes [ -ne 0 ] exit 1)
+  const preamble = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; PG_RUN="runuser -u postgres --"; [ "$EUID" -ne 0 ] && PG_RUN="sudo -u postgres"';
 
   if (db.type === 'postgres') {
     const createUser = db.password
-      ? `$SUDO -u postgres psql -c "CREATE USER \\"${sh(db.user)}\\" WITH PASSWORD '${sh(db.password)}';" 2>/dev/null || true`
-      : `$SUDO -u postgres psql -c "CREATE USER \\"${sh(db.user)}\\";" 2>/dev/null || true`;
-    return [
-      sudo,
+      ? `$PG_RUN psql -c "CREATE USER \\"${sh(db.user)}\\" WITH PASSWORD '${sh(db.password)}';" 2>/dev/null || true`
+      : `$PG_RUN psql -c "CREATE USER \\"${sh(db.user)}\\";" 2>/dev/null || true`;
+    const commands = [
       '$SUDO apt-get install -y postgresql postgresql-contrib',
       '$SUDO systemctl enable postgresql',
       '$SUDO systemctl start postgresql',
       createUser,
-      `$SUDO -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${sh(db.name)}'" | grep -q 1 || $SUDO -u postgres createdb -O "${sh(db.user)}" "${sh(db.name)}"`,
-    ].join(' && ');
+      `$PG_RUN psql -tc "SELECT 1 FROM pg_database WHERE datname='${sh(db.name)}'" | grep -q 1 || $PG_RUN createdb -O "${sh(db.user)}" "${sh(db.name)}"`,
+    ];
+    return `${preamble}; ${commands.join(' && ')}`;
   }
 
   if (db.type === 'mysql') {
     const pwClause = db.password ? `IDENTIFIED BY '${sh(db.password)}'` : '';
-    return [
-      sudo,
+    const commands = [
       '$SUDO apt-get install -y mysql-server',
       '$SUDO systemctl enable mysql',
       '$SUDO systemctl start mysql',
@@ -139,15 +140,15 @@ function buildDbSetupCommand(db: DatabaseConfig): string {
       `$SUDO mysql -e "CREATE DATABASE IF NOT EXISTS \\\`${sh(db.name)}\\\`;"`,
       `$SUDO mysql -e "GRANT ALL PRIVILEGES ON \\\`${sh(db.name)}\\\`.* TO '${sh(db.user)}'@'localhost';"`,
       `$SUDO mysql -e "FLUSH PRIVILEGES;"`,
-    ].join(' && ');
+    ];
+    return `${preamble}; ${commands.join(' && ')}`;
   }
 
   if (db.type === 'mongodb') {
     const createUser = db.password
       ? `mongosh "${sh(db.name)}" --eval "db.createUser({user:'${sh(db.user)}',pwd:'${sh(db.password)}',roles:[{role:'readWrite',db:'${sh(db.name)}'}]})" 2>/dev/null || true`
       : `mongosh "${sh(db.name)}" --eval "db.createUser({user:'${sh(db.user)}',roles:[{role:'readWrite',db:'${sh(db.name)}'}]})" 2>/dev/null || true`;
-    return [
-      sudo,
+    const commands = [
       'if ! command -v mongod &>/dev/null; then ' +
         'curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | $SUDO gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg; ' +
         'echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | $SUDO tee /etc/apt/sources.list.d/mongodb-org-7.0.list; ' +
@@ -156,16 +157,16 @@ function buildDbSetupCommand(db: DatabaseConfig): string {
       '$SUDO systemctl enable mongod',
       '$SUDO systemctl start mongod',
       createUser,
-    ].join(' && ');
+    ];
+    return `${preamble}; ${commands.join(' && ')}`;
   }
 
   return 'true';
 }
 
 function buildRedisSetupCommand(redis: RedisConfig): string {
-  const sudo = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"';
+  const preamble = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"';
   const parts = [
-    sudo,
     '$SUDO apt-get install -y redis-server',
     '$SUDO systemctl enable redis-server',
     '$SUDO systemctl start redis-server',
@@ -179,5 +180,5 @@ function buildRedisSetupCommand(redis: RedisConfig): string {
     );
   }
 
-  return parts.join(' && ');
+  return `${preamble}; ${parts.join(' && ')}`;
 }
