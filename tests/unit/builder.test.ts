@@ -206,4 +206,30 @@ describe('ShipnodeBuilder', () => {
         .build();
     }).toThrow();
   });
+
+  it('sets backup config', () => {
+    const config = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '1.2.3.4', user: 'deploy' })
+      .deployTo('/var/www/app')
+      .backup({ s3Bucket: 'my-bucket', schedule: 'daily', retentionDays: 7 })
+      .build();
+
+    expect(config.backup?.s3Bucket).toBe('my-bucket');
+    expect(config.backup?.schedule).toBe('daily');
+    expect(config.backup?.retentionDays).toBe(7);
+  });
+
+  it('sets cloudflare config', () => {
+    const config = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '1.2.3.4', user: 'deploy' })
+      .deployTo('/var/www/app')
+      .cloudflare({ zone: 'example.com', appHostname: 'app.example.com', lockdownFirewall: true })
+      .build();
+
+    expect(config.cloudflare?.zone).toBe('example.com');
+    expect(config.cloudflare?.appHostname).toBe('app.example.com');
+    expect(config.cloudflare?.lockdownFirewall).toBe(true);
+  });
 });

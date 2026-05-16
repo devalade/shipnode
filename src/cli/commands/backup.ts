@@ -50,7 +50,7 @@ echo "[shipnode-backup] Done"
 `;
 }
 
-function scheduleToSystemd(schedule: 'hourly' | 'daily' | 'weekly'): string {
+export function scheduleToSystemd(schedule: 'hourly' | 'daily' | 'weekly'): string {
   const map: Record<string, string> = {
     hourly: '*:00:00',
     daily: '*-*-* 02:00:00',

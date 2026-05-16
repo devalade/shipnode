@@ -56,7 +56,10 @@ export function assembleConfig(partial: Partial<ShipnodeConfig>): ShipnodeConfig
     pkgManager: partial.pkgManager,
     sharedDirs: partial.sharedDirs,
     sharedFiles: partial.sharedFiles,
+    buildDir: partial.buildDir,
     database: partial.database,
+    backup: partial.backup,
+    cloudflare: partial.cloudflare,
     hooks: partial.hooks,
   };
 

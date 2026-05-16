@@ -24,7 +24,7 @@ function parseUsersYml(cwd: string): UserEntry[] {
   return [];
 }
 
-function parseSimpleUsersYml(raw: string): UserEntry[] {
+export function parseSimpleUsersYml(raw: string): UserEntry[] {
   const users: UserEntry[] = [];
   const lines = raw.split('\n');
   let current: Partial<UserEntry> | null = null;
