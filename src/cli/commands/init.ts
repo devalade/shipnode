@@ -1,4 +1,4 @@
-import { writeFile, mkdir, pathExists } from 'fs-extra';
+import { writeFile, ensureDir, pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { createInterface } from 'readline';
 import { detectFramework, detectPkgManager } from '../../domain/framework/detector.js';
@@ -158,7 +158,7 @@ interface ConfigOptions {
 
 async function generateShipnodeDir(cwd: string, detectedOrm?: string): Promise<void> {
   const dir = resolve(cwd, '.shipnode');
-  await mkdir(dir, { recursive: true });
+  await ensureDir(dir);
 
   const preDeployPath = resolve(dir, 'pre-deploy.sh');
   const postDeployPath = resolve(dir, 'post-deploy.sh');

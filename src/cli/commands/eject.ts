@@ -1,4 +1,4 @@
-import { writeFile, pathExists, mkdir } from 'fs-extra';
+import { writeFile, pathExists, ensureDir } from 'fs-extra';
 import { resolve } from 'path';
 import { ui } from '../ui.js';
 
@@ -44,7 +44,7 @@ const CADDYFILE_FRONTEND = `# ShipNode Caddy — frontend static files template
 
 export async function cmdEject(cwd: string, target: 'pm2' | 'caddy' | 'all'): Promise<void> {
   const templatesDir = resolve(cwd, '.shipnode', 'templates');
-  await mkdir(templatesDir, { recursive: true });
+  await ensureDir(templatesDir);
 
   const ejected: string[] = [];
   const skipped: string[] = [];
