@@ -7,11 +7,10 @@ import { assembleConfig } from './assembly.js';
 import { ConfigError } from '../shared/errors.js';
 import type { ShipnodeBuilder } from './builder.js';
 
-async function loadEnvIntoProcess(cwd: string): Promise<void> {
-  const envFile = resolve(cwd, '.env');
+async function loadEnvIntoProcess(envFilePath: string): Promise<void> {
   let raw: string;
   try {
-    raw = await readFile(envFile, 'utf-8');
+    raw = await readFile(envFilePath, 'utf-8');
   } catch {
     return;
   }
@@ -29,9 +28,19 @@ async function loadEnvIntoProcess(cwd: string): Promise<void> {
   }
 }
 
+async function detectEnvFile(configFile: string, cwd: string): Promise<string> {
+  try {
+    const content = await readFile(configFile, 'utf-8');
+    const match = content.match(/\.envFile\(\s*['"`]([^'"`]+)['"`]\s*\)/);
+    return resolve(cwd, match ? match[1] : '.env');
+  } catch {
+    return resolve(cwd, '.env');
+  }
+}
+
 export async function loadConfig(cwd: string, configPath?: string): Promise<ShipnodeConfig> {
-  await loadEnvIntoProcess(cwd);
   const file = configPath ?? resolve(cwd, 'shipnode.config.ts');
+  await loadEnvIntoProcess(await detectEnvFile(file, cwd));
 
   const exists = await pathExists(file);
   if (!exists) {
