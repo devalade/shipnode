@@ -96,11 +96,28 @@ export class BackendStrategy implements DeploymentStrategy {
 
   private async resolveEntryPoint(): Promise<string> {
     try {
-      const pkg = JSON.parse(await readFile(resolve(this.cwd, 'package.json'), 'utf-8'));
-      if (pkg.main) return pkg.main;
+      const raw = await readFile(resolve(this.cwd, 'package.json'), 'utf-8');
+      const pkg = JSON.parse(raw);
+
+      // 1. Explicit main field
+      if (pkg.main) return pkg.main as string;
+
+      // 2. Parse from start script: "node dist/index.js" → "dist/index.js"
+      const startScript = pkg.scripts?.start as string | undefined;
+      if (startScript) {
+        const match = startScript.match(/node\s+([\S]+)/);
+        if (match) return match[1];
+      }
     } catch {
       // ignore
     }
+
+    // 3. Probe common entry points that actually exist locally
+    const candidates = ['server.js', 'app.js', 'index.js', 'dist/index.js', 'dist/server.js', 'src/index.js'];
+    for (const candidate of candidates) {
+      if (await pathExists(resolve(this.cwd, candidate))) return candidate;
+    }
+
     return 'index.js';
   }
 
