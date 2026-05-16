@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { loadConfig } from '../../config/loader.js';
 import { DeployService } from '../../services/deploy.service.js';
+import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
 import type { ShipnodeConfig } from '../../shared/types.js';
@@ -17,19 +18,10 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
     cwd,
     async ({ config, executor }) => {
       ui.banner();
+      ui.step(`Deploying ${chalk.bold(config.pm2?.name ?? config.app)} → ${config.ssh.user}@${config.ssh.host}`);
 
-      const spin = ui.spinner();
-      spin.start(`Deploying ${chalk.bold(config.pm2?.name ?? config.app)} → ${config.ssh.user}@${config.ssh.host}`);
-
-      const deployer = new DeployService(executor, config, cwd);
-      try {
-        await deployer.execute(options.skipBuild ?? false);
-      } catch (err) {
-        spin.stop('Deploy failed');
-        throw err;
-      }
-
-      spin.stop(`Deployed ${chalk.bold(config.pm2?.name ?? config.app)}`);
+      const deployer = new DeployService(new LoggingExecutor(executor), config, cwd);
+      await deployer.execute(options.skipBuild ?? false);
 
       const lines = [
         `host     ${config.ssh.user}@${config.ssh.host}`,

@@ -34,7 +34,7 @@ export class FrontendStrategy implements DeploymentStrategy {
       ...(hasIgnoreFile ? ['--exclude-from', ignoreFile] : []),
       `${this.cwd}/${buildDir}/`,
       `${this.config.ssh.user}@${this.config.ssh.host}:${ctx.workDir}/`,
-    ]);
+    ], { stdio: 'inherit' });
   }
 
   private async buildFrontend(): Promise<void> {

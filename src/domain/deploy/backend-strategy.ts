@@ -29,7 +29,7 @@ export class BackendStrategy implements DeploymentStrategy {
       `${this.config.ssh.user}@${this.config.ssh.host}:${ctx.workDir}/`,
     ];
 
-    await execa('rsync', args);
+    await execa('rsync', args, { stdio: 'inherit' });
   }
 
   async setupEnvironment(ctx: StrategyContext): Promise<void> {
