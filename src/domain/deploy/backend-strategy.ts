@@ -4,6 +4,7 @@ import { resolve } from 'path';
 import type { ShipnodeConfig } from '../../shared/types.js';
 import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework/detector.js';
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
+import { DeployError } from '../../shared/errors.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
 
 export class BackendStrategy implements DeploymentStrategy {
@@ -69,7 +70,8 @@ export class BackendStrategy implements DeploymentStrategy {
 
     commands.push(`if [ -d build ] && [ -f .env ]; then ln -sf "${ctx.workDir}/.env" build/.env; fi`);
 
-    await ctx.executor.exec(commands.join(' && '));
+    const installResult = await ctx.executor.exec(commands.join(' && '));
+    this.assertNoBuildScriptsIgnored(pkgManager, installResult);
   }
 
   async startApp(ctx: StrategyContext): Promise<void> {
@@ -89,9 +91,10 @@ export class BackendStrategy implements DeploymentStrategy {
     // resolution state matches the path PM2 will use. Packages are already
     // in the local store so this is a fast offline relink, not a download.
     const installCmd = getInstallCommand(pkgManager);
-    await ctx.executor.exec(
+    const installResult = await ctx.executor.exec(
       `cd "${cdPath}" && ${mise} && ${installCmd} --prefer-offline`,
     );
+    this.assertNoBuildScriptsIgnored(pkgManager, installResult);
 
     await ctx.executor.exec(
       `cd "${cdPath}" && ${mise} && ` +
@@ -141,6 +144,20 @@ export class BackendStrategy implements DeploymentStrategy {
     }
 
     return commands.join(' && ');
+  }
+
+  private assertNoBuildScriptsIgnored(pkgManager: string, result: { stdout: string; stderr: string }): void {
+    if (pkgManager !== 'pnpm') return;
+    const output = result.stdout + result.stderr;
+    if (!output.includes('ERR_PNPM_IGNORED_BUILDS')) return;
+    const match = output.match(/Ignored build scripts: ([^\n]+)/);
+    const packages = match ? match[1].trim() : 'native modules';
+    throw new DeployError(
+      `pnpm skipped build scripts for: ${packages}\n` +
+      `These packages need postinstall to compile native addons or generate clients (Prisma, bcrypt, etc.).\n` +
+      `Fix: run "pnpm approve-builds" in your project, commit the result, then redeploy.`,
+      'install',
+    );
   }
 
   private async resolvePkgManager() {

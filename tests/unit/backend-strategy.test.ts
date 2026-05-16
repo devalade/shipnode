@@ -234,4 +234,36 @@ describe('BackendStrategy.startApp', () => {
     const writeCmd = executor.getHistory()[0].command;
     expect(writeCmd).toContain('/var/www/app/shared/ecosystem.config.cjs');
   });
+
+  it('throws DeployError when pnpm reports ERR_PNPM_IGNORED_BUILDS during startApp install', async () => {
+    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+
+    executor.when(
+      (cmd) => cmd.includes('--prefer-offline'),
+      {
+        stdout: '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: @prisma/client@6.19.3, bcrypt@5.1.1\nRun "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.',
+        stderr: '',
+        exitCode: 0,
+      },
+    );
+
+    await expect(strategy.startApp!(makeCtx(executor))).rejects.toThrow('pnpm approve-builds');
+  });
+
+  it('throws DeployError when pnpm reports ERR_PNPM_IGNORED_BUILDS during setupEnvironment', async () => {
+    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+
+    executor.when(
+      (cmd) => cmd.includes('pnpm install'),
+      {
+        stdout: '[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: @prisma/client@6.19.3\nRun "pnpm approve-builds"',
+        stderr: '',
+        exitCode: 0,
+      },
+    );
+
+    await expect(strategy.setupEnvironment!(makeCtx(executor))).rejects.toThrow('pnpm approve-builds');
+  });
 });
