@@ -1,0 +1,46 @@
+{
+  "name": "shipnode",
+  "version": "2.0.0",
+  "description": "Deploy Node.js apps to a single VPS with zero configuration",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "shipnode": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "execa": "^9.5.1",
+    "fs-extra": "^11.3.5",
+    "jiti": "^2.4.2",
+    "js-yaml": "^4.1.0",
+    "ora": "^8.1.1",
+    "ssh2": "^1.16.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.2",
+    "@types/ssh2": "^1.15.1",
+    "typescript": "^5.7.2",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "ssh2", "cpu-features"]
+  },
+  "license": "MIT"
+}

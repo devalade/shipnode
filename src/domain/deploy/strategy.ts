@@ -1,0 +1,48 @@
+import type { RemoteExecutor } from '../remote/executor.js';
+
+/**
+ * Context passed to every deployment strategy method.
+ */
+export interface StrategyContext {
+  config: import('../../shared/types.js').ShipnodeConfig;
+  executor: RemoteExecutor;
+  workDir: string;
+  cwd: string;
+  skipBuild: boolean;
+}
+
+/**
+ * A deployment strategy knows how to stage, prepare, and start
+ * a specific kind of application (backend, frontend, etc.).
+ *
+ * Strategies are adapters at the deployment seam. The orchestrator
+ * owns the invariant lifecycle; the strategy owns the app-specific
+ * details.
+ */
+export interface DeploymentStrategy {
+  readonly name: string;
+
+  /**
+   * Stage artifacts onto the remote host.
+   *
+   * For a backend this usually means rsyncing source files.
+   * For a frontend this means building locally and rsyncing build output.
+   */
+  stage(ctx: StrategyContext): Promise<void>;
+
+  /**
+   * Prepare the runtime environment on the remote host.
+   *
+   * Optional. For backends this is typically dependency installation
+   * and remote builds. For static frontends this is usually a no-op.
+   */
+  setupEnvironment?(ctx: StrategyContext): Promise<void>;
+
+  /**
+   * Start or reload the application.
+   *
+   * Optional. For backend apps this means reloading PM2.
+   * For static frontends this is usually a no-op (Caddy serves files).
+   */
+  startApp?(ctx: StrategyContext): Promise<void>;
+}
