@@ -23,28 +23,19 @@ export async function cmdEnv(
       const content = await readFile(localEnvPath);
       const b64 = content.toString('base64');
 
-      if (config.zeroDowntime) {
-        const sharedEnv = `${config.remotePath}/shared/.env`;
-        await executor.exec(`mkdir -p "${config.remotePath}/shared"`);
-        await executor.exec(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
-        await executor.exec(`chmod 600 "${sharedEnv}"`);
-        ui.success(`Uploaded to ${sharedEnv}`);
+      const sharedEnv = `${config.remotePath}/shared/.env`;
+      await executor.exec(`mkdir -p "${config.remotePath}/shared"`);
+      await executor.exec(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
+      await executor.exec(`chmod 600 "${sharedEnv}"`);
+      ui.success(`Uploaded to ${sharedEnv}`);
 
-        // Link into current release if it exists
-        const linkResult = await executor.exec(
-          `if [ -d "${config.remotePath}/current" ]; then ` +
-            `ln -sfn "${sharedEnv}" "${config.remotePath}/current/.env" && echo "linked"; ` +
-            `fi`,
-        );
-        if (linkResult.stdout === 'linked') {
-          ui.success('Linked shared .env to current release');
-        }
-      } else {
-        const targetEnv = `${config.remotePath}/.env`;
-        await executor.exec(`mkdir -p "${config.remotePath}"`);
-        await executor.exec(`echo "${b64}" | base64 -d > "${targetEnv}"`);
-        await executor.exec(`chmod 600 "${targetEnv}"`);
-        ui.success(`Uploaded to ${targetEnv}`);
+      const linkResult = await executor.exec(
+        `if [ -d "${config.remotePath}/current" ]; then ` +
+          `ln -sfn "${sharedEnv}" "${config.remotePath}/current/.env" && echo "linked"; ` +
+          `fi`,
+      );
+      if (linkResult.stdout === 'linked') {
+        ui.success('Linked shared .env to current release');
       }
 
       if (config.app === 'backend' && config.pm2?.name) {

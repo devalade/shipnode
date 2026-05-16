@@ -11,10 +11,6 @@ export async function cmdRollback(
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      if (!config.zeroDowntime) {
-        throw new Error('Rollback requires zero-downtime deployment. Enable zeroDowntime in config.');
-      }
-
       const releases = new ReleaseManager(executor, config.remotePath, config.keepReleases);
       const stepsBack = options.steps ?? 1;
 

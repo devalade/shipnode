@@ -7,13 +7,6 @@ export async function cmdMigrate(cwd: string, options: { config?: string }): Pro
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      if (!config.zeroDowntime) {
-        throw new Error(
-          'Migration requires zeroDowntime: true in your shipnode.config.ts. ' +
-            'Enable it and re-run to migrate to the zero-downtime release structure.',
-        );
-      }
-
       const remotePath = config.remotePath;
 
       ui.heading('Zero-Downtime Migration');

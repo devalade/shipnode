@@ -15,7 +15,6 @@ describe('assembleConfig', () => {
     expect(config.ssh.user).toBe('deploy');
     expect(config.ssh.port).toBe(22);
     expect(config.remotePath).toBe('/var/www/app');
-    expect(config.zeroDowntime).toBe(true);
     expect(config.keepReleases).toBe(5);
     expect(config.healthCheck.enabled).toBe(true);
     expect(config.healthCheck.path).toBe('/health');
@@ -32,7 +31,6 @@ describe('assembleConfig', () => {
       app: 'frontend',
       ssh: { host: 'example.com', user: 'deploy', port: 2222 },
       remotePath: '/opt/app',
-      zeroDowntime: false,
       keepReleases: 10,
       healthCheck: { enabled: true, path: '/api/health', timeout: 60, retries: 5, startupDelay: 10 },
       envFile: '.env.production',
@@ -43,7 +41,6 @@ describe('assembleConfig', () => {
     expect(config.app).toBe('frontend');
     expect(config.ssh.port).toBe(2222);
     expect(config.remotePath).toBe('/opt/app');
-    expect(config.zeroDowntime).toBe(false);
     expect(config.keepReleases).toBe(10);
     expect(config.healthCheck.path).toBe('/api/health');
     expect(config.healthCheck.timeout).toBe(60);

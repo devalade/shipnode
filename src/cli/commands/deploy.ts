@@ -42,7 +42,7 @@ function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
     ['App type', config.app],
     ['Host', `${config.ssh.user}@${config.ssh.host}:${config.ssh.port}`],
     ['Remote path', config.remotePath],
-    ['Mode', config.zeroDowntime ? `zero-downtime (keep ${config.keepReleases})` : 'legacy'],
+    ['Keep releases', String(config.keepReleases)],
   ];
 
   if (config.app === 'backend') {
@@ -62,27 +62,20 @@ function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
     buildRows.push(['', chalk.dim('runs on remote server')]);
   }
 
-  const steps = config.zeroDowntime
-    ? [
-        'Acquire deploy lock',
-        'Create release directory',
-        'Rsync files',
-        'Install dependencies',
-        config.hooks?.preDeploy ? 'Run preDeploy hook' : '',
-        'Switch symlink (atomic)',
-        config.app === 'backend' ? 'Reload PM2' : '',
-        config.healthCheck.enabled ? `Health check ${config.healthCheck.path}` : '',
-        'Record release',
-        'Clean old releases',
-        config.hooks?.postDeploy ? 'Run postDeploy hook' : '',
-        'Release lock',
-      ].filter(Boolean)
-    : [
-        'Rsync files',
-        'Install dependencies',
-        config.app === 'backend' ? 'Reload PM2' : '',
-        config.hooks?.postDeploy ? 'Run postDeploy hook' : '',
-      ].filter(Boolean);
+  const steps = [
+    'Acquire deploy lock',
+    'Create release directory',
+    'Rsync files',
+    'Install dependencies',
+    config.hooks?.preDeploy ? 'Run preDeploy hook' : '',
+    'Switch symlink (atomic)',
+    config.app === 'backend' ? 'Reload PM2' : '',
+    config.healthCheck.enabled ? `Health check ${config.healthCheck.path}` : '',
+    'Record release',
+    'Clean old releases',
+    config.hooks?.postDeploy ? 'Run postDeploy hook' : '',
+    'Release lock',
+  ].filter(Boolean);
 
   const flowRows: [string, string][] = steps.map((s, i) => [`${i + 1}.`, s as string]);
 

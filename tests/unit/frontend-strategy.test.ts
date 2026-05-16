@@ -22,7 +22,6 @@ function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
     app: 'frontend',
     ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
     remotePath: '/var/www/app',
-    zeroDowntime: true,
     keepReleases: 5,
     healthCheck: { enabled: false, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
     envFile: '.env',

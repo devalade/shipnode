@@ -12,7 +12,6 @@ describe('ShipnodeConfigSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.ssh.port).toBe(22);
-      expect(result.data.zeroDowntime).toBe(true);
       expect(result.data.keepReleases).toBe(5);
       expect(result.data.healthCheck.enabled).toBe(true);
       expect(result.data.envFile).toBe('.env');

@@ -22,9 +22,7 @@ export class CaddyService {
   async configureFrontend(): Promise<void> {
     if (!this.config.domain) return;
 
-    const servePath = this.config.zeroDowntime
-      ? `${this.config.remotePath}/current`
-      : this.config.remotePath;
+    const servePath = `${this.config.remotePath}/current`;
 
     const appName = this.config.remotePath.split('/').pop() ?? 'app';
     const caddyConfig = this.generateFrontendCaddyfile(appName, servePath);

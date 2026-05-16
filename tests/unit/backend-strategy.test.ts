@@ -24,7 +24,6 @@ function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
     remotePath: '/var/www/app',
     pm2: { name: 'myapp' },
     backend: { port: 3000 },
-    zeroDowntime: true,
     keepReleases: 5,
     healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
     envFile: '.env',
@@ -227,23 +226,12 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).toContain("'1G'");
   });
 
-  it('ecosystem path uses shared dir in zero-downtime mode', async () => {
-    const strategy = new BackendStrategy(makeConfig({ zeroDowntime: true }), '/local/project');
+  it('ecosystem path uses shared dir', async () => {
+    const strategy = new BackendStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
     const writeCmd = executor.getHistory()[0].command;
     expect(writeCmd).toContain('/var/www/app/shared/ecosystem.config.cjs');
-  });
-
-  it('ecosystem path is in workDir in legacy mode', async () => {
-    const strategy = new BackendStrategy(makeConfig({ zeroDowntime: false }), '/local/project');
-    const executor = new FakeRemoteExecutor();
-    const ctx = makeCtx(executor, { workDir: '/var/www/app' });
-    await strategy.startApp!(ctx);
-
-    const writeCmd = executor.getHistory()[0].command;
-    expect(writeCmd).toContain('/var/www/app/ecosystem.config.cjs');
-    expect(writeCmd).not.toContain('/shared/');
   });
 });

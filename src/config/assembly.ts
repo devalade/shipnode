@@ -48,7 +48,6 @@ export function assembleConfig(partial: Partial<ShipnodeConfig>): ShipnodeConfig
     pm2: partial.pm2,
     backend: partial.backend ?? defaultBackendConfig(),
     domain: partial.domain,
-    zeroDowntime: partial.zeroDowntime ?? DEFAULTS.ZERO_DOWNTIME,
     keepReleases: partial.keepReleases ?? DEFAULTS.KEEP_RELEASES,
     healthCheck: defaultHealthCheckConfig(partial.healthCheck),
     envFile: partial.envFile ?? DEFAULTS.ENV_FILE,

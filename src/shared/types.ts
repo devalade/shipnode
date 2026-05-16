@@ -91,7 +91,6 @@ export interface ShipnodeConfig {
   pm2?: Pm2Config;
   backend?: BackendConfig;
   domain?: string;
-  zeroDowntime: boolean;
   keepReleases: number;
   healthCheck: HealthCheckConfig;
   envFile: string;

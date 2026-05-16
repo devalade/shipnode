@@ -59,16 +59,8 @@ export class ShipnodeBuilder {
     return this;
   }
 
-  zeroDowntime(opts?: { keepReleases?: number }): this {
-    this.config.zeroDowntime = true;
-    if (opts?.keepReleases !== undefined) {
-      this.config.keepReleases = opts.keepReleases;
-    }
-    return this;
-  }
-
-  legacy(): this {
-    this.config.zeroDowntime = false;
+  keepReleases(n: number): this {
+    this.config.keepReleases = n;
     return this;
   }
 

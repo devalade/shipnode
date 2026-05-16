@@ -14,7 +14,6 @@ export async function cmdConfigShow(cwd: string, options: { config?: string }): 
         ['app', config.app],
         ['nodeVersion', config.nodeVersion],
         ['envFile', config.envFile],
-        ['zeroDowntime', String(config.zeroDowntime)],
         ['keepReleases', String(config.keepReleases)],
       ]);
 

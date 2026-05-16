@@ -30,14 +30,10 @@ export class DeployOrchestrator {
     strategy: DeploymentStrategy,
     options: { cwd: string; skipBuild: boolean; gitCommit?: string },
   ): Promise<void> {
-    if (this.config.zeroDowntime) {
-      await this.deployZeroDowntime(strategy, options);
-    } else {
-      await this.deployLegacy(strategy, options);
-    }
+    await this.deployRelease(strategy, options);
   }
 
-  private async deployZeroDowntime(
+  private async deployRelease(
     strategy: DeploymentStrategy,
     options: { cwd: string; skipBuild: boolean; gitCommit?: string },
   ): Promise<void> {
@@ -111,52 +107,6 @@ export class DeployOrchestrator {
     }
 
     await this.lock.release();
-  }
-
-  private async deployLegacy(
-    strategy: DeploymentStrategy,
-    options: { cwd: string; skipBuild: boolean; gitCommit?: string },
-  ): Promise<void> {
-    const deployStart = Date.now();
-
-    const ctx: StrategyContext = {
-      config: this.config,
-      executor: this.executor,
-      workDir: this.config.remotePath,
-      cwd: options.cwd,
-      skipBuild: options.skipBuild,
-    };
-
-    await strategy.stage(ctx);
-
-    if (strategy.setupEnvironment) {
-      await strategy.setupEnvironment(ctx);
-    }
-
-    await this.runHook('preDeploy');
-
-    if (strategy.startApp) {
-      await strategy.startApp(ctx);
-    }
-
-    const duration = Math.round((Date.now() - deployStart) / 1000);
-
-    await this.releases.recordRelease({
-      timestamp: new Date().toISOString().replace(/[:.]/g, '-'),
-      status: 'success',
-      duration,
-      gitCommit: options.gitCommit,
-    });
-
-    await this.runHook('postDeploy');
-
-    if (this.config.domain) {
-      if (this.config.app === 'backend') {
-        await this.caddy.configureBackend();
-      } else {
-        await this.caddy.configureFrontend();
-      }
-    }
   }
 
   private async runHook(hookName: 'preDeploy' | 'postDeploy'): Promise<void> {

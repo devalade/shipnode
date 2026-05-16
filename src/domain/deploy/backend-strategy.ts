@@ -77,14 +77,12 @@ export class BackendStrategy implements DeploymentStrategy {
 
     const pkgManager = await this.resolvePkgManager();
     const ecosystemContent = this.generateEcosystemFile(pkgManager);
-    const ecosystemPath = this.config.zeroDowntime
-      ? `${this.config.remotePath}/shared/ecosystem.config.cjs`
-      : `${ctx.workDir}/ecosystem.config.cjs`;
+    const ecosystemPath = `${this.config.remotePath}/shared/ecosystem.config.cjs`;
 
     const escaped = ecosystemContent.replace(/'/g, "'\"'\"'");
     await ctx.executor.exec(`echo '${escaped}' > "${ecosystemPath}"`);
 
-    const cdPath = this.config.zeroDowntime ? `${this.config.remotePath}/current` : ctx.workDir;
+    const cdPath = `${this.config.remotePath}/current`;
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 
     // Re-run install from the final directory so the pkg manager's module

@@ -2,7 +2,6 @@ export const DEFAULTS = {
   SSH_PORT: 22,
   BACKEND_PORT: 3000,
   NODE_VERSION: 'lts',
-  ZERO_DOWNTIME: true,
   KEEP_RELEASES: 5,
   HEALTH_CHECK_ENABLED: true,
   HEALTH_CHECK_PATH: '/health',

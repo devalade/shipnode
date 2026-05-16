@@ -9,7 +9,6 @@ function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
     app: 'backend',
     ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
     remotePath: '/var/www/app',
-    zeroDowntime: true,
     keepReleases: 5,
     healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
     envFile: '.env',
@@ -84,48 +83,6 @@ describe('DeployOrchestrator', () => {
     const history = executor.getHistory();
     const lockAcquire = history.find((h) => h.command.includes('deploy.lock'));
     expect(lockAcquire).toBeDefined();
-  });
-
-  it('runs the legacy sequence without lock or symlink', async () => {
-    const executor = new FakeRemoteExecutor();
-    const config = makeConfig({ zeroDowntime: false });
-
-    executor
-      .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
-      .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 });
-
-    const { ReleaseManager, DeployLock } = await import('../../src/domain/release/manager.js');
-    const { HealthCheckService } = await import('../../src/services/health.service.js');
-    const { CaddyService } = await import('../../src/services/caddy.service.js');
-
-    const releases = new ReleaseManager(executor, config.remotePath, config.keepReleases);
-    const lock = new DeployLock(executor, config.remotePath);
-    const healthCheck = new HealthCheckService(executor, config);
-    const caddy = new CaddyService(executor, config);
-
-    const orchestrator = new DeployOrchestrator(
-      config,
-      executor,
-      releases,
-      lock,
-      healthCheck,
-      caddy,
-    );
-
-    const strategy = fakeStrategy();
-    await orchestrator.deploy(strategy, { cwd: '/test', skipBuild: false });
-
-    // Legacy should still call stage, setup, startApp
-    expect(strategy.calls).toEqual([
-      'stage',
-      'setupEnvironment',
-      'startApp',
-    ]);
-
-    // But should not touch lock
-    const history = executor.getHistory();
-    const lockCommands = history.filter((h) => h.command.includes('deploy.lock'));
-    expect(lockCommands).toHaveLength(0);
   });
 
   it('skips health check when disabled', async () => {

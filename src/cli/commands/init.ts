@@ -90,7 +90,6 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   let pm2Name = '';
   let backendPort = defaultPort;
   let domain = '';
-  let zeroDowntime = true;
   let healthCheckPath = '/health';
   let dbType: DatabaseType | undefined;
   let dbHost: string | undefined;
@@ -112,15 +111,9 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     cancelIfNeeded(domainVal);
     domain = domainVal as string;
 
-    const zdVal = await confirm({ message: 'Enable zero-downtime deployments?' });
-    cancelIfNeeded(zdVal);
-    zeroDowntime = zdVal as boolean;
-
-    if (zeroDowntime) {
-      const hcVal = await text({ message: 'Health check path', initialValue: '/health' });
-      cancelIfNeeded(hcVal);
-      healthCheckPath = hcVal as string;
-    }
+    const hcVal = await text({ message: 'Health check path', initialValue: '/health' });
+    cancelIfNeeded(hcVal);
+    healthCheckPath = hcVal as string;
 
     const hasDb = await confirm({ message: 'Configure a database?', initialValue: false });
     cancelIfNeeded(hasDb);
@@ -196,7 +189,6 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     pm2Name,
     backendPort,
     domain: domain || undefined,
-    zeroDowntime,
     healthCheckPath,
     pkgManager: pkgManager ?? undefined,
     dbType,
@@ -243,7 +235,6 @@ interface ConfigOptions {
   pm2Name?: string;
   backendPort?: number;
   domain?: string;
-  zeroDowntime?: boolean;
   healthCheckPath?: string;
   pkgManager?: string;
   dbType?: DatabaseType;
@@ -392,10 +383,6 @@ function generateConfig(opts: ConfigOptions): string {
 
   if (opts.domain) {
     lines.push(`  .domain('${opts.domain}')`);
-  }
-
-  if (opts.zeroDowntime !== false) {
-    lines.push('  .zeroDowntime()');
   }
 
   if (opts.healthCheckPath) {

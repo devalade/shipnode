@@ -67,7 +67,6 @@ export const ShipnodeConfigSchema = z.object({
   pm2: Pm2ConfigSchema.optional(),
   backend: BackendConfigSchema.optional(),
   domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
-  zeroDowntime: z.boolean().default(true),
   keepReleases: z.number().int().min(1).default(5),
   healthCheck: HealthCheckConfigSchema,
   envFile: z.string().default('.env'),

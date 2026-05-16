@@ -16,7 +16,6 @@ describe('ShipnodeBuilder', () => {
     expect(config.ssh.port).toBe(22);
     expect(config.remotePath).toBe('/var/www/myapp');
     expect(config.pm2?.name).toBe('myapp');
-    expect(config.zeroDowntime).toBe(true);
     expect(config.keepReleases).toBe(5);
     expect(config.healthCheck.enabled).toBe(true);
     expect(config.envFile).toBe('.env');
@@ -42,7 +41,7 @@ describe('ShipnodeBuilder', () => {
       .pm2('my-api', { instances: 4, maxMemory: '1G' })
       .port(8080)
       .domain('api.example.com')
-      .zeroDowntime({ keepReleases: 10 })
+      .keepReleases(10)
       .healthCheck('/api/health', { timeout: 60, retries: 5 })
       .envFile('.env.production')
       .nodeVersion('22')
@@ -73,17 +72,6 @@ describe('ShipnodeBuilder', () => {
       .build();
 
     expect(config.healthCheck.enabled).toBe(false);
-  });
-
-  it('sets legacy mode', () => {
-    const config = new ShipnodeBuilder()
-      .backend()
-      .ssh({ host: '1.2.3.4', user: 'deploy' })
-      .deployTo('/var/www/app')
-      .legacy()
-      .build();
-
-    expect(config.zeroDowntime).toBe(false);
   });
 
   it('sets shared dirs and files', () => {
