@@ -4,19 +4,23 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [2.0.12] - 2026-05-16
+
 ### Added
 - `shipnode env --file <path>` — upload a specific `.env` file instead of the default from config
 - `shipnode init` now prompts for SSH users to add during setup, generating `.shipnode/users.yml`
 - Database configuration prompts in `shipnode init` (PostgreSQL, MySQL, SQLite, MongoDB)
 
 ### Changed
+- Legacy deploy mode removed — all deployments now use the release/symlink/lock flow; `.zeroDowntime()` and `.legacy()` builder methods replaced by `.keepReleases(n)`
 - `shipnode deploy` now streams all remote command output (npm install, PM2 reload, etc.) prefixed with `remote:` — no longer hidden behind a spinner
 - rsync transfer progress prints directly to the terminal during deploy
 - CLI UI overhauled: replaced plain `console.log` output with `@clack/prompts` (spinners, notes, banners) and `listr2` task lists — all commands now render structured, coloured output
-- Legacy deploy mode removed — all deployments now use the release/symlink/lock flow; `.zeroDowntime()` and `.legacy()` builder methods replaced by `.keepReleases(n)`
 - pnpm install no longer uses `--prod` flag — installs all dependencies to prevent pnpm's `runDepsStatusCheck` from triggering a failed reinstall at PM2 startup
 
 ### Fixed
+- pnpm 9+ `ERR_PNPM_IGNORED_BUILDS`: deploy now fails fast with a clear error message when native module build scripts are blocked (Prisma, bcrypt, esbuild, ssh2, etc.) instead of silently starting PM2 with broken modules and timing out on the health check; fix is to run `pnpm approve-builds` locally and commit the result
+- pnpm `runDepsStatusCheck` failure at PM2 startup fixed: `pnpm install --prefer-offline` is re-run from `current/` after the symlink switch so pnpm's module resolution state matches the directory PM2 uses
 - `shipnode deploy` error output is now always visible — spinner is stopped before the error propagates
 - Health check failure now reads PM2 log files directly (`~/.pm2/logs/*.log`) instead of `pm2 logs --nostream` which was streaming indefinitely
 - Health check adds a 2-second delay between retries
@@ -25,8 +29,6 @@ All notable changes to `@devalade/shipnode` will be documented here.
 - PM2 ecosystem uses `exec_mode: fork` instead of `cluster` — cluster mode requires a Node.js file, not a package manager script
 - PM2 ecosystem now runs `pnpm start` (or `npm start` / `yarn start` / `bun start`) instead of a hardcoded entry point file
 - pnpm/yarn/bun are now installed globally on the remote server if not already present before running `install`
-- pnpm `runDepsStatusCheck` failure at PM2 startup fixed: `pnpm install --prefer-offline` is re-run from `current/` after the symlink switch so pnpm's module resolution state matches the directory PM2 uses
-- pnpm 9+ `ERR_PNPM_IGNORED_BUILDS`: deploy now fails fast with a clear error message when native module build scripts are blocked (Prisma, bcrypt, esbuild, ssh2, etc.) instead of silently starting PM2 with broken modules and timing out on the health check; fix is to run `pnpm approve-builds` locally and commit the result
 
 ## [2.0.3] - 2026-05-16
 
