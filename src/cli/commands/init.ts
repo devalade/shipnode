@@ -123,6 +123,21 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     domain = await ask('Domain (optional)', '');
   }
 
+  // ── Users ──────────────────────────────────────────────────────
+  const users: Array<{ username: string; publicKey: string; sudo: boolean }> = [];
+  const addUsers = (await ask('Add SSH users to the server?', 'no')).toLowerCase().startsWith('y');
+  if (addUsers) {
+    let addMore = true;
+    while (addMore) {
+      const username = await ask('Username');
+      if (!username) break;
+      const publicKey = await ask(`Public key for ${username}`);
+      const sudo = (await ask(`Grant sudo to ${username}?`, 'no')).toLowerCase().startsWith('y');
+      users.push({ username, publicKey, sudo });
+      addMore = (await ask('Add another user?', 'no')).toLowerCase().startsWith('y');
+    }
+  }
+
   rl.close();
 
   const config = generateConfig({
@@ -156,7 +171,7 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   await writeFile(configPath, config, 'utf-8');
   ui.success('Created shipnode.config.ts');
 
-  await generateShipnodeDir(cwd, detection.orm);
+  await generateShipnodeDir(cwd, detection.orm, users);
 }
 
 async function getAppName(cwd: string): Promise<string> {
@@ -194,7 +209,11 @@ interface ConfigOptions {
   dbPassword?: string;
 }
 
-async function generateShipnodeDir(cwd: string, detectedOrm?: string): Promise<void> {
+async function generateShipnodeDir(
+  cwd: string,
+  detectedOrm?: string,
+  users: Array<{ username: string; publicKey: string; sudo: boolean }> = [],
+): Promise<void> {
   const dir = resolve(cwd, '.shipnode');
   await ensureDir(dir);
 
@@ -214,6 +233,17 @@ async function generateShipnodeDir(cwd: string, detectedOrm?: string): Promise<v
 
   if (!(await pathExists(ignorePath))) {
     await writeFile(ignorePath, generateShipnodeIgnore(), 'utf-8');
+  }
+
+  if (users.length > 0) {
+    const usersPath = resolve(dir, 'users.yml');
+    const yaml = users.map((u) => [
+      `- username: ${u.username}`,
+      `  publicKey: ${u.publicKey}`,
+      `  sudo: ${u.sudo}`,
+    ].join('\n')).join('\n') + '\n';
+    await writeFile(usersPath, yaml, 'utf-8');
+    ui.success(`Created .shipnode/users.yml with ${users.length} user(s)`);
   }
 
   const ormMsg = detectedOrm ? ` with ${detectedOrm} commands` : '';
