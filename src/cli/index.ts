@@ -20,6 +20,10 @@ import { cmdStop } from './commands/stop.js';
 import { cmdMetrics } from './commands/metrics.js';
 import { cmdEject } from './commands/eject.js';
 import { cmdHelp } from './commands/help.js';
+import { cmdUserSync, cmdUserList, cmdUserRemove } from './commands/user.js';
+import { cmdUpgrade } from './commands/upgrade.js';
+import { cmdBackupSetup, cmdBackupRun, cmdBackupStatus, cmdBackupList } from './commands/backup.js';
+import { cmdCloudflareInit, cmdCloudflareAudit, cmdCloudflareStatus } from './commands/cloudflare.js';
 
 const program = new Command();
 
@@ -166,6 +170,75 @@ config.command('path')
   .description('Print path to config file')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdConfigPath(process.cwd(), opts));
+
+// ── Users ─────────────────────────────────────────────────────────
+
+const user = program.command('user').description('Manage server users');
+
+user.command('sync')
+  .description('Sync users from .shipnode/users.yml to server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdUserSync(process.cwd(), opts));
+
+user.command('list')
+  .description('List non-system users on server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdUserList(process.cwd(), opts));
+
+user.command('remove <username>')
+  .description('Remove a user from the server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((username: string, opts) => cmdUserRemove(process.cwd(), username, opts));
+
+// ── Backup ────────────────────────────────────────────────────────
+
+const backup = program.command('backup').description('Database & file backups to S3');
+
+backup.command('setup')
+  .description('Install backup script and systemd timer on server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdBackupSetup(process.cwd(), opts));
+
+backup.command('run')
+  .description('Run a backup immediately')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdBackupRun(process.cwd(), opts));
+
+backup.command('status')
+  .description('Show backup timer and last run status')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdBackupStatus(process.cwd(), opts));
+
+backup.command('list')
+  .description('List recent backups in S3')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdBackupList(process.cwd(), opts));
+
+// ── Cloudflare ────────────────────────────────────────────────────
+
+const cloudflare = program.command('cloudflare').description('Cloudflare Tunnel integration');
+
+cloudflare.command('init')
+  .description('Install cloudflared and configure tunnel/DNS/Access')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdCloudflareInit(process.cwd(), opts));
+
+cloudflare.command('audit')
+  .description('Verify Cloudflare DNS and tunnel configuration')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdCloudflareAudit(process.cwd(), opts));
+
+cloudflare.command('status')
+  .description('Show cloudflared service and tunnel status')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdCloudflareStatus(process.cwd(), opts));
+
+// ── Self-update ───────────────────────────────────────────────────
+
+program
+  .command('upgrade')
+  .description('Upgrade shipnode to the latest version')
+  .action(() => cmdUpgrade());
 
 // ── Customization ─────────────────────────────────────────────────
 

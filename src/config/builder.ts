@@ -4,6 +4,8 @@ import type {
   Pm2Config,
   HealthCheckConfig,
   DatabaseConfig,
+  BackupConfig,
+  CloudflareConfig,
   HookFn,
   PkgManager,
 } from '../shared/types.js';
@@ -119,6 +121,16 @@ export class ShipnodeBuilder {
 
   database(opts: DatabaseConfig): this {
     this.config.database = opts;
+    return this;
+  }
+
+  backup(opts: BackupConfig): this {
+    this.config.backup = opts;
+    return this;
+  }
+
+  cloudflare(opts: CloudflareConfig): this {
+    this.config.cloudflare = opts;
     return this;
   }
 
