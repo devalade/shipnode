@@ -1,5 +1,4 @@
 import { execa } from 'execa';
-import { readFile } from 'node:fs/promises';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import type { ShipnodeConfig } from '../../shared/types.js';
@@ -76,8 +75,8 @@ export class BackendStrategy implements DeploymentStrategy {
   async startApp(ctx: StrategyContext): Promise<void> {
     if (!this.config.pm2) return;
 
-    const script = await this.resolveEntryPoint();
-    const ecosystemContent = this.generateEcosystemFile(script);
+    const pkgManager = await this.resolvePkgManager();
+    const ecosystemContent = this.generateEcosystemFile(pkgManager);
     const ecosystemPath = this.config.zeroDowntime
       ? `${this.config.remotePath}/shared/ecosystem.config.cjs`
       : `${ctx.workDir}/ecosystem.config.cjs`;
@@ -94,34 +93,7 @@ export class BackendStrategy implements DeploymentStrategy {
     );
   }
 
-  private async resolveEntryPoint(): Promise<string> {
-    try {
-      const raw = await readFile(resolve(this.cwd, 'package.json'), 'utf-8');
-      const pkg = JSON.parse(raw);
-
-      // 1. Explicit main field
-      if (pkg.main) return pkg.main as string;
-
-      // 2. Parse from start script: "node dist/index.js" → "dist/index.js"
-      const startScript = pkg.scripts?.start as string | undefined;
-      if (startScript) {
-        const match = startScript.match(/node\s+([\S]+)/);
-        if (match) return match[1];
-      }
-    } catch {
-      // ignore
-    }
-
-    // 3. Probe common entry points that actually exist locally
-    const candidates = ['server.js', 'app.js', 'index.js', 'dist/index.js', 'dist/server.js', 'src/index.js'];
-    for (const candidate of candidates) {
-      if (await pathExists(resolve(this.cwd, candidate))) return candidate;
-    }
-
-    return 'index.js';
-  }
-
-  private generateEcosystemFile(script: string): string {
+  private generateEcosystemFile(pkgManager: string): string {
     if (!this.config.pm2) return '';
 
     const port = this.config.backend?.port ?? 3000;
@@ -132,7 +104,8 @@ export class BackendStrategy implements DeploymentStrategy {
     return `module.exports = {
   apps: [{
     name: '${name}',
-    script: '${script}',
+    script: '${pkgManager}',
+    args: 'start',
     instances: ${instances},
     exec_mode: 'cluster',
     max_memory_restart: '${maxMemory}',
