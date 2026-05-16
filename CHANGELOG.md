@@ -5,13 +5,19 @@ All notable changes to `@devalade/shipnode` will be documented here.
 ## [Unreleased]
 
 ### Added
+- `shipnode env --file <path>` — upload a specific `.env` file instead of the default from config
 - `shipnode init` now prompts for SSH users to add during setup, generating `.shipnode/users.yml`
 - Database configuration prompts in `shipnode init` (PostgreSQL, MySQL, SQLite, MongoDB)
 
 ### Changed
+- `shipnode deploy` now streams all remote command output (npm install, PM2 reload, etc.) prefixed with `remote:` — no longer hidden behind a spinner
+- rsync transfer progress prints directly to the terminal during deploy
 - CLI UI overhauled: replaced plain `console.log` output with `@clack/prompts` (spinners, notes, banners) and `listr2` task lists — all commands now render structured, coloured output
 
 ### Fixed
+- `shipnode deploy` error output is now always visible — spinner is stopped before the error propagates
+- Health check failure now shows last 30 lines of PM2 logs inline so the cause of a failed start is immediately visible
+- Health check adds a 2-second delay between retries
 - SSH authentication: when no `identityFile` is set, connection now tries the running SSH agent (`SSH_AUTH_SOCK`) first, then falls back to default key files (`~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`, `id_dsa`)
 
 ## [2.0.3] - 2026-05-16
