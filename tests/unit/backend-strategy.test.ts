@@ -194,10 +194,11 @@ describe('BackendStrategy.startApp', () => {
     await strategy.startApp!(makeCtx(executor));
 
     const history = executor.getHistory();
-    expect(history).toHaveLength(2);
+    expect(history).toHaveLength(3);
     expect(history[0].command).toContain('ecosystem.config.cjs');
-    expect(history[1].command).toContain('pm2 startOrReload');
-    expect(history[1].command).toContain('pm2 save');
+    expect(history[1].command).toContain('--prefer-offline');
+    expect(history[2].command).toContain('pm2 startOrReload');
+    expect(history[2].command).toContain('pm2 save');
   });
 
   it('ecosystem file contains app name and port', async () => {
