@@ -101,13 +101,16 @@ export class BackendStrategy implements DeploymentStrategy {
     const instances = this.config.pm2.instances ?? 1;
     const maxMemory = this.config.pm2.maxMemory ?? '512M';
 
+    // cluster mode requires a Node.js file; use fork for pkg manager scripts
+    const args = pkgManager === 'pnpm' ? 'run --no-run-check start' : 'start';
+
     return `module.exports = {
   apps: [{
     name: '${name}',
     script: '${pkgManager}',
-    args: 'start',
+    args: '${args}',
     instances: ${instances},
-    exec_mode: 'cluster',
+    exec_mode: 'fork',
     max_memory_restart: '${maxMemory}',
     env: {
       NODE_ENV: 'production',
