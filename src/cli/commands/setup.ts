@@ -117,18 +117,24 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
         : []),
       {
         title: 'Deployment directories',
-        task: async () => {
-          await executor.exec(
-            `mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`,
-          );
-          await executor.exec(
-            'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
-            '$SUDO mkdir -p /etc/caddy/conf.d /var/log/caddy && ' +
-            'grep -q "import /etc/caddy/conf.d" /etc/caddy/Caddyfile 2>/dev/null || ' +
-            'echo "import /etc/caddy/conf.d/*.caddy" | $SUDO tee -a /etc/caddy/Caddyfile > /dev/null && ' +
-            '$SUDO systemctl reload caddy 2>/dev/null || true',
-          );
-        },
+        task: (_ctx: object, task: any) => task.newListr([
+          {
+            title: `Create release structure at ${config.remotePath}`,
+            task: () => executor.exec(
+              `mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`,
+            ),
+          },
+          {
+            title: 'Configure Caddy include',
+            task: () => executor.exec(
+              'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
+              '$SUDO mkdir -p /etc/caddy/conf.d /var/log/caddy && ' +
+              'grep -q "import /etc/caddy/conf.d" /etc/caddy/Caddyfile 2>/dev/null || ' +
+              'echo "import /etc/caddy/conf.d/*.caddy" | $SUDO tee -a /etc/caddy/Caddyfile > /dev/null && ' +
+              '$SUDO systemctl reload caddy 2>/dev/null || true',
+            ),
+          },
+        ], { concurrent: false }),
       },
     ],
     { rendererOptions: { collapseErrors: false } },
