@@ -1,9 +1,9 @@
 import chalk from 'chalk';
-import type { RemoteExecutor } from '../../domain/remote/executor.js';
+import { RemoteExecutor } from '../../domain/remote/executor.js';
 import type { ExecResult } from '../../shared/types.js';
 
-export class LoggingExecutor implements RemoteExecutor {
-  constructor(private inner: RemoteExecutor) {}
+export class LoggingExecutor extends RemoteExecutor {
+  constructor(private inner: RemoteExecutor) { super(); }
 
   async exec(command: string, options?: { timeout?: number }): Promise<ExecResult> {
     const result = await this.inner.exec(command, options);

@@ -72,6 +72,10 @@ export class BackendStrategy implements DeploymentStrategy {
 
     const installResult = await ctx.executor.exec(commands.join(' && '));
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
+    if (installResult.exitCode !== 0) {
+      const detail = (installResult.stderr || installResult.stdout).trim();
+      throw new DeployError(detail || 'Install/build failed', 'install');
+    }
   }
 
   async startApp(ctx: StrategyContext): Promise<void> {
@@ -82,7 +86,7 @@ export class BackendStrategy implements DeploymentStrategy {
     const ecosystemPath = `${this.config.remotePath}/shared/ecosystem.config.cjs`;
 
     const escaped = ecosystemContent.replace(/'/g, "'\"'\"'");
-    await ctx.executor.exec(`echo '${escaped}' > "${ecosystemPath}"`);
+    await ctx.executor.execOrThrow(`echo '${escaped}' > "${ecosystemPath}"`);
 
     const cdPath = `${this.config.remotePath}/current`;
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
@@ -95,9 +99,13 @@ export class BackendStrategy implements DeploymentStrategy {
       `cd "${cdPath}" && ${mise} && ${installCmd} --prefer-offline`,
     );
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
+    if (installResult.exitCode !== 0) {
+      const detail = (installResult.stderr || installResult.stdout).trim();
+      throw new DeployError(detail || 'Package relink failed', 'start');
+    }
 
     const port = this.config.backend?.port ?? 3000;
-    await ctx.executor.exec(
+    await ctx.executor.execOrThrow(
       `cd "${cdPath}" && ${mise} && ` +
       `{ mise exec -- pm2 delete "${this.config.pm2!.name}" 2>/dev/null || true; } && ` +
       `{ ss -tlnp | grep -q ":${port} " && echo "Port ${port} is already in use by another process" && false || true; } && ` +

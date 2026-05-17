@@ -1,4 +1,4 @@
-import type { RemoteExecutor } from '../../src/domain/remote/executor.js';
+import { RemoteExecutor } from '../../src/domain/remote/executor.js';
 import type { ExecResult } from '../../src/shared/types.js';
 
 export interface CommandLogEntry {
@@ -13,7 +13,7 @@ export interface CommandLogEntry {
  * Callers record expected responses with `when()`, then inspect
  * the command history with `getHistory()` to assert behaviour.
  */
-export class FakeRemoteExecutor implements RemoteExecutor {
+export class FakeRemoteExecutor extends RemoteExecutor {
   private log: CommandLogEntry[] = [];
   private matchers: Array<{
     predicate: (command: string) => boolean;

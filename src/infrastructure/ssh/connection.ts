@@ -4,18 +4,19 @@ import { join } from 'path';
 import { Client, ConnectConfig, ClientChannel } from 'ssh2';
 import { SshError } from '../../shared/errors.js';
 import type { SshConfig, ExecResult } from '../../shared/types.js';
-import type { RemoteExecutor } from '../../domain/remote/executor.js';
+import { RemoteExecutor } from '../../domain/remote/executor.js';
 
 export interface SshConnectionOptions {
   onReady?: () => void;
   onError?: (err: Error) => void;
 }
 
-export class SshConnection implements RemoteExecutor {
+export class SshConnection extends RemoteExecutor {
   private client: Client;
   private connected = false;
 
   constructor() {
+    super();
     this.client = new Client();
   }
 

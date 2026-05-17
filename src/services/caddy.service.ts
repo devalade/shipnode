@@ -15,8 +15,8 @@ export class CaddyService {
     const caddyConfig = this.generateBackendCaddyfile(appName, port);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
-    await this.executor.exec(`echo '${escaped}' > /etc/caddy/conf.d/${appName}.caddy`);
-    await this.executor.exec('systemctl reload caddy');
+    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${appName}.caddy`);
+    await this.executor.execOrThrow('systemctl reload caddy');
   }
 
   async configureFrontend(): Promise<void> {
@@ -28,8 +28,8 @@ export class CaddyService {
     const caddyConfig = this.generateFrontendCaddyfile(appName, servePath);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
-    await this.executor.exec(`echo '${escaped}' > /etc/caddy/conf.d/${appName}.caddy`);
-    await this.executor.exec('systemctl reload caddy');
+    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${appName}.caddy`);
+    await this.executor.execOrThrow('systemctl reload caddy');
   }
 
   private generateBackendCaddyfile(appName: string, port: number): string {

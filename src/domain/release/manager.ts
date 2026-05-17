@@ -11,20 +11,18 @@ export class ReleaseManager {
 
   async createReleasePath(timestamp: string): Promise<string> {
     const releasePath = `${this.remotePath}/releases/${timestamp}`;
-    await this.executor.exec(`mkdir -p "${releasePath}"`);
+    await this.executor.execOrThrow(`mkdir -p "${releasePath}"`);
     return releasePath;
   }
 
   async setupReleaseStructure(): Promise<void> {
-    await this.executor.exec(`mkdir -p "${this.remotePath}/releases"`);
-    await this.executor.exec(`mkdir -p "${this.remotePath}/shared"`);
-    await this.executor.exec(`mkdir -p "${this.remotePath}/.shipnode"`);
+    await this.executor.execOrThrow(`mkdir -p "${this.remotePath}/releases" "${this.remotePath}/shared" "${this.remotePath}/.shipnode"`);
   }
 
   async switchSymlink(releasePath: string): Promise<void> {
     const tmpLink = `${this.remotePath}/current.tmp`;
-    await this.executor.exec(`ln -sfn "${releasePath}" "${tmpLink}"`);
-    await this.executor.exec(`mv -Tf "${tmpLink}" "${this.remotePath}/current"`);
+    await this.executor.execOrThrow(`ln -sfn "${releasePath}" "${tmpLink}"`);
+    await this.executor.execOrThrow(`mv -Tf "${tmpLink}" "${this.remotePath}/current"`);
   }
 
   async recordRelease(record: ReleaseRecord): Promise<void> {
@@ -42,7 +40,7 @@ export class ReleaseManager {
     releases.push(record);
 
     const b64 = Buffer.from(JSON.stringify(releases, null, 2)).toString('base64');
-    await this.executor.exec(`printf '%s' '${b64}' | base64 -d > "${releasesFile}"`);
+    await this.executor.execOrThrow(`printf '%s' '${b64}' | base64 -d > "${releasesFile}"`);
   }
 
   async cleanupOldReleases(): Promise<void> {
