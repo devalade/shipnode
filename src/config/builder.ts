@@ -142,6 +142,11 @@ export class ShipnodeBuilder {
     return this;
   }
 
+  aliases(map: Record<string, string>): this {
+    this.config.aliases = { ...(this.config.aliases ?? {}), ...map };
+    return this;
+  }
+
   build(): ShipnodeConfig {
     return assembleConfig(this.config);
   }

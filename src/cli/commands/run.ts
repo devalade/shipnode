@@ -27,11 +27,16 @@ export async function cmdRun(
 
   const config = await loadConfig(cwd, options.config);
 
+  const aliasExpansion = config.aliases?.[cmdArgs[0]];
+  const resolvedArgs = aliasExpansion
+    ? [...aliasExpansion.split(' '), ...cmdArgs.slice(1)]
+    : cmdArgs;
+
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
   const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
   const remotePath = config.remotePath;
-  const cmd = cmdArgs.join(' ');
-  const cmdBase = basename(cmdArgs[0]);
+  const cmd = resolvedArgs.join(' ');
+  const cmdBase = basename(resolvedArgs[0]);
 
   const isInteractive = options.tty === true || INTERACTIVE_SHELLS.has(cmdBase);
 

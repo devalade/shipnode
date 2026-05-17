@@ -117,6 +117,7 @@ export interface ShipnodeConfig {
   backup?: BackupConfig;
   cloudflare?: CloudflareConfig;
   hooks?: HooksConfig;
+  aliases?: Record<string, string>;
 }
 
 export interface ReleaseRecord {
