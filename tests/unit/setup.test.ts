@@ -4,6 +4,9 @@ import {
   buildDbCreateCommand,
   buildDbProbeCommand,
   buildDbSetupCommand,
+  buildRedisInstallCommand,
+  buildRedisConfigureCommand,
+  buildRedisProbeCommand,
   buildRedisSetupCommand,
 } from '../../src/cli/commands/setup.js';
 
@@ -134,34 +137,59 @@ describe('buildDbSetupCommand (combined)', () => {
   });
 });
 
-describe('buildRedisSetupCommand', () => {
-  it('installs and starts redis without a password', () => {
-    const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379 });
+describe('buildRedisInstallCommand', () => {
+  it('installs and starts redis-server', () => {
+    const cmd = buildRedisInstallCommand({ host: 'localhost', port: 6379 });
     expect(cmd).toContain('apt-get install -y redis-server');
     expect(cmd).toContain('systemctl enable redis-server');
     expect(cmd).toContain('systemctl start redis-server');
+  });
+
+  it('does not set requirepass', () => {
+    const cmd = buildRedisInstallCommand({ host: 'localhost', port: 6379, password: 'secret' });
     expect(cmd).not.toContain('requirepass');
+  });
+});
+
+describe('buildRedisConfigureCommand', () => {
+  it('returns true when no password', () => {
+    expect(buildRedisConfigureCommand({ host: 'localhost', port: 6379 })).toBe('true');
   });
 
   it('sets requirepass and restarts when password provided', () => {
-    const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379, password: 'secret' });
+    const cmd = buildRedisConfigureCommand({ host: 'localhost', port: 6379, password: 'secret' });
     expect(cmd).toContain('requirepass secret');
     expect(cmd).toContain('systemctl restart redis-server');
   });
 
-  it('adds login probe when password provided', () => {
-    const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379, password: 'secret' });
-    expect(cmd).toContain("redis-cli -h localhost -p 6379 -a 'secret' PING");
-  });
-
   it('does not use / as sed delimiter — password with slash must not break sed', () => {
-    const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379, password: 'pass/word' });
+    const cmd = buildRedisConfigureCommand({ host: 'localhost', port: 6379, password: 'pass/word' });
     expect(cmd).not.toMatch(/sed -i "s\//);
     expect(cmd).toContain('requirepass pass/word');
   });
 
   it('escapes $ in password to prevent shell expansion', () => {
-    const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379, password: '$ecret' });
+    const cmd = buildRedisConfigureCommand({ host: 'localhost', port: 6379, password: '$ecret' });
     expect(cmd).toContain('\\$ecret');
+  });
+});
+
+describe('buildRedisProbeCommand', () => {
+  it('returns null when no password', () => {
+    expect(buildRedisProbeCommand({ host: 'localhost', port: 6379 })).toBeNull();
+  });
+
+  it('pings with the correct password and port', () => {
+    const cmd = buildRedisProbeCommand({ host: 'localhost', port: 6379, password: 'secret' });
+    expect(cmd).toContain("redis-cli -h localhost -p 6379 -a 'secret' PING");
+  });
+});
+
+describe('buildRedisSetupCommand (combined)', () => {
+  it('combines install, configure, and probe', () => {
+    const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379, password: 'secret' });
+    expect(cmd).toContain('apt-get install -y redis-server');
+    expect(cmd).toContain('requirepass secret');
+    expect(cmd).toContain("redis-cli -h localhost -p 6379 -a 'secret' PING");
   });
 });

@@ -98,7 +98,21 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
       ...(config.redis && config.redis.host === 'localhost'
         ? [{
             title: 'Redis',
-            task: () => executor.exec(buildRedisSetupCommand(config.redis!)),
+            task: (_ctx: object, task: any) => {
+              const redis = config.redis!;
+              const probe = buildRedisProbeCommand(redis);
+              return task.newListr([
+                {
+                  title: 'Install redis-server',
+                  task: () => executor.exec(buildRedisInstallCommand(redis)),
+                },
+                ...(redis.password ? [{
+                  title: 'Set password',
+                  task: () => executor.exec(buildRedisConfigureCommand(redis)),
+                }] : []),
+                ...(probe ? [{ title: 'Verify connection', task: () => executor.exec(probe) }] : []),
+              ], { concurrent: false });
+            },
           }]
         : []),
       {
@@ -227,22 +241,30 @@ export function buildDbSetupCommand(db: DatabaseConfig): string {
   return [install, create, ...(probe ? [probe] : [])].join(' && ');
 }
 
-export function buildRedisSetupCommand(redis: RedisConfig): string {
+export function buildRedisInstallCommand(_redis: RedisConfig): string {
   const preamble = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"';
+  return `${preamble}; $SUDO apt-get install -y redis-server && $SUDO systemctl enable redis-server && $SUDO systemctl start redis-server`;
+}
+
+export function buildRedisConfigureCommand(redis: RedisConfig): string {
+  const preamble = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"';
+  if (!redis.password) return 'true';
   const parts = [
-    '$SUDO apt-get install -y redis-server',
-    '$SUDO systemctl enable redis-server',
-    '$SUDO systemctl start redis-server',
+    `$SUDO sed -i '/^#* *requirepass/d' /etc/redis/redis.conf`,
+    `echo "requirepass ${shDq(redis.password)}" | $SUDO tee -a /etc/redis/redis.conf > /dev/null`,
+    '$SUDO systemctl restart redis-server',
   ];
-
-  if (redis.password) {
-    parts.push(
-      `$SUDO sed -i '/^#* *requirepass/d' /etc/redis/redis.conf`,
-      `echo "requirepass ${shDq(redis.password)}" | $SUDO tee -a /etc/redis/redis.conf > /dev/null`,
-      '$SUDO systemctl restart redis-server',
-      `redis-cli -h localhost -p ${redis.port} -a '${sh(redis.password)}' PING > /dev/null 2>&1`,
-    );
-  }
-
   return `${preamble}; ${parts.join(' && ')}`;
+}
+
+export function buildRedisProbeCommand(redis: RedisConfig): string | null {
+  if (!redis.password) return null;
+  return `redis-cli -h localhost -p ${redis.port} -a '${sh(redis.password)}' PING > /dev/null 2>&1`;
+}
+
+export function buildRedisSetupCommand(redis: RedisConfig): string {
+  const install = buildRedisInstallCommand(redis);
+  const configure = buildRedisConfigureCommand(redis);
+  const probe = buildRedisProbeCommand(redis);
+  return [install, configure, ...(probe ? [probe] : [])].join(' && ');
 }
