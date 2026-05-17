@@ -4,6 +4,20 @@ export type PkgManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
 
 export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb';
 
+export interface SqliteDatabaseConfig {
+  type: 'sqlite';
+  name: string;
+}
+
+export interface NetworkDatabaseConfig {
+  type: 'postgres' | 'mysql' | 'mongodb';
+  host: string;
+  port: number;
+  name: string;
+  user: string;
+  password?: string;
+}
+
 export interface SshConfig {
   host: string;
   user: string;
@@ -31,14 +45,7 @@ export interface HealthCheckConfig {
   startupDelay: number;
 }
 
-export interface DatabaseConfig {
-  type: DatabaseType;
-  host: string;
-  port: number;
-  name: string;
-  user: string;
-  password?: string;
-}
+export type DatabaseConfig = SqliteDatabaseConfig | NetworkDatabaseConfig;
 
 export interface RedisConfig {
   host: string;

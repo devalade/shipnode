@@ -418,7 +418,7 @@ function generateConfig(opts: ConfigOptions): string {
 
   if (opts.dbType) {
     if (opts.dbType === 'sqlite') {
-      lines.push(`  .database({ type: 'sqlite', host: 'localhost', port: 0, name: '${opts.dbName ?? './data.db'}', user: '' })`);
+      lines.push(`  .database({ type: 'sqlite', name: '${opts.dbName ?? './data.db'}' })`);
     } else {
       const dbOpts = [
         `type: '${opts.dbType}'`,

@@ -28,14 +28,20 @@ export const HealthCheckConfigSchema = z.object({
   startupDelay: z.number().int().min(0).default(3),
 }).default({});
 
-export const DatabaseConfigSchema = z.object({
-  type: z.enum(['postgres', 'mysql', 'sqlite', 'mongodb']),
-  host: z.string(),
+const networkDbFields = {
+  host: z.string().min(1, 'Database host is required'),
   port: z.number().int().min(1).max(65535),
-  name: z.string(),
-  user: z.string(),
+  name: z.string().min(1, 'Database name is required'),
+  user: z.string().min(1, 'Database user is required'),
   password: z.string().optional(),
-}).optional();
+};
+
+export const DatabaseConfigSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('sqlite'), name: z.string().min(1, 'SQLite file path is required') }),
+  z.object({ type: z.literal('postgres'), ...networkDbFields }),
+  z.object({ type: z.literal('mysql'), ...networkDbFields }),
+  z.object({ type: z.literal('mongodb'), ...networkDbFields }),
+]).optional();
 
 export const RedisConfigSchema = z.object({
   host: z.string().default('localhost'),

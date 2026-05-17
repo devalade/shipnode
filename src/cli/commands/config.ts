@@ -61,13 +61,12 @@ export async function cmdConfigShow(cwd: string, options: { config?: string }): 
       }
 
       if (config.database) {
-        ui.section('Database', [
-          ['type', config.database.type],
-          ['host', config.database.host],
-          ['port', String(config.database.port)],
-          ['name', config.database.name],
-          ['user', config.database.user],
-        ]);
+        const db = config.database;
+        const rows: [string, string][] = [['type', db.type], ['name', db.name]];
+        if (db.type !== 'sqlite') {
+          rows.push(['host', db.host], ['port', String(db.port)], ['user', db.user]);
+        }
+        ui.section('Database', rows);
       }
     },
     { configPath: options.config },

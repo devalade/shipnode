@@ -82,16 +82,18 @@ export async function cmdBackupSetup(
         process.exit(1);
       }
 
+      const db = config.database;
+      const netDb = db && db.type !== 'sqlite' ? db : undefined;
       const script = buildBackupScript({
         remotePath: config.remotePath,
         s3Bucket,
         s3Prefix,
         s3Endpoint,
-        dbType: config.database?.type,
-        dbName: config.database?.name,
-        dbUser: config.database?.user,
-        dbHost: config.database?.host,
-        dbPort: config.database?.port,
+        dbType: db?.type,
+        dbName: db?.name,
+        dbUser: netDb?.user,
+        dbHost: netDb?.host,
+        dbPort: netDb?.port,
       });
 
       const b64 = Buffer.from(script).toString('base64');
