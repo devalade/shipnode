@@ -1,10 +1,9 @@
-import { writeFile, readFile as readFileNode, chmod } from 'node:fs/promises';
+import { writeFile, readFile as readFileNode } from 'node:fs/promises';
 import { ensureDir, pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { text, select, confirm, isCancel, group } from '@clack/prompts';
 import { detectFramework, detectPkgManager } from '../../domain/framework/detector.js';
 import { isValidIpOrHostname, isValidPort } from '../../domain/validation/ip.js';
-import { ORM_PATTERNS } from '../../shared/constants.js';
 import { ui } from '../ui.js';
 import type { DatabaseType } from '../../shared/types.js';
 
@@ -43,7 +42,7 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
 
     await writeFile(configPath, config, 'utf-8');
     ui.success('Created shipnode.config.ts');
-    await generateShipnodeDir(cwd, detection.orm);
+    await generateShipnodeDir(cwd);
     return;
   }
 
@@ -226,7 +225,7 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   }
 
   await writeFile(configPath, config, 'utf-8');
-  await generateShipnodeDir(cwd, detection.orm, users);
+  await generateShipnodeDir(cwd, users);
 
   ui.outro('Ready! Run shipnode setup to provision your server.');
 }
@@ -270,26 +269,12 @@ interface ConfigOptions {
 
 async function generateShipnodeDir(
   cwd: string,
-  detectedOrm?: string,
   users: Array<{ username: string; publicKey: string; sudo: boolean }> = [],
 ): Promise<void> {
   const dir = resolve(cwd, '.shipnode');
   await ensureDir(dir);
 
-  const preDeployPath = resolve(dir, 'pre-deploy.sh');
-  const postDeployPath = resolve(dir, 'post-deploy.sh');
   const ignorePath = resolve(cwd, '.shipnodeignore');
-
-  if (!(await pathExists(preDeployPath))) {
-    await writeFile(preDeployPath, generatePreDeployHook(detectedOrm), 'utf-8');
-    await chmod(preDeployPath, 0o755);
-  }
-
-  if (!(await pathExists(postDeployPath))) {
-    await writeFile(postDeployPath, generatePostDeployHook(), 'utf-8');
-    await chmod(postDeployPath, 0o755);
-  }
-
   if (!(await pathExists(ignorePath))) {
     await writeFile(ignorePath, generateShipnodeIgnore(), 'utf-8');
   }
@@ -305,60 +290,7 @@ async function generateShipnodeDir(
     ui.success(`Created .shipnode/users.yml with ${users.length} user(s)`);
   }
 
-  const ormMsg = detectedOrm ? ` with ${detectedOrm} commands` : '';
-  ui.success(`Generated .shipnode/ hooks${ormMsg} and .shipnodeignore`);
-}
-
-function generatePreDeployHook(detectedOrm?: string): string {
-  const ormCommands = Object.entries(ORM_PATTERNS)
-    .filter(([, p]) => p.migrateCmd)
-    .map(([name, p]) => {
-      const active = name === detectedOrm;
-      const prefix = active ? '' : '# ';
-      const lines = [`${prefix}# ${name}${active ? ' (detected)' : ''}`];
-      if (p.generateCmd) lines.push(`${prefix}${p.generateCmd}`);
-      lines.push(`${prefix}${p.migrateCmd}`);
-      return lines.join('\n');
-    })
-    .join('\n\n');
-
-  return `#!/bin/bash
-# ShipNode Pre-Deploy Hook
-# Runs BEFORE the new release is activated. Exit non-zero to abort.
-#
-# Env vars: RELEASE_PATH  REMOTE_PATH  PM2_APP_NAME  BACKEND_PORT  SHARED_ENV_PATH
-set -e
-
-if [ -f "$SHARED_ENV_PATH" ]; then
-  set -a; source "$SHARED_ENV_PATH"; set +a
-fi
-
-echo "Pre-deploy: \${RELEASE_PATH}"
-
-# ── Database migrations ──────────────────────────────────────────
-${ormCommands}
-# ────────────────────────────────────────────────────────────────
-
-echo "Pre-deploy hook complete"
-`;
-}
-
-function generatePostDeployHook(): string {
-  return `#!/bin/bash
-# ShipNode Post-Deploy Hook
-# Runs AFTER deployment. Failure is logged but does NOT trigger rollback.
-#
-# Env vars: RELEASE_PATH  RELEASE_TIMESTAMP  REMOTE_PATH  PM2_APP_NAME  BACKEND_PORT
-set -e
-
-echo "Post-deploy: \${RELEASE_PATH}"
-
-# Examples:
-#   curl -s http://localhost:\${BACKEND_PORT}/api/warmup
-#   npm run cache:clear
-
-echo "Post-deploy hook complete"
-`;
+  ui.success('Generated .shipnodeignore');
 }
 
 function generateShipnodeIgnore(): string {

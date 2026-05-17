@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import type { ShipnodeConfig, ExecResult } from '../../shared/types.js';
 import type { RemoteExecutor } from '../remote/executor.js';
 import { ReleaseManager, DeployLock } from '../release/manager.js';
@@ -60,7 +61,7 @@ export class DeployOrchestrator {
         await strategy.setupEnvironment(ctx);
       }
 
-      await this.runHook('preDeploy');
+      await this.runHook('preDeploy', releasePath);
       await this.releases.switchSymlink(releasePath);
 
       if (strategy.startApp) {
@@ -91,7 +92,7 @@ export class DeployOrchestrator {
         healthResponseMs,
       });
 
-      await this.runHook('postDeploy');
+      await this.runHook('postDeploy', releasePath);
       await this.releases.cleanupOldReleases();
 
       if (this.config.domain) {
@@ -109,15 +110,28 @@ export class DeployOrchestrator {
     await this.lock.release();
   }
 
-  private async runHook(hookName: 'preDeploy' | 'postDeploy'): Promise<void> {
+  private async runHook(hookName: 'preDeploy' | 'postDeploy', workDir: string): Promise<void> {
     const hook = this.config.hooks?.[hookName];
     if (!hook) return;
+
+    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    const prefix = chalk.dim('  │ ');
+
+    const onData = (chunk: string): void => {
+      chunk.split('\n').forEach((line) => {
+        if (line.trim()) process.stdout.write(prefix + line + '\n');
+      });
+    };
 
     const ctx = {
       config: this.config,
       env: 'production',
       exec: async (cmd: string): Promise<ExecResult> => {
-        return this.executor.exec(cmd);
+        const result = await this.executor.exec(`cd "${workDir}" && ${mise} && ${cmd}`, { onData });
+        if (result.exitCode !== 0) {
+          throw new Error(result.stderr || result.stdout || `Command failed: ${cmd}`);
+        }
+        return result;
       },
     };
 

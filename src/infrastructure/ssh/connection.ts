@@ -4,7 +4,7 @@ import { join } from 'path';
 import { Client, ConnectConfig, ClientChannel } from 'ssh2';
 import { SshError } from '../../shared/errors.js';
 import type { SshConfig, ExecResult } from '../../shared/types.js';
-import { RemoteExecutor } from '../../domain/remote/executor.js';
+import { RemoteExecutor, type ExecOptions } from '../../domain/remote/executor.js';
 
 export interface SshConnectionOptions {
   onReady?: () => void;
@@ -73,7 +73,7 @@ export class SshConnection extends RemoteExecutor {
     });
   }
 
-  async exec(command: string, options?: { timeout?: number }): Promise<ExecResult> {
+  async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     if (!this.connected) {
       throw new SshError('Not connected to SSH server');
     }
@@ -89,11 +89,15 @@ export class SshConnection extends RemoteExecutor {
         let exitCode = 0;
 
         stream.on('data', (data: Buffer) => {
-          stdout += data.toString();
+          const chunk = data.toString();
+          stdout += chunk;
+          options?.onData?.(chunk, 'stdout');
         });
 
         stream.stderr.on('data', (data: Buffer) => {
-          stderr += data.toString();
+          const chunk = data.toString();
+          stderr += chunk;
+          options?.onData?.(chunk, 'stderr');
         });
 
         stream.on('close', (code: number | undefined) => {
