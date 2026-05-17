@@ -27,12 +27,21 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
     [
       {
         title: 'System dependencies',
-        task: () =>
-          executor.exec(
-            'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
-            '$SUDO apt-get update -qq && ' +
-            '$SUDO apt-get install -y curl git jq rsync build-essential',
-          ),
+        task: (_ctx: object, task: any) => task.newListr([
+          {
+            title: 'Update package index',
+            task: () => executor.exec(
+              'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO apt-get update -qq',
+            ),
+          },
+          {
+            title: 'Install curl git jq rsync build-essential',
+            task: () => executor.exec(
+              'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
+              '$SUDO apt-get install -y curl git jq rsync build-essential',
+            ),
+          },
+        ], { concurrent: false }),
       },
       {
         title: 'Mise (version manager)',
@@ -42,25 +51,39 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
           ),
       },
       {
-        title: `Node.js ${nodeVersion}`,
-        task: () =>
-          executor.exec(
-            `${mise}; ` +
-            `mise install -y "node@${nodeVersion}"; ` +
-            `mise use -g -y "node@${nodeVersion}"`,
-          ),
+        title: `Node.js ${config.nodeVersion}`,
+        task: (_ctx: object, task: any) => task.newListr([
+          {
+            title: `Install node@${nodeVersion}`,
+            task: () => executor.exec(`${mise}; mise install -y "node@${nodeVersion}"`),
+          },
+          {
+            title: `Set node@${nodeVersion} as global default`,
+            task: () => executor.exec(`${mise}; mise use -g -y "node@${nodeVersion}"`),
+          },
+        ], { concurrent: false }),
       },
       {
         title: 'PM2',
-        task: () =>
-          executor.exec(
-            `${mise}; ` +
-            `if ! mise exec "node@${nodeVersion}" -- pm2 --version &>/dev/null; then ` +
-            `  mise exec "node@${nodeVersion}" -- npm install -g pm2; ` +
-            `fi; ` +
-            `mise exec "node@${nodeVersion}" -- pm2 startup systemd -u $USER --hp $HOME || true; ` +
-            `mise exec "node@${nodeVersion}" -- pm2 save --force || true`,
-          ),
+        task: (_ctx: object, task: any) => task.newListr([
+          {
+            title: 'Install pm2',
+            task: () => executor.exec(
+              `${mise}; ` +
+              `if ! mise exec "node@${nodeVersion}" -- pm2 --version &>/dev/null; then ` +
+              `  mise exec "node@${nodeVersion}" -- npm install -g pm2; ` +
+              `fi`,
+            ),
+          },
+          {
+            title: 'Configure systemd startup',
+            task: () => executor.exec(
+              `${mise}; ` +
+              `mise exec "node@${nodeVersion}" -- pm2 startup systemd -u $USER --hp $HOME || true; ` +
+              `mise exec "node@${nodeVersion}" -- pm2 save --force || true`,
+            ),
+          },
+        ], { concurrent: false }),
       },
       {
         title: 'Caddy',
