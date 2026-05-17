@@ -47,7 +47,7 @@ export async function cmdRollback(
       if (config.app === 'backend' && config.pm2?.name) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-        await executor.exec(
+        await executor.execOrThrow(
           `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${config.pm2.name} --update-env`,
         );
         ui.success('PM2 reloaded');
