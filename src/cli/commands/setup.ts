@@ -30,13 +30,13 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
         task: (_ctx: object, task: any) => task.newListr([
           {
             title: 'Update package index',
-            task: () => executor.exec(
+            task: () => execOrThrow(executor,
               'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO apt-get update -qq',
             ),
           },
           {
             title: 'Install curl git jq rsync build-essential',
-            task: () => executor.exec(
+            task: () => execOrThrow(executor,
               'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
               '$SUDO apt-get install -y curl git jq rsync build-essential',
             ),
@@ -46,7 +46,7 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
       {
         title: 'Mise (version manager)',
         task: () =>
-          executor.exec(
+          execOrThrow(executor,
             `if ! command -v mise &>/dev/null; then curl -fsSL https://mise.run | sh; fi`,
           ),
       },
@@ -55,11 +55,11 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
         task: (_ctx: object, task: any) => task.newListr([
           {
             title: `Install node@${nodeVersion}`,
-            task: () => executor.exec(`${mise}; mise install -y "node@${nodeVersion}"`),
+            task: () => execOrThrow(executor,`${mise}; mise install -y "node@${nodeVersion}"`),
           },
           {
             title: `Set node@${nodeVersion} as global default`,
-            task: () => executor.exec(`${mise}; mise use -g -y "node@${nodeVersion}"`),
+            task: () => execOrThrow(executor,`${mise}; mise use -g -y "node@${nodeVersion}"`),
           },
         ], { concurrent: false }),
       },
@@ -68,7 +68,7 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
         task: (_ctx: object, task: any) => task.newListr([
           {
             title: 'Install pm2',
-            task: () => executor.exec(
+            task: () => execOrThrow(executor,
               `${mise}; ` +
               `if ! mise exec "node@${nodeVersion}" -- pm2 --version &>/dev/null; then ` +
               `  mise exec "node@${nodeVersion}" -- npm install -g pm2; ` +
@@ -77,7 +77,7 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
           },
           {
             title: 'Configure systemd startup',
-            task: () => executor.exec(
+            task: () => execOrThrow(executor,
               `${mise}; ` +
               `mise exec "node@${nodeVersion}" -- pm2 startup systemd -u $USER --hp $HOME || true; ` +
               `mise exec "node@${nodeVersion}" -- pm2 save --force || true`,
@@ -88,7 +88,7 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
       {
         title: 'Caddy',
         task: () =>
-          executor.exec(
+          execOrThrow(executor,
             'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
             'if ! command -v caddy &>/dev/null; then ' +
             '  $SUDO apt-get install -y debian-keyring debian-archive-keyring apt-transport-https; ' +
@@ -107,13 +107,13 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
               return task.newListr([
                 {
                   title: `Install ${db.type}`,
-                  task: () => executor.exec(buildDbInstallCommand(db)),
+                  task: () => execOrThrow(executor,buildDbInstallCommand(db)),
                 },
                 {
                   title: `Create user '${db.user}' and database '${db.name}'`,
-                  task: () => executor.exec(buildDbCreateCommand(db)),
+                  task: () => execOrThrow(executor,buildDbCreateCommand(db)),
                 },
-                ...(probe ? [{ title: 'Verify connection', task: () => executor.exec(probe) }] : []),
+                ...(probe ? [{ title: 'Verify connection', task: () => execOrThrow(executor,probe) }] : []),
               ], { concurrent: false });
             },
           }]
@@ -127,13 +127,13 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
               return task.newListr([
                 {
                   title: 'Install redis-server',
-                  task: () => executor.exec(buildRedisInstallCommand(redis)),
+                  task: () => execOrThrow(executor,buildRedisInstallCommand(redis)),
                 },
                 ...(redis.password ? [{
                   title: 'Set password',
-                  task: () => executor.exec(buildRedisConfigureCommand(redis)),
+                  task: () => execOrThrow(executor,buildRedisConfigureCommand(redis)),
                 }] : []),
-                ...(probe ? [{ title: 'Verify connection', task: () => executor.exec(probe) }] : []),
+                ...(probe ? [{ title: 'Verify connection', task: () => execOrThrow(executor,probe) }] : []),
               ], { concurrent: false });
             },
           }]
@@ -143,13 +143,13 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
         task: (_ctx: object, task: any) => task.newListr([
           {
             title: `Create release structure at ${config.remotePath}`,
-            task: () => executor.exec(
+            task: () => execOrThrow(executor,
               `mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`,
             ),
           },
           {
             title: 'Configure Caddy include',
-            task: () => executor.exec(
+            task: () => execOrThrow(executor,
               'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
               '$SUDO mkdir -p /etc/caddy/conf.d /var/log/caddy && ' +
               'grep -q "import /etc/caddy/conf.d" /etc/caddy/Caddyfile 2>/dev/null || ' +
@@ -162,6 +162,14 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
     ],
     { rendererOptions: { collapseErrors: false } },
   );
+}
+
+async function execOrThrow(executor: RemoteExecutor, cmd: string): Promise<void> {
+  const result = await executor.exec(cmd);
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr || result.stdout).trim();
+    throw new Error(detail || `Command failed with exit code ${result.exitCode}`);
+  }
 }
 
 function sh(s: string): string {
