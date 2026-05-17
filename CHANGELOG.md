@@ -4,6 +4,19 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-05-17
+
+### Added
+- `shipnode run <alias>` — named shortcuts for remote commands, defined via `.aliases(map)` in `shipnode.config.ts`. Extra args after the alias name are appended to the expanded command. Unknown names fall through as raw strings.
+
+### Fixed
+- Deploy hooks (`.preDeploy()` / `.postDeploy()`) now correctly set up the mise PATH and `cd` into the release directory before running commands — previously `pnpm`, `npx`, etc. were not found on the remote server
+- Hook `exec()` now throws on non-zero exit, aborting the deploy on failure — previously migration failures were silently swallowed
+- Hook command output now streams live to the terminal as it runs, prefixed with `│` — no longer buffered and hidden
+
+### Removed
+- `.shipnode/pre-deploy.sh` and `.shipnode/post-deploy.sh` bash hook files removed from `shipnode init` — they were never executed during deploy and were misleading. Use `.preDeploy()` / `.postDeploy()` in `shipnode.config.ts` instead.
+
 ## [2.0.13] - 2026-05-16
 
 ### Added
