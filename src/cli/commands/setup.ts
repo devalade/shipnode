@@ -2,7 +2,7 @@ import { Listr } from 'listr2';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
-import type { ShipnodeConfig, DatabaseConfig, RedisConfig } from '../../shared/types.js';
+import type { ShipnodeConfig, DatabaseConfig, NetworkDatabaseConfig, RedisConfig } from '../../shared/types.js';
 
 export async function cmdSetup(cwd: string, options: { config?: string }): Promise<void> {
   await runRemoteCommand(
@@ -78,7 +78,21 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
       ...(config.database && config.database.type !== 'sqlite' && config.database.host === 'localhost'
         ? [{
             title: `Database (${config.database.type})`,
-            task: () => executor.exec(buildDbSetupCommand(config.database!)),
+            task: (_ctx: object, task: any) => {
+              const db = config.database as NetworkDatabaseConfig;
+              const probe = buildDbProbeCommand(db);
+              return task.newListr([
+                {
+                  title: `Install ${db.type}`,
+                  task: () => executor.exec(buildDbInstallCommand(db)),
+                },
+                {
+                  title: `Create user '${db.user}' and database '${db.name}'`,
+                  task: () => executor.exec(buildDbCreateCommand(db)),
+                },
+                ...(probe ? [{ title: 'Verify connection', task: () => executor.exec(probe) }] : []),
+              ], { concurrent: false });
+            },
           }]
         : []),
       ...(config.redis && config.redis.host === 'localhost'
@@ -115,11 +129,31 @@ function shDq(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
 }
 
-export function buildDbSetupCommand(db: DatabaseConfig): string {
-  if (db.type === 'sqlite') {
-    throw new Error(`buildDbSetupCommand called for sqlite — caller should guard against this`);
+export function buildDbInstallCommand(db: NetworkDatabaseConfig): string {
+  const preamble = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"';
+
+  if (db.type === 'postgres') {
+    return `${preamble}; $SUDO apt-get install -y postgresql postgresql-contrib && $SUDO systemctl enable postgresql && $SUDO systemctl start postgresql`;
   }
 
+  if (db.type === 'mysql') {
+    return `${preamble}; $SUDO apt-get install -y mysql-server && $SUDO systemctl enable mysql && $SUDO systemctl start mysql`;
+  }
+
+  if (db.type === 'mongodb') {
+    const installCmd =
+      'if ! command -v mongod &>/dev/null; then ' +
+        'curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | $SUDO gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg; ' +
+        'echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | $SUDO tee /etc/apt/sources.list.d/mongodb-org-7.0.list; ' +
+        '$SUDO apt-get update -qq && $SUDO apt-get install -y mongodb-org; ' +
+      'fi';
+    return `${preamble}; ${installCmd} && $SUDO systemctl enable mongod && $SUDO systemctl start mongod`;
+  }
+
+  throw new Error(`Unsupported database type: ${(db as DatabaseConfig).type}`);
+}
+
+export function buildDbCreateCommand(db: NetworkDatabaseConfig): string {
   // preamble uses ';' so the conditional SUDO/PG_RUN assignments don't break
   // the '&&' chain when running as root (EUID=0 makes [ -ne 0 ] exit 1)
   const preamble = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; PG_RUN="runuser -u postgres --"; [ "$EUID" -ne 0 ] && PG_RUN="sudo -u postgres"';
@@ -131,15 +165,9 @@ export function buildDbSetupCommand(db: DatabaseConfig): string {
       ? `$PG_RUN psql -c "CREATE USER \\"${userDq}\\" WITH PASSWORD '${shDq(db.password)}';" 2>/dev/null || true`
       : `$PG_RUN psql -c "CREATE USER \\"${userDq}\\";" 2>/dev/null || true`;
     const commands = [
-      '$SUDO apt-get install -y postgresql postgresql-contrib',
-      '$SUDO systemctl enable postgresql',
-      '$SUDO systemctl start postgresql',
       createUser,
       `$PG_RUN psql -tc "SELECT 1 FROM pg_database WHERE datname='${nameDq}'" | grep -q 1 || $PG_RUN createdb -O "${userDq}" "${nameDq}"`,
     ];
-    if (db.password) {
-      commands.push(`PGPASSWORD='${sh(db.password)}' psql -h localhost -U '${sh(db.user)}' -d '${sh(db.name)}' -c "SELECT 1" > /dev/null`);
-    }
     return `${preamble}; ${commands.join(' && ')}`;
   }
 
@@ -148,46 +176,55 @@ export function buildDbSetupCommand(db: DatabaseConfig): string {
     const nameDq = shDq(db.name);
     const pwClause = db.password ? `IDENTIFIED BY '${shDq(db.password)}'` : '';
     const commands = [
-      '$SUDO apt-get install -y mysql-server',
-      '$SUDO systemctl enable mysql',
-      '$SUDO systemctl start mysql',
       `$SUDO mysql -e "CREATE USER IF NOT EXISTS '${userDq}'@'localhost' ${pwClause};"`,
       `$SUDO mysql -e "CREATE DATABASE IF NOT EXISTS \\\`${nameDq}\\\`;"`,
       `$SUDO mysql -e "GRANT ALL PRIVILEGES ON \\\`${nameDq}\\\`.* TO '${userDq}'@'localhost';"`,
       `$SUDO mysql -e "FLUSH PRIVILEGES;"`,
     ];
-    if (db.password) {
-      commands.push(`MYSQL_PWD='${sh(db.password)}' mysql -h 127.0.0.1 -u '${sh(db.user)}' '${sh(db.name)}' -e "SELECT 1" > /dev/null`);
-    }
     return `${preamble}; ${commands.join(' && ')}`;
   }
 
   if (db.type === 'mongodb') {
-    const installCmd =
-      'if ! command -v mongod &>/dev/null; then ' +
-        'curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | $SUDO gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg; ' +
-        'echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | $SUDO tee /etc/apt/sources.list.d/mongodb-org-7.0.list; ' +
-        '$SUDO apt-get update -qq && $SUDO apt-get install -y mongodb-org; ' +
-      'fi';
+    if (!db.password) return 'true';
+    const nameDq = shDq(db.name);
+    const userDq = shDq(db.user);
+    const pwdDq = shDq(db.password);
     const commands = [
-      installCmd,
-      '$SUDO systemctl enable mongod',
-      '$SUDO systemctl start mongod',
+      `if ! grep -q "authorization: enabled" /etc/mongod.conf 2>/dev/null; then echo -e "\\nsecurity:\\n  authorization: enabled" | $SUDO tee -a /etc/mongod.conf > /dev/null && $SUDO systemctl restart mongod; fi`,
+      `mongosh "${nameDq}" --eval "db.createUser({user:'${userDq}',pwd:'${pwdDq}',roles:[{role:'readWrite',db:'${nameDq}'}]})" 2>/dev/null || true`,
     ];
-    if (db.password) {
-      const nameDq = shDq(db.name);
-      const userDq = shDq(db.user);
-      const pwdDq = shDq(db.password);
-      commands.push(
-        `if ! grep -q "authorization: enabled" /etc/mongod.conf 2>/dev/null; then echo -e "\\nsecurity:\\n  authorization: enabled" | $SUDO tee -a /etc/mongod.conf > /dev/null && $SUDO systemctl restart mongod; fi`,
-        `mongosh "${nameDq}" --eval "db.createUser({user:'${userDq}',pwd:'${pwdDq}',roles:[{role:'readWrite',db:'${nameDq}'}]})" 2>/dev/null || true`,
-        `mongosh --host localhost '${sh(db.name)}' -u '${sh(db.user)}' -p '${sh(db.password)}' --authenticationDatabase '${sh(db.name)}' --eval "db.runCommand({ping:1})" --quiet > /dev/null`,
-      );
-    }
     return `${preamble}; ${commands.join(' && ')}`;
   }
 
   throw new Error(`Unsupported database type: ${(db as DatabaseConfig).type}`);
+}
+
+export function buildDbProbeCommand(db: NetworkDatabaseConfig): string | null {
+  if (!db.password) return null;
+
+  if (db.type === 'postgres') {
+    return `PGPASSWORD='${sh(db.password)}' psql -h localhost -U '${sh(db.user)}' -d '${sh(db.name)}' -c "SELECT 1" > /dev/null`;
+  }
+
+  if (db.type === 'mysql') {
+    return `MYSQL_PWD='${sh(db.password)}' mysql -h 127.0.0.1 -u '${sh(db.user)}' '${sh(db.name)}' -e "SELECT 1" > /dev/null`;
+  }
+
+  if (db.type === 'mongodb') {
+    return `mongosh --host localhost '${sh(db.name)}' -u '${sh(db.user)}' -p '${sh(db.password)}' --authenticationDatabase '${sh(db.name)}' --eval "db.runCommand({ping:1})" --quiet > /dev/null`;
+  }
+
+  throw new Error(`Unsupported database type: ${(db as DatabaseConfig).type}`);
+}
+
+export function buildDbSetupCommand(db: DatabaseConfig): string {
+  if (db.type === 'sqlite') {
+    throw new Error(`buildDbSetupCommand called for sqlite — caller should guard against this`);
+  }
+  const install = buildDbInstallCommand(db);
+  const create = buildDbCreateCommand(db);
+  const probe = buildDbProbeCommand(db);
+  return [install, create, ...(probe ? [probe] : [])].join(' && ');
 }
 
 export function buildRedisSetupCommand(redis: RedisConfig): string {

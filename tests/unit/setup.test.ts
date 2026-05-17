@@ -1,88 +1,141 @@
 import { describe, it, expect } from 'vitest';
-import { buildDbSetupCommand, buildRedisSetupCommand } from '../../src/cli/commands/setup.js';
+import {
+  buildDbInstallCommand,
+  buildDbCreateCommand,
+  buildDbProbeCommand,
+  buildDbSetupCommand,
+  buildRedisSetupCommand,
+} from '../../src/cli/commands/setup.js';
 
-describe('buildDbSetupCommand', () => {
-  it('postgres: installs, creates user and db', () => {
-    const cmd = buildDbSetupCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser' });
+describe('buildDbInstallCommand', () => {
+  it('postgres: installs package and starts service', () => {
+    const cmd = buildDbInstallCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser' });
     expect(cmd).toContain('apt-get install -y postgresql postgresql-contrib');
     expect(cmd).toContain('systemctl enable postgresql');
-    expect(cmd).toContain('CREATE USER \\"myuser\\"');
-    expect(cmd).toContain("datname='mydb'");
-    expect(cmd).toContain('createdb -O "myuser" "mydb"');
+    expect(cmd).toContain('systemctl start postgresql');
   });
 
-  it('postgres: includes password in createUser when provided', () => {
-    const cmd = buildDbSetupCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser', password: 'secret' });
-    expect(cmd).toContain("WITH PASSWORD 'secret'");
-  });
-
-  it('postgres: adds login probe when password is provided', () => {
-    const cmd = buildDbSetupCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser', password: 'secret' });
-    expect(cmd).toContain("PGPASSWORD='secret' psql -h localhost -U 'myuser' -d 'mydb'");
-  });
-
-  it('postgres: no login probe without password', () => {
-    const cmd = buildDbSetupCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser' });
-    expect(cmd).not.toContain('PGPASSWORD');
-  });
-
-  it('postgres: escapes $ in user/name with shDq to prevent shell expansion', () => {
-    const cmd = buildDbSetupCommand({ type: 'postgres', host: 'localhost', port: 5432, name: '$mydb', user: '$myuser', password: 'p' });
-    expect(cmd).toContain('\\$myuser');
-    expect(cmd).toContain('\\$mydb');
-  });
-
-  it('mysql: installs, creates user and db', () => {
-    const cmd = buildDbSetupCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser' });
+  it('mysql: installs package and starts service', () => {
+    const cmd = buildDbInstallCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser' });
     expect(cmd).toContain('apt-get install -y mysql-server');
-    expect(cmd).toContain("CREATE USER IF NOT EXISTS 'myuser'@'localhost'");
-    expect(cmd).toContain('CREATE DATABASE IF NOT EXISTS');
-    expect(cmd).toContain("GRANT ALL PRIVILEGES ON");
-    expect(cmd).toContain('FLUSH PRIVILEGES');
+    expect(cmd).toContain('systemctl enable mysql');
+    expect(cmd).toContain('systemctl start mysql');
   });
 
-  it('mysql: adds login probe when password is provided', () => {
-    const cmd = buildDbSetupCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser', password: 'secret' });
-    expect(cmd).toContain("MYSQL_PWD='secret' mysql -h 127.0.0.1 -u 'myuser' 'mydb'");
-  });
-
-  it('mysql: no login probe without password', () => {
-    const cmd = buildDbSetupCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser' });
-    expect(cmd).not.toContain('MYSQL_PWD');
-  });
-
-  it('mongodb: installs and starts mongod', () => {
-    const cmd = buildDbSetupCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser' });
+  it('mongodb: installs package and starts mongod', () => {
+    const cmd = buildDbInstallCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser' });
     expect(cmd).toContain('command -v mongod');
     expect(cmd).toContain('mongodb-org');
     expect(cmd).toContain('systemctl enable mongod');
     expect(cmd).toContain('systemctl start mongod');
   });
 
+  it('install command does not contain user or database creation', () => {
+    for (const type of ['postgres', 'mysql', 'mongodb'] as const) {
+      const cmd = buildDbInstallCommand({ type, host: 'localhost', port: 5432, name: 'mydb', user: 'myuser', password: 'secret' });
+      expect(cmd).not.toContain('CREATE USER');
+      expect(cmd).not.toContain('CREATE DATABASE');
+      expect(cmd).not.toContain('createUser');
+    }
+  });
+});
+
+describe('buildDbCreateCommand', () => {
+  it('postgres: creates user and database', () => {
+    const cmd = buildDbCreateCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser' });
+    expect(cmd).toContain('CREATE USER \\"myuser\\"');
+    expect(cmd).toContain("datname='mydb'");
+    expect(cmd).toContain('createdb -O "myuser" "mydb"');
+  });
+
+  it('postgres: includes password in CREATE USER', () => {
+    const cmd = buildDbCreateCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser', password: 'secret' });
+    expect(cmd).toContain("WITH PASSWORD 'secret'");
+  });
+
+  it('postgres: escapes $ in user/name to prevent shell expansion', () => {
+    const cmd = buildDbCreateCommand({ type: 'postgres', host: 'localhost', port: 5432, name: '$mydb', user: '$myuser', password: 'p' });
+    expect(cmd).toContain('\\$myuser');
+    expect(cmd).toContain('\\$mydb');
+  });
+
+  it('mysql: creates user, database, and grants privileges', () => {
+    const cmd = buildDbCreateCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser' });
+    expect(cmd).toContain("CREATE USER IF NOT EXISTS 'myuser'@'localhost'");
+    expect(cmd).toContain('CREATE DATABASE IF NOT EXISTS');
+    expect(cmd).toContain('GRANT ALL PRIVILEGES ON');
+    expect(cmd).toContain('FLUSH PRIVILEGES');
+  });
+
+  it('mysql: includes IDENTIFIED BY when password provided', () => {
+    const cmd = buildDbCreateCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser', password: 'secret' });
+    expect(cmd).toContain("IDENTIFIED BY 'secret'");
+  });
+
   it('mongodb: enables auth and creates user when password provided', () => {
-    const cmd = buildDbSetupCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser', password: 'secret' });
+    const cmd = buildDbCreateCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser', password: 'secret' });
     expect(cmd).toContain('authorization: enabled');
     expect(cmd).toContain("db.createUser({user:'myuser',pwd:'secret'");
   });
 
-  it('mongodb: adds login probe when password provided', () => {
-    const cmd = buildDbSetupCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser', password: 'secret' });
-    expect(cmd).toContain("mongosh --host localhost 'mydb' -u 'myuser' -p 'secret'");
+  it('mongodb: returns true when no password', () => {
+    const cmd = buildDbCreateCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser' });
+    expect(cmd).toBe('true');
   });
 
-  it('mongodb: no auth or user creation without password', () => {
-    const cmd = buildDbSetupCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser' });
-    expect(cmd).not.toContain('authorization');
-    expect(cmd).not.toContain('createUser');
+  it('create command does not contain service installation', () => {
+    for (const type of ['postgres', 'mysql'] as const) {
+      const cmd = buildDbCreateCommand({ type, host: 'localhost', port: 5432, name: 'mydb', user: 'myuser' });
+      expect(cmd).not.toContain('apt-get install');
+      expect(cmd).not.toContain('systemctl enable');
+    }
+  });
+});
+
+describe('buildDbProbeCommand', () => {
+  it('returns null when no password', () => {
+    expect(buildDbProbeCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser' })).toBeNull();
+    expect(buildDbProbeCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser' })).toBeNull();
+    expect(buildDbProbeCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser' })).toBeNull();
   });
 
+  it('postgres: uses PGPASSWORD and connects as app user', () => {
+    const cmd = buildDbProbeCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser', password: 'secret' });
+    expect(cmd).toContain("PGPASSWORD='secret'");
+    expect(cmd).toContain("-U 'myuser'");
+    expect(cmd).toContain("-d 'mydb'");
+  });
+
+  it('mysql: uses MYSQL_PWD env var', () => {
+    const cmd = buildDbProbeCommand({ type: 'mysql', host: 'localhost', port: 3306, name: 'mydb', user: 'myuser', password: 'secret' });
+    expect(cmd).toContain("MYSQL_PWD='secret'");
+    expect(cmd).toContain("-u 'myuser'");
+    expect(cmd).toContain("'mydb'");
+  });
+
+  it('mongodb: authenticates against the correct database', () => {
+    const cmd = buildDbProbeCommand({ type: 'mongodb', host: 'localhost', port: 27017, name: 'mydb', user: 'myuser', password: 'secret' });
+    expect(cmd).toContain("-u 'myuser'");
+    expect(cmd).toContain("-p 'secret'");
+    expect(cmd).toContain("--authenticationDatabase 'mydb'");
+  });
+});
+
+describe('buildDbSetupCommand (combined)', () => {
   it('throws for sqlite', () => {
     expect(() => buildDbSetupCommand({ type: 'sqlite', name: './data.db' })).toThrow();
+  });
+
+  it('combines install, create, and probe into one command', () => {
+    const cmd = buildDbSetupCommand({ type: 'postgres', host: 'localhost', port: 5432, name: 'mydb', user: 'myuser', password: 'secret' });
+    expect(cmd).toContain('apt-get install -y postgresql');
+    expect(cmd).toContain('CREATE USER');
+    expect(cmd).toContain("PGPASSWORD='secret'");
   });
 });
 
 describe('buildRedisSetupCommand', () => {
-  it('installs and starts redis', () => {
+  it('installs and starts redis without a password', () => {
     const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379 });
     expect(cmd).toContain('apt-get install -y redis-server');
     expect(cmd).toContain('systemctl enable redis-server');
@@ -103,7 +156,6 @@ describe('buildRedisSetupCommand', () => {
 
   it('does not use / as sed delimiter — password with slash must not break sed', () => {
     const cmd = buildRedisSetupCommand({ host: 'localhost', port: 6379, password: 'pass/word' });
-    // Old code used s/.../.../ which breaks on /; new code deletes and appends instead
     expect(cmd).not.toMatch(/sed -i "s\//);
     expect(cmd).toContain('requirepass pass/word');
   });
