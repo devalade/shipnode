@@ -104,6 +104,7 @@ All commands accept `--config <path>` to use a non-default config file.
 | `.cloudflare(opts)` | — | Cloudflare Tunnel config |
 | `.preDeploy(fn)` | — | Hook: before symlink switch |
 | `.postDeploy(fn)` | — | Hook: after deploy |
+| `.aliases(map)` | — | Named shortcuts for `shipnode run` |
 
 ## Deploy hook API
 
@@ -112,4 +113,25 @@ All commands accept `--config <path>` to use a non-default config file.
 .postDeploy(async ({ exec, config }) => { ... })
 ```
 
-`exec(cmd)` runs the command on the remote server in the new release directory.
+`exec(cmd)` runs the command on the remote server in the new release directory. Output streams live. Throws on non-zero exit.
+
+## Run aliases
+
+Define shorthand names for common remote commands:
+
+```ts
+.aliases({
+  migrate:  'pnpm db:apply',
+  seed:     'pnpm db:seed',
+  health:   'curl -s localhost:$PORT/health',
+  console:  'node dist/repl.js',
+})
+```
+
+```bash
+shipnode run migrate            # → pnpm db:apply
+shipnode run migrate --step 2   # → pnpm db:apply --step 2
+shipnode run "echo hello"       # raw string — no alias match, runs as-is
+```
+
+Extra args after the alias name are appended to the expanded command. Unknown names fall through as raw commands.
