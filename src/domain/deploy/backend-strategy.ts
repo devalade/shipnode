@@ -48,7 +48,7 @@ export class BackendStrategy implements DeploymentStrategy {
 
   async setupEnvironment(ctx: StrategyContext): Promise<void> {
     const pkgManager = await this.resolvePkgManager();
-    const installCmd = getInstallCommand(pkgManager);
+    const installCmd = this.config.installCommand ?? getInstallCommand(pkgManager);
     const runCmd = getRunCommand(pkgManager);
 
     const commands = [
@@ -110,9 +110,12 @@ export class BackendStrategy implements DeploymentStrategy {
     // Re-run install from the final directory so the pkg manager's module
     // resolution state matches the path PM2 will use. Packages are already
     // in the local store so this is a fast offline relink, not a download.
-    const installCmd = getInstallCommand(pkgManager);
+    // If the user supplied a custom installCommand we use it verbatim — they've
+    // chosen their flags and appending --prefer-offline would compose poorly.
+    const baseInstall = this.config.installCommand ?? getInstallCommand(pkgManager);
+    const relinkInstall = this.config.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
     const installResult = await ctx.executor.exec(
-      `cd "${cdPath}" && ${mise} && ${installCmd} --prefer-offline`,
+      `cd "${cdPath}" && ${mise} && ${relinkInstall}`,
     );
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
     if (installResult.exitCode !== 0) {

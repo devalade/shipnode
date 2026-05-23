@@ -103,7 +103,8 @@ export default shipnode
 | `.worker({ name, command, ... })` | — | Add a worker process supervised alongside the web app |
 | `.domain(d)` | — | Domain for Caddy config |
 | `.nodeVersion(v)` | `lts` | Node version (via mise) |
-| `.pkgManager(pm)` | auto-detected | `npm` \| `yarn` \| `pnpm` \| `bun` |
+| `.pkgManager(pm, opts?)` | auto-detected | `npm` \| `yarn` \| `pnpm` \| `bun`; `opts.installCommand` overrides the install command |
+| `.installCommand(cmd)` | derived from pkg manager | Override the install command run on the server (e.g. `'npm ci --legacy-peer-deps'`). Equivalent to `pkgManager(pm, { installCommand: cmd })` |
 | `.buildDir(dir)` | auto-detected | Frontend build output dir |
 | `.zeroDowntime({ keepReleases? })` | true, 5 | Zero-downtime releases |
 | `.legacy()` | — | Simple in-place deploy |

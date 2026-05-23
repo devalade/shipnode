@@ -195,6 +195,38 @@ describe('ShipnodeBuilder', () => {
     }).toThrow();
   });
 
+  it('accepts installCommand via .pkgManager(pm, opts)', () => {
+    const config = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '1.2.3.4', user: 'deploy' })
+      .deployTo('/var/www/app')
+      .pkgManager('pnpm', { installCommand: 'pnpm install --frozen-lockfile' })
+      .build();
+
+    expect(config.pkgManager).toBe('pnpm');
+    expect(config.installCommand).toBe('pnpm install --frozen-lockfile');
+  });
+
+  it('.installCommand(cmd) and .pkgManager(pm, { installCommand }) end up at the same place', () => {
+    const a = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '1.2.3.4', user: 'deploy' })
+      .deployTo('/var/www/app')
+      .pkgManager('npm')
+      .installCommand('npm ci --legacy-peer-deps')
+      .build();
+
+    const b = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '1.2.3.4', user: 'deploy' })
+      .deployTo('/var/www/app')
+      .pkgManager('npm', { installCommand: 'npm ci --legacy-peer-deps' })
+      .build();
+
+    expect(a.installCommand).toBe(b.installCommand);
+    expect(a.pkgManager).toBe(b.pkgManager);
+  });
+
   it('sets backup config', () => {
     const config = new ShipnodeBuilder()
       .backend()

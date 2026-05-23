@@ -15,6 +15,15 @@ All notable changes to `@devalade/shipnode` will be documented here.
 - **PM2 status check** — after every deploy, `pm2 jlist` is parsed and each declared app must be `online` with `restart_time === 0`. Catches workers that boot and crash before the HTTP health check would notice anything. Runs even on worker-only deployments.
 - **Per-app `env`** — each `pm2.apps` entry can set its own env vars (`{ WORKER_QUEUE: 'emails' }`); PM2 loads the shared `.env` via `env_file` and applies per-app overrides on top.
 
+### Fixed
+- **Builds no longer fail because devDependencies are missing.** The default install commands for `npm`, `yarn`, and `bun` no longer pass `--production` / `--frozen-lockfile --production` — they now install everything so the subsequent build step has access to `tsc`, `vite`, `tsup`, etc. (pnpm was already fixed for this in v2.0.13; this completes the same fix for the other package managers.)
+
+### Added
+- Two ways to override the server-side install command when you need flags the default doesn't carry (e.g. `'npm ci --legacy-peer-deps'`):
+  - `.installCommand(cmd)` — standalone builder method.
+  - `.pkgManager(pm, { installCommand: cmd })` — second-arg form, useful when you're already pinning the package manager.
+  Both write to the same field. Override applies to both the initial install and the post-symlink relink; `--prefer-offline` is not appended to overridden commands.
+
 ### Changed
 - **Ecosystem file is per-release** — `ecosystem.config.cjs` now lives inside each release directory instead of `<remotePath>/shared/`. PM2 references it via `<remotePath>/current/ecosystem.config.cjs` so rollback restores the exact process set that was active for that release (a worker added in v2 won't crash-loop after rolling back to v1). See [ADR-0001](docs/adr/0001-per-release-ecosystem-file.md).
 - **Builder back-compat preserved** — `.pm2(name, opts)` and `.port(n)` still work and now act as sugar on the first app. Existing `shipnode.config.ts` files don't need changes.

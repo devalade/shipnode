@@ -80,6 +80,7 @@ export function assembleConfig(partial: AssembleInput): ShipnodeConfig {
     envFile: partial.envFile ?? DEFAULTS.ENV_FILE,
     nodeVersion: partial.nodeVersion ?? DEFAULTS.NODE_VERSION,
     pkgManager: partial.pkgManager,
+    installCommand: partial.installCommand,
     sharedDirs: partial.sharedDirs,
     sharedFiles: partial.sharedFiles,
     buildDir: partial.buildDir,

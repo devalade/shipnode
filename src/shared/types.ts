@@ -111,6 +111,8 @@ export interface ShipnodeConfig {
   envFile: string;
   nodeVersion: string;
   pkgManager?: PkgManager;
+  /** Override the install command run on the server. Defaults to the package manager's standard install (e.g. `npm ci`). Use to add flags like `--legacy-peer-deps`, switch to a frozen-lockfile variant, etc. */
+  installCommand?: string;
   buildDir?: string;
   sharedDirs?: string[];
   sharedFiles?: string[];

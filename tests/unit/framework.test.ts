@@ -170,12 +170,15 @@ describe('detectPkgManager', () => {
 });
 
 describe('getInstallCommand', () => {
+  // Installs intentionally include devDependencies — the build step that runs
+  // afterwards needs tsc/vite/tsup/etc. Users who need different flags override
+  // with .installCommand(cmd).
   it('returns correct command for npm', () => {
-    expect(getInstallCommand('npm')).toBe('npm ci --production');
+    expect(getInstallCommand('npm')).toBe('npm ci');
   });
 
   it('returns correct command for yarn', () => {
-    expect(getInstallCommand('yarn')).toBe('yarn install --production');
+    expect(getInstallCommand('yarn')).toBe('yarn install --frozen-lockfile');
   });
 
   it('returns correct command for pnpm', () => {
@@ -183,7 +186,7 @@ describe('getInstallCommand', () => {
   });
 
   it('returns correct command for bun', () => {
-    expect(getInstallCommand('bun')).toBe('bun install --production');
+    expect(getInstallCommand('bun')).toBe('bun install');
   });
 });
 

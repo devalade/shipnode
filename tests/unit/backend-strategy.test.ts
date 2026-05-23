@@ -115,6 +115,17 @@ describe('BackendStrategy.setupEnvironment', () => {
     expect(cmd).toContain('npm ci');
   });
 
+  it('uses the custom installCommand override when set', async () => {
+    const config = makeConfig({ pkgManager: 'npm', installCommand: 'npm ci --legacy-peer-deps' });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.setupEnvironment!(makeCtx(executor, { config }));
+
+    const cmd = executor.getLastCommand()!.command;
+    expect(cmd).toContain('npm ci --legacy-peer-deps');
+    expect(cmd).not.toContain('npm ci\n'); // not the default
+  });
+
   it('uses pnpm install when pkgManager is pnpm', async () => {
     const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
@@ -310,6 +321,17 @@ describe('BackendStrategy.startApp', () => {
     // Worker is namespace-prefixed: two shipnode deployments with a `worker`
     // entry on the same host won't collide because each gets prefixed.
     expect(writeCmd).toContain('api-worker');
+  });
+
+  it('uses the custom installCommand on the post-symlink relink (no --prefer-offline appended)', async () => {
+    const config = makeConfig({ pkgManager: 'npm', installCommand: 'npm ci --legacy-peer-deps' });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { config }));
+
+    const relinkCmd = executor.getHistory()[1].command;
+    expect(relinkCmd).toContain('npm ci --legacy-peer-deps');
+    expect(relinkCmd).not.toContain('--prefer-offline');
   });
 
   it('emits the silent legacy-name pm2 delete fallback', async () => {

@@ -123,8 +123,14 @@ export class ShipnodeBuilder {
     return this;
   }
 
-  pkgManager(pm: PkgManager): this {
+  pkgManager(pm: PkgManager, opts?: { installCommand?: string }): this {
     this.config.pkgManager = pm;
+    if (opts?.installCommand !== undefined) this.config.installCommand = opts.installCommand;
+    return this;
+  }
+
+  installCommand(cmd: string): this {
+    this.config.installCommand = cmd;
     return this;
   }
 

@@ -80,8 +80,11 @@ export const ORM_PATTERNS = {
 } as const;
 
 export const PKG_MANAGER_COMMANDS: Record<string, { install: string; run: string }> = {
-  npm: { install: 'npm ci --production', run: 'npm run' },
-  yarn: { install: 'yarn install --production', run: 'yarn' },
+  // No --production / --omit=dev flags: the install runs on the server and the
+  // build step that follows needs devDependencies (tsc, vite, tsup, …). Users
+  // who want a different install can override via .installCommand(cmd).
+  npm: { install: 'npm ci', run: 'npm run' },
+  yarn: { install: 'yarn install --frozen-lockfile', run: 'yarn' },
   pnpm: { install: 'pnpm install', run: 'pnpm' },
-  bun: { install: 'bun install --production', run: 'bun run' },
+  bun: { install: 'bun install', run: 'bun run' },
 } as const;

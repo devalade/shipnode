@@ -114,7 +114,7 @@ async function detectOrm(cwd: string): Promise<string | undefined> {
 }
 
 export function getInstallCommand(pkgManager: PkgManager): string {
-  return PKG_MANAGER_COMMANDS[pkgManager]?.install ?? 'npm ci --production';
+  return PKG_MANAGER_COMMANDS[pkgManager]?.install ?? 'npm ci';
 }
 
 export function getRunCommand(pkgManager: PkgManager): string {
