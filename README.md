@@ -77,6 +77,85 @@ export default shipnode
   .build();
 ```
 
+### Multiple environments (staging, production, …)
+
+Shipnode itself stays out of the environment concept — every command takes `--config <path>`, and you keep one config file per environment.
+
+```
+shipnode.staging.config.ts
+shipnode.production.config.ts
+```
+
+```ts
+// shipnode.staging.config.ts
+import { shipnode } from '@devalade/shipnode';
+
+export default shipnode
+  .backend()
+  .ssh({ host: 'staging.example.com', user: 'deploy' })
+  .deployTo('/var/www/staging')
+  .pm2('myapp-staging', { instances: 1 })
+  .port(3000)
+  .domain('staging.example.com')
+  .envFile('.env.staging')
+  .build();
+```
+
+```ts
+// shipnode.production.config.ts
+import { shipnode } from '@devalade/shipnode';
+
+export default shipnode
+  .backend()
+  .ssh({ host: 'prod.example.com', user: 'deploy' })
+  .deployTo('/var/www/prod')
+  .pm2('myapp', { instances: 2, maxMemory: '1G' })
+  .port(3000)
+  .domain('api.example.com')
+  .envFile('.env.production')
+  .build();
+```
+
+```bash
+shipnode deploy   --config shipnode.staging.config.ts
+shipnode logs     --config shipnode.staging.config.ts
+shipnode rollback --config shipnode.production.config.ts
+```
+
+Or factor the shared parts out and switch on an env var when you have many environments:
+
+```ts
+// shipnode.config.ts
+import { shipnode } from '@devalade/shipnode';
+
+const ENV = process.env.SHIPNODE_ENV ?? 'production';
+
+const targets = {
+  staging:    { host: 'staging.example.com', remotePath: '/var/www/staging', domain: 'staging.example.com', envFile: '.env.staging',    instances: 1 },
+  production: { host: 'prod.example.com',    remotePath: '/var/www/prod',    domain: 'api.example.com',     envFile: '.env.production', instances: 2 },
+} as const;
+
+const t = targets[ENV as keyof typeof targets];
+if (!t) throw new Error(`Unknown SHIPNODE_ENV: ${ENV}`);
+
+export default shipnode
+  .backend()
+  .ssh({ host: t.host, user: 'deploy' })
+  .deployTo(t.remotePath)
+  .pm2(`myapp-${ENV}`, { instances: t.instances })
+  .port(3000)
+  .domain(t.domain)
+  .envFile(t.envFile)
+  .build();
+```
+
+```bash
+SHIPNODE_ENV=staging    shipnode deploy
+SHIPNODE_ENV=production shipnode deploy
+```
+
+The PM2 namespace prefix (`myapp-staging` vs `myapp`) keeps the processes distinct if you ever co-locate environments on one host.
+
 ### Frontend apps
 
 ```ts

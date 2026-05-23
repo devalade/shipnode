@@ -18,6 +18,9 @@ All notable changes to `@devalade/shipnode` will be documented here.
 ### Fixed
 - **Builds no longer fail because devDependencies are missing.** The default install commands for `npm`, `yarn`, and `bun` no longer pass `--production` / `--frozen-lockfile --production` — they now install everything so the subsequent build step has access to `tsc`, `vite`, `tsup`, etc. (pnpm was already fixed for this in v2.0.13; this completes the same fix for the other package managers.)
 
+### Documentation
+- README: new "Multiple environments" section showing two patterns for staging/production splits — separate `shipnode.<env>.config.ts` files driven by `--config <path>`, or a single config file switched on `SHIPNODE_ENV`. No new CLI surface; both patterns use the existing `--config` flag that every command already accepts.
+
 ### Added
 - Two ways to override the server-side install command when you need flags the default doesn't carry (e.g. `'npm ci --legacy-peer-deps'`):
   - `.installCommand(cmd)` — standalone builder method.
