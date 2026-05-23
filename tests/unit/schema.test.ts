@@ -97,6 +97,7 @@ describe('ShipnodeConfigSchema', () => {
       ssh: { host: '1.2.3.4', user: 'deploy' },
       remotePath: '/var/www/app',
       domain: 'api.example.com',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
     });
 
     expect(result.success).toBe(true);

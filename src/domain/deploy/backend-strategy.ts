@@ -1,11 +1,24 @@
 import { execa } from 'execa';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
-import type { ShipnodeConfig } from '../../shared/types.js';
+import type { ShipnodeConfig, Pm2App } from '../../shared/types.js';
+import { getDeploymentName, getPm2Name } from '../pm2/apps.js';
 import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework/detector.js';
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
 import { DeployError } from '../../shared/errors.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
+
+function escapeSingleQuotes(s: string): string {
+  return s.replace(/'/g, "\\'");
+}
+
+// Q5: `command` is shell-style — split on whitespace into script + args.
+// Omitted command falls back to `<pkgManager> start` (the pre-multi-process default).
+function parseCommand(command: string | undefined, pkgManager: string): { script: string; args: string } {
+  if (!command) return { script: pkgManager, args: 'start' };
+  const parts = command.trim().split(/\s+/);
+  return { script: parts[0], args: parts.slice(1).join(' ') };
+}
 
 export class BackendStrategy implements DeploymentStrategy {
   readonly name = 'backend';
@@ -83,10 +96,13 @@ export class BackendStrategy implements DeploymentStrategy {
 
     const pkgManager = await this.resolvePkgManager();
     const ecosystemContent = this.generateEcosystemFile(pkgManager);
-    const ecosystemPath = `${this.config.remotePath}/shared/ecosystem.config.cjs`;
+    // Ecosystem lives inside the release directory (per-release snapshot, ADR-0001).
+    // PM2 references it via the `current` symlink so it always resolves to the active release.
+    const ecosystemWritePath = `${ctx.workDir}/ecosystem.config.cjs`;
+    const ecosystemRuntimePath = `${this.config.remotePath}/current/ecosystem.config.cjs`;
 
     const escaped = ecosystemContent.replace(/'/g, "'\"'\"'");
-    await ctx.executor.execOrThrow(`echo '${escaped}' > "${ecosystemPath}"`);
+    await ctx.executor.execOrThrow(`echo '${escaped}' > "${ecosystemWritePath}"`);
 
     const cdPath = `${this.config.remotePath}/current`;
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
@@ -104,12 +120,22 @@ export class BackendStrategy implements DeploymentStrategy {
       throw new DeployError(detail || 'Package relink failed', 'start');
     }
 
-    const port = this.config.backend?.port ?? 3000;
+    // Silent legacy-name fallback: previous deploys (pre multi-process) started a single
+    // PM2 app by its name, not from an ecosystem file. `pm2 delete <ecosystem>` won't find
+    // those, so we also delete by the first app's name. After one deploy this is a no-op
+    // forever. See ADR-0002 and the migration note in the design (Q10).
+    const firstAppName = this.config.pm2.apps[0].name;
+    const webApp = this.config.pm2.apps.find((a) => a.port !== undefined);
+    const portGuard = webApp
+      ? `{ ss -tlnp | grep -q ":${webApp.port} " && echo "Port ${webApp.port} is already in use by another process" && false || true; } && `
+      : '';
+
     await ctx.executor.execOrThrow(
       `cd "${cdPath}" && ${mise} && ` +
-      `{ mise exec -- pm2 delete "${this.config.pm2!.name}" 2>/dev/null || true; } && ` +
-      `{ ss -tlnp | grep -q ":${port} " && echo "Port ${port} is already in use by another process" && false || true; } && ` +
-      `mise exec -- pm2 start "${ecosystemPath}" --update-env && ` +
+      `{ mise exec -- pm2 delete "${ecosystemRuntimePath}" 2>/dev/null || true; } && ` +
+      `{ mise exec -- pm2 delete "${firstAppName}" 2>/dev/null || true; } && ` +
+      portGuard +
+      `mise exec -- pm2 start "${ecosystemRuntimePath}" --update-env && ` +
       `mise exec -- pm2 save`,
     );
   }
@@ -117,25 +143,44 @@ export class BackendStrategy implements DeploymentStrategy {
   private generateEcosystemFile(pkgManager: string): string {
     if (!this.config.pm2) return '';
 
-    const port = this.config.backend?.port ?? 3000;
-    const name = this.config.pm2.name;
-    const instances = this.config.pm2.instances ?? 1;
-    const maxMemory = this.config.pm2.maxMemory ?? '512M';
+    const namespace = getDeploymentName(this.config) ?? this.config.pm2.apps[0].name;
+    const envFilePath = `${this.config.remotePath}/shared/${this.config.envFile}`;
+    const appBlocks = this.config.pm2.apps.map((app) => this.generateAppBlock(app, pkgManager, namespace, envFilePath));
 
     return `module.exports = {
-  apps: [{
-    name: '${name}',
-    script: '${pkgManager}',
-    args: 'start',
-    instances: ${instances},
-    exec_mode: 'fork',
-    max_memory_restart: '${maxMemory}',
-    env: {
-      NODE_ENV: 'production',
-      PORT: ${port},
-    },
-  }],
+  apps: [
+${appBlocks.join(',\n')}
+  ],
 };`;
+  }
+
+  private generateAppBlock(app: Pm2App, pkgManager: string, namespace: string, envFilePath: string): string {
+    const { script, args } = parseCommand(app.command, pkgManager);
+    const instances = app.instances ?? 1;
+    const maxMemory = app.maxMemory ?? '512M';
+
+    const env: Record<string, string | number> = { NODE_ENV: 'production' };
+    if (app.port !== undefined) env.PORT = app.port;
+    for (const [k, v] of Object.entries(app.env ?? {})) env[k] = v;
+
+    const envLines = Object.entries(env)
+      .map(([k, v]) => `      ${k}: ${typeof v === 'number' ? v : `'${escapeSingleQuotes(String(v))}'`},`)
+      .join('\n');
+
+    const pm2Name = getPm2Name(namespace, app.name);
+
+    return `    {
+      name: '${escapeSingleQuotes(pm2Name)}',
+      namespace: '${escapeSingleQuotes(namespace)}',
+      script: '${escapeSingleQuotes(script)}',${args ? `\n      args: '${escapeSingleQuotes(args)}',` : ''}
+      instances: ${instances},
+      exec_mode: 'fork',
+      max_memory_restart: '${maxMemory}',
+      env_file: '${envFilePath}',
+      env: {
+${envLines}
+      },
+    }`;
   }
 
   private getLinkSharedResourcesCommand(workDir: string): string {

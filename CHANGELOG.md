@@ -4,6 +4,32 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Added
+- **Workers / multi-process deployments** — a backend can now declare additional long-running processes (workers, cron consumers, queues) alongside the web server. PM2 supervises all of them under one deployment.
+  - New `.worker({ name, command, instances?, maxMemory?, env? })` builder method appends a worker to the deployment.
+  - New `pm2.apps` config shape: each entry has `name`, optional `command` (custom entry like `node dist/worker.js`; defaults to `<pkgManager> start`), `port` (web app only), `instances`, `maxMemory`, `env`.
+  - The entry with a `port` is the web app; entries without are workers (see [ADR-0002](docs/adr/0002-port-presence-determines-web-app.md)).
+  - Worker-only deployments are legal — a backend with no web app skips the HTTP health check and Caddy site config.
+  - `restart`, `stop`, `logs` accept `--process <name>` to target a single app; without it they operate on the whole deployment via the PM2 namespace.
+  - Worker names are automatically prefixed with the deployment namespace when registered with PM2 (e.g. `.pm2('api')` + `.worker({name: 'mailer'})` shows up in `pm2 list` as `api` and `api-mailer`). Prevents collisions between multiple shipnode deployments on the same host. Users always refer to the short name in shipnode commands.
+- **PM2 status check** — after every deploy, `pm2 jlist` is parsed and each declared app must be `online` with `restart_time === 0`. Catches workers that boot and crash before the HTTP health check would notice anything. Runs even on worker-only deployments.
+- **Per-app `env`** — each `pm2.apps` entry can set its own env vars (`{ WORKER_QUEUE: 'emails' }`); PM2 loads the shared `.env` via `env_file` and applies per-app overrides on top.
+
+### Changed
+- **Ecosystem file is per-release** — `ecosystem.config.cjs` now lives inside each release directory instead of `<remotePath>/shared/`. PM2 references it via `<remotePath>/current/ecosystem.config.cjs` so rollback restores the exact process set that was active for that release (a worker added in v2 won't crash-loop after rolling back to v1). See [ADR-0001](docs/adr/0001-per-release-ecosystem-file.md).
+- **Builder back-compat preserved** — `.pm2(name, opts)` and `.port(n)` still work and now act as sugar on the first app. Existing `shipnode.config.ts` files don't need changes.
+- `shipnode config show` now lists each PM2 app with its full per-entry shape.
+- `shipnode status` shows every declared app, not just the one matching the deployment name.
+
+### Removed
+- `ShipnodeConfig.backend` and the `BackendConfig` type — the port now lives on the web `pm2.apps` entry. Users of the builder/loader are unaffected; only direct consumers of the `ShipnodeConfig` TypeScript shape need to read `pm2.apps.find(a => a.port !== undefined)?.port` instead of `config.backend?.port`.
+- The legacy `pm2: { name, instances, maxMemory }` object shape on `ShipnodeConfig` — same migration: read `pm2.apps[0]` instead. (The legacy *input* shape is still accepted by `assembleConfig` and folded onto `apps[0]`.)
+
+### Migration
+- **No config changes required** for existing deployments — your current `shipnode.config.ts` keeps working.
+- The first deploy under this version silently cleans up any pre-existing PM2 process with the deployment's name (legacy single-app deploys), so the migration is invisible.
+- To add a worker: chain `.worker({ name: 'mailer', command: 'node dist/worker.js' })` on your builder.
+
 ## [2.2.0] - 2026-05-17
 
 ### Added

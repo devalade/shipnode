@@ -1,5 +1,6 @@
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
+import { getDeploymentName, getPm2Name } from '../../domain/pm2/apps.js';
 
 export async function cmdStatus(cwd: string, options: { config?: string }): Promise<void> {
   await runRemoteCommand(
@@ -14,21 +15,31 @@ export async function cmdStatus(cwd: string, options: { config?: string }): Prom
 
         if (pm2Result.exitCode === 0) {
           try {
-            const apps = JSON.parse(pm2Result.stdout);
-            const myApp = apps.find((a: { name: string }) => a.name === config.pm2?.name);
-
-            if (myApp) {
-              ui.heading(`PM2: ${myApp.name}`);
+            const allApps = JSON.parse(pm2Result.stdout) as Array<{
+              name: string;
+              pid?: number;
+              pm2_env?: { status?: string; pm_uptime?: number; restart_time?: number };
+              monit?: { memory: number; cpu: number };
+            }>;
+            const declared = config.pm2.apps;
+            const namespace = getDeploymentName(config) ?? '';
+            const byName = new Map(allApps.map((a) => [a.name, a]));
+            for (const app of declared) {
+              const pm2Name = getPm2Name(namespace, app.name);
+              const running = byName.get(pm2Name);
+              if (!running) {
+                ui.warn(`App '${app.name}' not found in PM2`);
+                continue;
+              }
+              ui.heading(`PM2: ${app.name}`);
               ui.section('Status', [
-                ['Status', myApp.pm2_env?.status ?? 'unknown'],
-                ['PID', String(myApp.pid ?? 'N/A')],
-                ['Uptime', myApp.pm2_env?.pm_uptime ? new Date(myApp.pm2_env.pm_uptime).toISOString() : 'N/A'],
-                ['Restarts', String(myApp.pm2_env?.restart_time ?? 0)],
-                ['Memory', myApp.monit ? `${myApp.monit.memory} MB` : 'N/A'],
-                ['CPU', myApp.monit ? `${myApp.monit.cpu}%` : 'N/A'],
+                ['Status', running.pm2_env?.status ?? 'unknown'],
+                ['PID', String(running.pid ?? 'N/A')],
+                ['Uptime', running.pm2_env?.pm_uptime ? new Date(running.pm2_env.pm_uptime).toISOString() : 'N/A'],
+                ['Restarts', String(running.pm2_env?.restart_time ?? 0)],
+                ['Memory', running.monit ? `${running.monit.memory} MB` : 'N/A'],
+                ['CPU', running.monit ? `${running.monit.cpu}%` : 'N/A'],
               ]);
-            } else {
-              ui.warn(`App '${config.pm2.name}' not found in PM2`);
             }
           } catch {
             ui.warn('Could not parse PM2 output');

@@ -1,5 +1,6 @@
 import type { ShipnodeConfig } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
+import { getDeploymentName, getWebApp } from '../domain/pm2/apps.js';
 
 export class CaddyService {
   constructor(
@@ -10,9 +11,12 @@ export class CaddyService {
   async configureBackend(): Promise<void> {
     if (!this.config.domain || !this.config.pm2) return;
 
-    const port = this.config.backend?.port ?? 3000;
-    const appName = this.config.pm2.name;
-    const caddyConfig = this.generateBackendCaddyfile(appName, port);
+    const webApp = getWebApp(this.config);
+    const appName = getDeploymentName(this.config);
+    // Domain + backend without a web app is rejected by assembleConfig (Q4),
+    // so reaching here without a webApp would be a bug — defensive guard.
+    if (!webApp || !appName) return;
+    const caddyConfig = this.generateBackendCaddyfile(appName, webApp.port!);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
     await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${appName}.caddy`);

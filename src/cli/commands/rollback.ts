@@ -3,6 +3,7 @@ import { ReleaseManager } from '../../domain/release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
 import { ui } from '../ui.js';
 import { confirm } from '../prompt.js';
+import { getDeploymentName, getEcosystemPath } from '../../domain/pm2/apps.js';
 
 export async function cmdRollback(
   cwd: string,
@@ -44,11 +45,17 @@ export async function cmdRollback(
       await releases.switchSymlink(targetPath);
       ui.success('Symlink switched');
 
-      if (config.app === 'backend' && config.pm2?.name) {
+      const namespace = getDeploymentName(config);
+      if (config.app === 'backend' && namespace) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+        // Prefer reloading from the rolled-back release's ecosystem file (ADR-0001 — it
+        // restores the exact process set that was active for that release). Fall back to
+        // namespace reload if the target release predates per-release ecosystem files.
+        const ecosystem = getEcosystemPath(config);
         await executor.execOrThrow(
-          `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${config.pm2.name} --update-env`,
+          `${mise}; mise exec node@${nodeVersion} -- ` +
+          `(pm2 reload "${ecosystem}" --update-env 2>/dev/null || pm2 reload ${namespace} --update-env)`,
         );
         ui.success('PM2 reloaded');
       }

@@ -27,14 +27,17 @@ export interface SshConfig {
   proxyCommand?: string;
 }
 
-export interface Pm2Config {
+export interface Pm2App {
   name: string;
+  command?: string;
   instances?: number;
   maxMemory?: string;
+  port?: number;
+  env?: Record<string, string>;
 }
 
-export interface BackendConfig {
-  port: number;
+export interface Pm2Config {
+  apps: Pm2App[];
 }
 
 export interface HealthCheckConfig {
@@ -102,7 +105,6 @@ export interface ShipnodeConfig {
   ssh: SshConfig;
   remotePath: string;
   pm2?: Pm2Config;
-  backend?: BackendConfig;
   domain?: string;
   keepReleases: number;
   healthCheck: HealthCheckConfig;

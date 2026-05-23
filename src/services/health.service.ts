@@ -1,6 +1,15 @@
-import type { ShipnodeConfig } from '../shared/types.js';
+import type { ShipnodeConfig, Pm2App } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { HealthCheckError } from '../shared/errors.js';
+import { getDeploymentName, getPm2Name } from '../domain/pm2/apps.js';
+
+interface Pm2JlistEntry {
+  name: string;
+  pm2_env?: {
+    status?: string;
+    restart_time?: number;
+  };
+}
 
 export class HealthCheckService {
   constructor(
@@ -13,12 +22,33 @@ export class HealthCheckService {
       return { attempts: 0, responseMs: 0 };
     }
 
-    const { path, timeout, retries, startupDelay } = this.config.healthCheck;
-    const port = this.config.backend?.port ?? 3000;
-    const url = `http://localhost:${port}${path}`;
-
-    // Wait for startup delay
+    const { startupDelay } = this.config.healthCheck;
     await this.sleep(startupDelay * 1000);
+
+    const webApp = this.config.pm2?.apps.find((a) => a.port !== undefined);
+
+    let attempts = 0;
+    let responseMs = 0;
+
+    if (webApp) {
+      const result = await this.performHttpCheck(webApp);
+      attempts = result.attempts;
+      responseMs = result.responseMs;
+    }
+
+    // PM2 status check (Q8): every supervised process must be online and not crash-looping.
+    // Runs for both web and worker-only deployments — it's how we catch a worker that
+    // boots and dies before the web app's HTTP check would notice anything.
+    if (this.config.pm2?.apps.length) {
+      await this.performPm2StatusCheck(this.config.pm2.apps);
+    }
+
+    return { attempts, responseMs };
+  }
+
+  private async performHttpCheck(webApp: Pm2App): Promise<{ attempts: number; responseMs: number }> {
+    const { path, timeout, retries } = this.config.healthCheck;
+    const url = `http://localhost:${webApp.port}${path}`;
 
     let lastStatus = 0;
     let lastResponseMs = 0;
@@ -44,22 +74,79 @@ export class HealthCheckService {
       }
     }
 
-    // Read PM2 log files directly to avoid streaming behaviour of `pm2 logs`
-    let diagnostics = '';
-    if (this.config.pm2?.name) {
-      const name = this.config.pm2.name;
-      const logResult = await this.executor.exec(
-        `{ tail -15 ~/.pm2/logs/${name}-error.log 2>/dev/null; tail -15 ~/.pm2/logs/${name}-out.log 2>/dev/null; } || true`,
-      ).catch(() => ({ stdout: '', stderr: '' }));
-      const logs = logResult.stdout.trim();
-      if (logs) diagnostics = `\n\nPM2 logs:\n${logs}`;
-    }
-
+    const diagnostics = await this.collectPm2Logs(webApp.name);
     throw new HealthCheckError(
       `Health check failed after ${retries} attempts. Last status: ${lastStatus}` + diagnostics,
       retries,
       lastStatus,
     );
+  }
+
+  private async performPm2StatusCheck(apps: Pm2App[]): Promise<void> {
+    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    const result = await this.executor.exec(`${mise} && mise exec -- pm2 jlist`);
+
+    let parsed: Pm2JlistEntry[];
+    try {
+      parsed = JSON.parse(result.stdout.trim()) as Pm2JlistEntry[];
+    } catch {
+      throw new HealthCheckError(
+        `Could not parse pm2 jlist output. stdout: ${result.stdout.slice(0, 200)}`,
+        0,
+        0,
+      );
+    }
+
+    const namespace = getDeploymentName(this.config) ?? '';
+    const byName = new Map(parsed.map((e) => [e.name, e]));
+    const failures: string[] = [];
+
+    for (const app of apps) {
+      // Look up by the PM2-level name (worker names are prefixed with the namespace
+      // for global uniqueness); report by the user-visible name to keep errors readable.
+      const pm2Name = getPm2Name(namespace, app.name);
+      const entry = byName.get(pm2Name);
+      if (!entry) {
+        failures.push(`${app.name}: not running (no PM2 entry found)`);
+        continue;
+      }
+      const status = entry.pm2_env?.status;
+      const restarts = entry.pm2_env?.restart_time ?? 0;
+      if (status !== 'online') {
+        failures.push(`${app.name}: status=${status ?? 'unknown'}`);
+        continue;
+      }
+      // Freshly-started apps should have restart_time === 0. Any restart during the
+      // startup window means the process crashed and was bounced — a worker that
+      // boots and dies before the HTTP check has time to notice anything else.
+      if (restarts > 0) {
+        failures.push(`${app.name}: crashed during startup (restart_time=${restarts})`);
+      }
+    }
+
+    if (failures.length === 0) return;
+
+    let diagnostics = '';
+    for (const app of apps) {
+      const pm2Name = getPm2Name(namespace, app.name);
+      const entry = byName.get(pm2Name);
+      if (entry && entry.pm2_env?.status === 'online' && (entry.pm2_env?.restart_time ?? 0) === 0) continue;
+      diagnostics += await this.collectPm2Logs(pm2Name);
+    }
+
+    throw new HealthCheckError(
+      `PM2 process(es) failed health check:\n  - ${failures.join('\n  - ')}${diagnostics}`,
+      0,
+      0,
+    );
+  }
+
+  private async collectPm2Logs(name: string): Promise<string> {
+    const logResult = await this.executor.exec(
+      `{ tail -15 ~/.pm2/logs/${name}-error.log 2>/dev/null; tail -15 ~/.pm2/logs/${name}-out.log 2>/dev/null; } || true`,
+    ).catch(() => ({ stdout: '', stderr: '' }));
+    const logs = logResult.stdout.trim();
+    return logs ? `\n\nPM2 logs (${name}):\n${logs}` : '';
   }
 
   private sleep(ms: number): Promise<void> {

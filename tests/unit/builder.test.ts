@@ -15,7 +15,7 @@ describe('ShipnodeBuilder', () => {
     expect(config.ssh.user).toBe('deploy');
     expect(config.ssh.port).toBe(22);
     expect(config.remotePath).toBe('/var/www/myapp');
-    expect(config.pm2?.name).toBe('myapp');
+    expect(config.pm2?.apps[0].name).toBe('myapp');
     expect(config.keepReleases).toBe(5);
     expect(config.healthCheck.enabled).toBe(true);
     expect(config.envFile).toBe('.env');
@@ -50,9 +50,9 @@ describe('ShipnodeBuilder', () => {
 
     expect(config.ssh.port).toBe(2222);
     expect(config.remotePath).toBe('/opt/app');
-    expect(config.pm2?.instances).toBe(4);
-    expect(config.pm2?.maxMemory).toBe('1G');
-    expect(config.backend?.port).toBe(8080);
+    expect(config.pm2?.apps[0].instances).toBe(4);
+    expect(config.pm2?.apps[0].maxMemory).toBe('1G');
+    expect(config.pm2?.apps[0].port).toBe(8080);
     expect(config.domain).toBe('api.example.com');
     expect(config.keepReleases).toBe(10);
     expect(config.healthCheck.path).toBe('/api/health');
@@ -165,7 +165,7 @@ describe('ShipnodeBuilder', () => {
     expect(configA.app).toBe(configB.app);
     expect(configA.ssh.host).toBe(configB.ssh.host);
     expect(configA.remotePath).toBe(configB.remotePath);
-    expect(configA.backend?.port).toBe(configB.backend?.port);
+    expect(configA.pm2?.apps[0].port).toBe(configB.pm2?.apps[0].port);
   });
 
   it('throws on missing required fields', () => {

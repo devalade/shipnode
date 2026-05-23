@@ -3,6 +3,7 @@ import { BackendStrategy } from '../../src/domain/deploy/backend-strategy.js';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
 import type { ShipnodeConfig } from '../../src/shared/types.js';
 import type { StrategyContext } from '../../src/domain/deploy/strategy.js';
+import { assembleConfig } from '../../src/config/assembly.js';
 
 vi.mock('execa', () => ({
   execa: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
@@ -18,7 +19,9 @@ const mockedExeca = vi.mocked(execa);
 const mockedPathExists = vi.mocked(pathExists);
 
 function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
-  return {
+  // Route through assembleConfig so the legacy pm2/backend shape in overrides
+  // gets normalised into the canonical pm2.apps form, matching real usage.
+  return assembleConfig({
     app: 'backend',
     ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
     remotePath: '/var/www/app',
@@ -30,7 +33,7 @@ function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
     nodeVersion: 'lts',
     pkgManager: 'npm',
     ...overrides,
-  } as ShipnodeConfig;
+  });
 }
 
 function makeCtx(executor: FakeRemoteExecutor, overrides: Partial<StrategyContext> = {}): StrategyContext {
@@ -227,13 +230,95 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).toContain("'1G'");
   });
 
-  it('ecosystem path uses shared dir', async () => {
+  it('ecosystem path is per-release (ADR-0001)', async () => {
     const strategy = new BackendStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
     const writeCmd = executor.getHistory()[0].command;
-    expect(writeCmd).toContain('/var/www/app/shared/ecosystem.config.cjs');
+    // Written into the release dir (workDir); referenced at runtime via /current symlink.
+    expect(writeCmd).toContain('/var/www/app/releases/20240101/ecosystem.config.cjs');
+    const startCmd = executor.getHistory()[2].command;
+    expect(startCmd).toContain('/var/www/app/current/ecosystem.config.cjs');
+  });
+
+  it('generates multiple app blocks for workers', async () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: {
+        apps: [
+          { name: 'api', port: 3000 },
+          { name: 'mailer', command: 'node dist/worker.js' },
+          { name: 'cron', command: 'node dist/cron.js', env: { JOB: 'cleanup' } },
+        ],
+      },
+      pkgManager: 'pnpm',
+    });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { config }));
+
+    // The recorded command is shell-escaped (single quotes become '"'"'),
+    // so assert on substrings that don't span quotes.
+    const writeCmd = executor.getHistory()[0].command;
+    expect(writeCmd).toContain('api');
+    expect(writeCmd).toContain('mailer');
+    expect(writeCmd).toContain('cron');
+    expect(writeCmd).toContain('node');
+    expect(writeCmd).toContain('dist/worker.js');
+    expect(writeCmd).toContain('dist/cron.js');
+    expect(writeCmd).toContain('PORT: 3000');
+    expect(writeCmd).toContain('JOB');
+    expect(writeCmd).toContain('cleanup');
+    expect(writeCmd).toContain('/var/www/app/shared/.env');
+    expect(writeCmd).toContain('namespace');
+  });
+
+  it('skips the port-in-use guard when no app has a port (worker-only)', async () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'worker', command: 'node dist/worker.js' }] },
+      pkgManager: 'npm',
+    });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { config }));
+
+    const startCmd = executor.getHistory()[2].command;
+    expect(startCmd).not.toContain('ss -tlnp');
+  });
+
+  it('prefixes worker names with the deployment namespace for global uniqueness', async () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'api', port: 3000 }, { name: 'worker' }] },
+      pkgManager: 'npm',
+    });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { config }));
+
+    const writeCmd = executor.getHistory()[0].command;
+    // Web app's PM2 name equals the namespace (no prefix).
+    expect(writeCmd).toContain('api');
+    // Worker is namespace-prefixed: two shipnode deployments with a `worker`
+    // entry on the same host won't collide because each gets prefixed.
+    expect(writeCmd).toContain('api-worker');
+  });
+
+  it('emits the silent legacy-name pm2 delete fallback', async () => {
+    const strategy = new BackendStrategy(makeConfig({ pm2: { name: 'myapp' } }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor));
+
+    const startCmd = executor.getHistory()[2].command;
+    expect(startCmd).toContain('pm2 delete "myapp"');
   });
 
   it('throws DeployError when pnpm reports ERR_PNPM_IGNORED_BUILDS during startApp install', async () => {

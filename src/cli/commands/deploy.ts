@@ -5,6 +5,7 @@ import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
 import type { ShipnodeConfig } from '../../shared/types.js';
+import { getDeploymentName, getWebApp } from '../../domain/pm2/apps.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; config?: string }): Promise<void> {
   const config = await loadConfig(cwd, options.config);
@@ -18,7 +19,7 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
     cwd,
     async ({ config, executor }) => {
       ui.banner();
-      ui.step(`Deploying ${chalk.bold(config.pm2?.name ?? config.app)} → ${config.ssh.user}@${config.ssh.host}`);
+      ui.step(`Deploying ${chalk.bold(getDeploymentName(config) ?? config.app)} → ${config.ssh.user}@${config.ssh.host}`);
 
       const deployer = new DeployService(new LoggingExecutor(executor), config, cwd);
       await deployer.execute(options.skipBuild ?? false);
@@ -46,8 +47,13 @@ function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
   ];
 
   if (config.app === 'backend') {
-    if (config.pm2?.name) serverRows.push(['PM2 name', config.pm2.name]);
-    serverRows.push(['Port', String(config.backend?.port ?? 3000)]);
+    const apps = config.pm2?.apps ?? [];
+    if (apps.length) {
+      serverRows.push(['PM2 deployment', getDeploymentName(config) ?? '']);
+      serverRows.push(['PM2 apps', apps.map((a) => a.port !== undefined ? `${a.name}(web:${a.port})` : a.name).join(', ')]);
+    }
+    const web = getWebApp(config);
+    if (web) serverRows.push(['Port', String(web.port)]);
   }
 
   if (config.domain) serverRows.push(['Domain', config.domain]);

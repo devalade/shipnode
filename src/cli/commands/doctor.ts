@@ -19,7 +19,7 @@ export async function cmdDoctor(cwd: string, options: { config?: string; securit
   );
 }
 
-function checkLocal(config: { ssh: { host?: string; user?: string }; remotePath?: string; app: string; pm2?: { name?: string } }): void {
+function checkLocal(config: { ssh: { host?: string; user?: string }; remotePath?: string; app: string; pm2?: { apps: unknown[] } }): void {
   ui.info('Checking local configuration...');
 
   const issues: string[] = [];
@@ -36,8 +36,8 @@ function checkLocal(config: { ssh: { host?: string; user?: string }; remotePath?
     issues.push('Remote path is not configured');
   }
 
-  if (config.app === 'backend' && !config.pm2?.name) {
-    issues.push('PM2 app name is not configured for backend app');
+  if (config.app === 'backend' && !config.pm2?.apps.length) {
+    issues.push('PM2 apps are not configured for backend app');
   }
 
   if (issues.length === 0) {

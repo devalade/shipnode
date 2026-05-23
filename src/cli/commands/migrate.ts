@@ -2,6 +2,7 @@ import { confirm } from '../prompt.js';
 import { runRemoteCommand } from '../runner.js';
 import { ReleaseManager } from '../../domain/release/manager.js';
 import { ui } from '../ui.js';
+import { getDeploymentName } from '../../domain/pm2/apps.js';
 
 export async function cmdMigrate(cwd: string, options: { config?: string }): Promise<void> {
   await runRemoteCommand(
@@ -67,12 +68,13 @@ export async function cmdMigrate(cwd: string, options: { config?: string }): Pro
       ui.success('Symlink created: current → releases/' + timestamp);
 
       // Reload PM2 if applicable
-      if (config.app === 'backend' && config.pm2?.name) {
+      const namespace = getDeploymentName(config);
+      if (config.app === 'backend' && namespace) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
         ui.info('Reloading PM2 from new path...');
         await executor.exec(
-          `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${config.pm2.name} --update-env`,
+          `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${namespace} --update-env`,
         );
         ui.success('PM2 reloaded');
       }

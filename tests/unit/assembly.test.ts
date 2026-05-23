@@ -23,7 +23,8 @@ describe('assembleConfig', () => {
     expect(config.healthCheck.startupDelay).toBe(3);
     expect(config.envFile).toBe('.env');
     expect(config.nodeVersion).toBe('lts');
-    expect(config.backend?.port).toBe(3000);
+    // No pm2 declared → no apps at all.
+    expect(config.pm2).toBeUndefined();
   });
 
   it('preserves explicitly provided values', () => {
@@ -35,7 +36,6 @@ describe('assembleConfig', () => {
       healthCheck: { enabled: true, path: '/api/health', timeout: 60, retries: 5, startupDelay: 10 },
       envFile: '.env.production',
       nodeVersion: '22',
-      backend: { port: 8080 },
     });
 
     expect(config.app).toBe('frontend');
@@ -46,7 +46,58 @@ describe('assembleConfig', () => {
     expect(config.healthCheck.timeout).toBe(60);
     expect(config.envFile).toBe('.env.production');
     expect(config.nodeVersion).toBe('22');
-    expect(config.backend?.port).toBe(8080);
+  });
+
+  it('folds the legacy pm2/backend input shape onto pm2.apps[0]', () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      pm2: { name: 'api', instances: 2, maxMemory: '1G' },
+      backend: { port: 8080 },
+    });
+    expect(config.pm2?.apps).toHaveLength(1);
+    expect(config.pm2?.apps[0]).toMatchObject({ name: 'api', port: 8080, instances: 2, maxMemory: '1G' });
+  });
+
+  it('accepts the new pm2.apps input shape directly', () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'api', port: 3000 }, { name: 'worker', command: 'node dist/worker.js' }] },
+    });
+    expect(config.pm2?.apps).toHaveLength(2);
+    expect(config.pm2?.apps[0].name).toBe('api');
+    expect(config.pm2?.apps[1].name).toBe('worker');
+  });
+
+  it('rejects two pm2.apps entries with ports', () => {
+    expect(() => assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'a', port: 3000 }, { name: 'b', port: 3001 }] },
+    })).toThrow();
+  });
+
+  it('rejects domain without a web app', () => {
+    expect(() => assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      domain: 'api.example.com',
+      pm2: { apps: [{ name: 'worker', command: 'node dist/worker.js' }] },
+    })).toThrow();
+  });
+
+  it('rejects pm2 on frontend apps', () => {
+    expect(() => assembleConfig({
+      app: 'frontend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+    })).toThrow();
   });
 
   it('throws on invalid SSH host', () => {

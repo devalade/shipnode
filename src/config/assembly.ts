@@ -1,4 +1,10 @@
-import type { ShipnodeConfig, SshConfig, BackendConfig, HealthCheckConfig } from '../shared/types.js';
+import type {
+  ShipnodeConfig,
+  SshConfig,
+  HealthCheckConfig,
+  Pm2App,
+  Pm2Config,
+} from '../shared/types.js';
 import { ShipnodeConfigSchema } from './schema.js';
 import { DEFAULTS } from '../shared/constants.js';
 
@@ -7,13 +13,6 @@ function defaultSshConfig(overrides?: Partial<SshConfig>): SshConfig {
     host: '',
     user: '',
     port: DEFAULTS.SSH_PORT,
-    ...overrides,
-  };
-}
-
-function defaultBackendConfig(overrides?: Partial<BackendConfig>): BackendConfig {
-  return {
-    port: DEFAULTS.BACKEND_PORT,
     ...overrides,
   };
 }
@@ -29,24 +28,52 @@ function defaultHealthCheckConfig(overrides?: Partial<HealthCheckConfig>): Healt
   };
 }
 
+// Loose input shape: also accepts the pre-multi-process `pm2: { name, instances, maxMemory }`
+// + top-level `backend: { port }` form, which assembleConfig folds into pm2.apps[0].
+type LegacyPm2Input = {
+  name?: string;
+  instances?: number;
+  maxMemory?: string;
+  apps?: Pm2App[];
+};
+
+type AssembleInput = Omit<Partial<ShipnodeConfig>, 'pm2'> & {
+  pm2?: LegacyPm2Input | Pm2Config;
+  backend?: { port?: number };
+};
+
+function normalizePm2(
+  pm2: LegacyPm2Input | Pm2Config | undefined,
+  backend: { port?: number } | undefined,
+): Pm2Config | undefined {
+  if (!pm2) return undefined;
+  if ('apps' in pm2 && pm2.apps) {
+    return { apps: pm2.apps };
+  }
+  const legacy = pm2 as LegacyPm2Input;
+  if (!legacy.name) return undefined;
+  const app: Pm2App = { name: legacy.name };
+  if (legacy.instances !== undefined) app.instances = legacy.instances;
+  if (legacy.maxMemory !== undefined) app.maxMemory = legacy.maxMemory;
+  if (backend?.port !== undefined) app.port = backend.port;
+  return { apps: [app] };
+}
+
 /**
  * Assemble a partial config into a fully-validated ShipnodeConfig.
  *
- * This is the single place where raw user intent becomes a trusted
- * configuration object. Defaults are applied first, then the schema
- * validates every field.
- *
- * Both the builder and the loader must route through here so that
- * defaults and validation are identical regardless of how the config
- * was produced.
+ * Single boundary between user intent and trusted config. Accepts both the legacy
+ * `pm2: { name } + backend: { port }` shape and the canonical `pm2: { apps: [...] }`
+ * shape; emits the canonical shape only.
  */
-export function assembleConfig(partial: Partial<ShipnodeConfig>): ShipnodeConfig {
+export function assembleConfig(partial: AssembleInput): ShipnodeConfig {
+  const pm2 = normalizePm2(partial.pm2, partial.backend);
+
   const withDefaults = {
     app: partial.app ?? 'backend',
     ssh: partial.ssh ?? defaultSshConfig(),
     remotePath: partial.remotePath ?? '/var/www/app',
-    pm2: partial.pm2,
-    backend: partial.backend ?? defaultBackendConfig(),
+    pm2,
     domain: partial.domain,
     keepReleases: partial.keepReleases ?? DEFAULTS.KEEP_RELEASES,
     healthCheck: defaultHealthCheckConfig(partial.healthCheck),
@@ -63,5 +90,5 @@ export function assembleConfig(partial: Partial<ShipnodeConfig>): ShipnodeConfig
     hooks: partial.hooks,
   };
 
-  return ShipnodeConfigSchema.parse(withDefaults);
+  return ShipnodeConfigSchema.parse(withDefaults) as ShipnodeConfig;
 }

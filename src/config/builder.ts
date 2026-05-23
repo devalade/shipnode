@@ -1,7 +1,7 @@
 import type {
   ShipnodeConfig,
   SshConfig,
-  Pm2Config,
+  Pm2App,
   HealthCheckConfig,
   DatabaseConfig,
   RedisConfig,
@@ -12,8 +12,20 @@ import type {
 } from '../shared/types.js';
 import { assembleConfig } from './assembly.js';
 
+type BuilderState = Omit<Partial<ShipnodeConfig>, 'pm2'> & {
+  pm2?: { apps: Pm2App[] };
+};
+
+export type WorkerOptions = Omit<Pm2App, 'port'>;
+
 export class ShipnodeBuilder {
-  private config: Partial<ShipnodeConfig> = {};
+  private config: BuilderState = {};
+
+  private firstApp(): Pm2App {
+    if (!this.config.pm2) this.config.pm2 = { apps: [] };
+    if (this.config.pm2.apps.length === 0) this.config.pm2.apps.push({ name: 'app' });
+    return this.config.pm2.apps[0];
+  }
 
   backend(): this {
     this.config.app = 'backend';
@@ -45,13 +57,22 @@ export class ShipnodeBuilder {
     return this;
   }
 
-  pm2(name: string, opts?: Omit<Pm2Config, 'name'>): this {
-    this.config.pm2 = { name, ...opts };
+  pm2(name: string, opts?: { instances?: number; maxMemory?: string }): this {
+    const app = this.firstApp();
+    app.name = name;
+    if (opts?.instances !== undefined) app.instances = opts.instances;
+    if (opts?.maxMemory !== undefined) app.maxMemory = opts.maxMemory;
     return this;
   }
 
   port(n: number): this {
-    this.config.backend = { ...(this.config.backend ?? {}), port: n };
+    this.firstApp().port = n;
+    return this;
+  }
+
+  worker(opts: WorkerOptions): this {
+    if (!this.config.pm2) this.config.pm2 = { apps: [] };
+    this.config.pm2.apps.push({ ...opts });
     return this;
   }
 

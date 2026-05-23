@@ -23,17 +23,17 @@ export async function cmdConfigShow(cwd: string, options: { config?: string }): 
       ]);
 
       if (config.pm2) {
-        ui.section('PM2', [
-          ['name', config.pm2.name],
-          ...(config.pm2.instances !== undefined ? [['instances', String(config.pm2.instances)] as [string, string]] : []),
-          ...(config.pm2.maxMemory !== undefined ? [['maxMemory', config.pm2.maxMemory] as [string, string]] : []),
-        ]);
-      }
-
-      if (config.backend) {
-        ui.section('Backend', [
-          ['port', String(config.backend.port)],
-        ]);
+        for (const app of config.pm2.apps) {
+          const rows: [string, string][] = [['name', app.name]];
+          if (app.command) rows.push(['command', app.command]);
+          if (app.port !== undefined) rows.push(['port', String(app.port)]);
+          if (app.instances !== undefined) rows.push(['instances', String(app.instances)]);
+          if (app.maxMemory !== undefined) rows.push(['maxMemory', app.maxMemory]);
+          if (app.env) {
+            for (const [k, v] of Object.entries(app.env)) rows.push([`env.${k}`, v]);
+          }
+          ui.section(app.port !== undefined ? `PM2 app: ${app.name} (web)` : `PM2 app: ${app.name}`, rows);
+        }
       }
 
       if (config.domain) {

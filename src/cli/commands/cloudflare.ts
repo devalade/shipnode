@@ -1,5 +1,6 @@
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
+import { getWebApp } from '../../domain/pm2/apps.js';
 
 const CF_API = 'https://api.cloudflare.com/client/v4';
 
@@ -108,8 +109,12 @@ export async function cmdCloudflareInit(
       }
 
       // Generate config and start as systemd service
-      const appIngress = cf.appHostname
-        ? `  - hostname: ${cf.appHostname}\n    service: http://localhost:${config.backend?.port ?? 3000}`
+      const webApp = getWebApp(config);
+      if (cf.appHostname && !webApp) {
+        throw new Error('cloudflare.appHostname is set but no pm2.apps entry declares a port — nothing to route HTTP to.');
+      }
+      const appIngress = cf.appHostname && webApp
+        ? `  - hostname: ${cf.appHostname}\n    service: http://localhost:${webApp.port}`
         : '';
       const sshIngress = cf.sshHostname
         ? `  - hostname: ${cf.sshHostname}\n    service: ssh://localhost:22`
@@ -138,19 +143,23 @@ ${sshIngress}
 
       // Setup firewall lockdown if requested
       if (cf.lockdownFirewall) {
-        ui.info('Locking down firewall to Cloudflare IPs only...');
-        const cfIpv4 = await cfFetch('/ips', cfApiOpts) as { ipv4_cidrs: string[] };
-        for (const cidr of cfIpv4.ipv4_cidrs ?? []) {
+        if (!webApp) {
+          ui.warn('Skipping firewall lockdown: no web app (no pm2.apps entry with a port) to expose.');
+        } else {
+          ui.info('Locking down firewall to Cloudflare IPs only...');
+          const cfIpv4 = await cfFetch('/ips', cfApiOpts) as { ipv4_cidrs: string[] };
+          for (const cidr of cfIpv4.ipv4_cidrs ?? []) {
+            await executor.exec(
+              `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+              `$SUDO ufw allow from ${cidr} to any port ${webApp.port} 2>/dev/null || true`,
+            );
+          }
           await executor.exec(
             `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
-            `$SUDO ufw allow from ${cidr} to any port ${config.backend?.port ?? 3000} 2>/dev/null || true`,
+            `$SUDO ufw deny ${webApp.port} 2>/dev/null || true`,
           );
+          ui.success('Firewall locked to Cloudflare IPs');
         }
-        await executor.exec(
-          `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
-          `$SUDO ufw deny ${config.backend?.port ?? 3000} 2>/dev/null || true`,
-        );
-        ui.success('Firewall locked to Cloudflare IPs');
       }
 
       // Setup Access policy if accessEmails present

@@ -41,6 +41,42 @@ export default shipnode
   .build();
 ```
 
+### Web + workers
+
+A backend can run additional long-running processes alongside the web server. PM2 supervises all of them under one deployment.
+
+```ts
+export default shipnode
+  .backend()
+  .ssh({ host: '1.2.3.4', user: 'deploy' })
+  .deployTo('/var/www/myapp')
+  .pm2('myapp', { instances: 2 })
+  .port(3000)
+  .worker({ name: 'mailer', command: 'node dist/worker.js' })
+  .worker({ name: 'cron', command: 'node dist/cron.js', env: { JOB: 'cleanup' } })
+  .build();
+```
+
+After deploy, `shipnode status` lists every app, and `shipnode restart` / `stop` / `logs` operate on the whole deployment by default. Use `--process <name>` to target a single one (use the short name from your config — shipnode handles the PM2-side naming):
+
+```bash
+shipnode logs --process mailer
+shipnode restart --process cron
+```
+
+> **Note on PM2 naming.** PM2 has a flat global namespace, so two deployments on the same host with a `worker` entry would collide. To prevent that, shipnode prefixes worker names with the deployment namespace when registering them with PM2. A config with `.pm2('api')` + `.worker({name: 'mailer'})` shows up in `pm2 list` as `api` and `api-mailer`. You always use the short name (`mailer`) in shipnode commands.
+
+A backend can also be **worker-only** (no web server, no domain) — useful for queue consumers or cron runners. Just omit `.port(...)` and `.domain(...)`:
+
+```ts
+export default shipnode
+  .backend()
+  .ssh({ host: '1.2.3.4', user: 'deploy' })
+  .deployTo('/var/www/queue-runner')
+  .worker({ name: 'jobs', command: 'node dist/worker.js' })
+  .build();
+```
+
 ### Frontend apps
 
 ```ts
@@ -62,8 +98,9 @@ export default shipnode
 | `.backend()` / `.frontend()` | — | App type |
 | `.ssh({ host, user, port?, identityFile? })` | port 22 | SSH connection |
 | `.deployTo(path)` | `/var/www/app` | Remote deploy path |
-| `.pm2(name, opts?)` | — | PM2 process name + options |
-| `.port(n)` | `3000` | Backend port |
+| `.pm2(name, opts?)` | — | PM2 process name + options (the web app) |
+| `.port(n)` | `3000` | Backend port (marks the entry as the web app) |
+| `.worker({ name, command, ... })` | — | Add a worker process supervised alongside the web app |
 | `.domain(d)` | — | Domain for Caddy config |
 | `.nodeVersion(v)` | `lts` | Node version (via mise) |
 | `.pkgManager(pm)` | auto-detected | `npm` \| `yarn` \| `pnpm` \| `bun` |
@@ -115,11 +152,14 @@ shipnode run bash              # Open an interactive shell
 ### Process management
 
 ```bash
-shipnode logs                  # Tail PM2 logs (last 100 lines)
-shipnode logs --lines 500      # Show 500 lines
-shipnode restart               # Reload PM2 with --update-env
-shipnode stop                  # Stop the application
-shipnode metrics               # Open PM2 monit dashboard
+shipnode logs                       # Tail PM2 logs for the whole deployment
+shipnode logs --process mailer      # Tail logs for one app
+shipnode logs --lines 500           # Show 500 lines
+shipnode restart                    # Reload every app with --update-env
+shipnode restart --process mailer   # Reload one app
+shipnode stop                       # Stop every app in the deployment
+shipnode stop --process mailer      # Stop one app
+shipnode metrics                    # Open PM2 monit dashboard
 ```
 
 ### Security & maintenance

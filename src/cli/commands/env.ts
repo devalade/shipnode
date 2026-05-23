@@ -3,6 +3,7 @@ import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
+import { getDeploymentName } from '../../domain/pm2/apps.js';
 
 export async function cmdEnv(
   cwd: string,
@@ -38,21 +39,22 @@ export async function cmdEnv(
         ui.success('Linked shared .env to current release');
       }
 
-      if (config.app === 'backend' && config.pm2?.name) {
+      const namespace = getDeploymentName(config);
+      if (config.app === 'backend' && namespace) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
         const checkResult = await executor.exec(
-          `${mise}; mise exec node@${nodeVersion} -- pm2 describe ${config.pm2.name} 2>/dev/null && echo "running" || echo "stopped"`,
+          `${mise}; mise exec node@${nodeVersion} -- pm2 describe ${namespace} 2>/dev/null && echo "running" || echo "stopped"`,
         );
 
         if (checkResult.stdout.includes('running')) {
-          ui.info('Restarting app to reload environment variables...');
+          ui.info('Reloading deployment to pick up environment variables...');
           await executor.exec(
-            `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${config.pm2.name} --update-env`,
+            `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${namespace} --update-env`,
           );
-          ui.success('App restarted with new environment variables');
+          ui.success('Deployment reloaded with new environment variables');
         } else {
-          ui.warn('App not running. Variables will be loaded on next deploy.');
+          ui.warn('Deployment not running. Variables will be loaded on next deploy.');
         }
       }
     },

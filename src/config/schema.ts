@@ -10,15 +10,24 @@ export const SshConfigSchema = z.object({
   proxyCommand: z.string().optional(),
 });
 
-export const Pm2ConfigSchema = z.object({
-  name: z.string().refine(isValidPm2Name, 'PM2 name must be alphanumeric, dash, or underscore (max 64 chars)'),
+export const Pm2AppSchema = z.object({
+  name: z.string().refine(isValidPm2Name, 'PM2 app name must be alphanumeric, dash, or underscore (max 64 chars)'),
+  command: z.string().min(1).optional(),
   instances: z.number().int().min(1).optional(),
   maxMemory: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 });
 
-export const BackendConfigSchema = z.object({
-  port: z.number().int().min(1).max(65535).default(3000),
-});
+export const Pm2ConfigSchema = z.object({
+  apps: z.array(Pm2AppSchema).min(1, 'pm2.apps must contain at least one entry'),
+}).refine(
+  (cfg) => cfg.apps.filter((a) => a.port !== undefined).length <= 1,
+  { message: 'at most one pm2.apps entry may declare a port (the web app)' },
+).refine(
+  (cfg) => new Set(cfg.apps.map((a) => a.name)).size === cfg.apps.length,
+  { message: 'pm2.apps entries must have unique names' },
+);
 
 export const HealthCheckConfigSchema = z.object({
   enabled: z.boolean().default(true),
@@ -77,7 +86,6 @@ export const ShipnodeConfigSchema = z.object({
   ssh: SshConfigSchema,
   remotePath: z.string().min(1, 'Remote path is required'),
   pm2: Pm2ConfigSchema.optional(),
-  backend: BackendConfigSchema.optional(),
   domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
   keepReleases: z.number().int().min(1).default(5),
   healthCheck: HealthCheckConfigSchema,
@@ -92,6 +100,16 @@ export const ShipnodeConfigSchema = z.object({
   backup: BackupConfigSchema,
   cloudflare: CloudflareConfigSchema,
   hooks: HooksConfigSchema,
-});
+}).refine(
+  (cfg) => !(cfg.app === 'frontend' && cfg.pm2),
+  { message: 'frontend apps cannot declare pm2 (frontends are static files served by Caddy)', path: ['pm2'] },
+).refine(
+  (cfg) => {
+    if (!cfg.domain || cfg.app !== 'backend') return true;
+    const hasWebApp = cfg.pm2?.apps.some((a) => a.port !== undefined);
+    return hasWebApp ?? false;
+  },
+  { message: 'domain requires a web app: one pm2.apps entry must declare a port', path: ['domain'] },
+);
 
 export type ShipnodeConfigSchema = z.infer<typeof ShipnodeConfigSchema>;

@@ -53,6 +53,12 @@ User-provided function that runs at a fixed point in the deployment lifecycle. `
 ### HealthCheck
 A remote curl-based check that verifies the backend application is responding after a deployment. Only runs for backend apps in zero-downtime mode.
 
+### Pm2Config
+The process-supervision section of a `ShipnodeConfig`. Contains an `apps` list — one entry per long-running process PM2 should supervise (web server, workers, etc.). Backend-only; frontend apps don't have one.
+
+### Pm2App
+A single PM2-supervised process within a `Pm2Config`. Carries its own `name`, optional `command` (defaults to the package manager's `start` script), `instances`, `maxMemory`, `env`, and optionally a `port`. **The entry with a `port` is the web app** — it receives the HTTP health check and Caddy upstream wiring. Entries without a `port` are workers: PM2 supervises them, but shipnode doesn't curl them. At most one entry may carry a `port`; zero is legal (worker-only deployments).
+
 ### Caddy
 The reverse proxy / static file server configured per-deployment. `CaddyService` writes config to `/etc/caddy/conf.d/` and reloads the service.
 
