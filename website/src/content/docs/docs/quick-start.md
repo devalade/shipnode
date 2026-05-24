@@ -35,10 +35,6 @@ dig +short api.example.com
 
 DNS can take a few minutes (sometimes longer with Cloudflare proxying — turn the orange cloud off initially so Caddy can issue the cert via HTTP-01).
 
-### About the root user
-
-This walkthrough uses **`root`** to keep the path short. ShipNode runs fine as root on a single-purpose VPS, and `shipnode setup` / `harden` will lock the server down afterwards (no password auth, fail2ban, firewall). If you'd rather create a dedicated `deploy` user instead, change the `user` field in `shipnode.config.ts` and make sure that user has `sudo` and your SSH key.
-
 ## 1. Install shipnode in your project
 
 ```bash
