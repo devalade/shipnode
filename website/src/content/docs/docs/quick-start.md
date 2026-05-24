@@ -14,21 +14,30 @@ Inside [Claude Code](https://claude.com/claude-code), the `shipnode` skill knows
 | You need | Why |
 |---|---|
 | **A VPS** running Ubuntu 22.04+ or Debian 12+ | ShipNode provisions Node, PM2, Caddy on this OS. |
-| **A non-root SSH user** with `sudo` and a public key in `~/.ssh/authorized_keys` | All `shipnode` commands run as this user. |
-| **A domain** pointing an A record at the VPS IP | Caddy will issue an HTTPS cert automatically. |
+| **SSH access as `root`** with your public key in `/root/.ssh/authorized_keys` | The simplest path — what most fresh VPS images give you. |
+| **A domain name** with an **A record pointing at the VPS public IP** | Required. Caddy uses the domain to issue an HTTPS cert automatically — no domain, no TLS. |
 | **Node.js 18+ locally** | The CLI is a Node.js package. |
 
-If your VPS only has a root user right now, create the deploy user first:
+### Point your domain at the server
+
+Before anything else, log into your DNS provider (Cloudflare, Namecheap, Route 53, OVH…) and create an **A record**:
+
+| Type | Name | Value | TTL |
+|---|---|---|---|
+| `A` | `api` *(or `@` for the apex)* | `203.0.113.10` *(your VPS IP)* | Auto / 300 |
+
+Verify it resolves before you deploy:
 
 ```bash
-ssh root@your.vps.ip
-adduser deploy
-usermod -aG sudo deploy
-mkdir -p /home/deploy/.ssh
-cp ~/.ssh/authorized_keys /home/deploy/.ssh/
-chown -R deploy:deploy /home/deploy/.ssh
-chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
+dig +short api.example.com
+# should print your VPS IP
 ```
+
+DNS can take a few minutes (sometimes longer with Cloudflare proxying — turn the orange cloud off initially so Caddy can issue the cert via HTTP-01).
+
+### About the root user
+
+This walkthrough uses **`root`** to keep the path short. ShipNode runs fine as root on a single-purpose VPS, and `shipnode setup` / `harden` will lock the server down afterwards (no password auth, fail2ban, firewall). If you'd rather create a dedicated `deploy` user instead, change the `user` field in `shipnode.config.ts` and make sure that user has `sudo` and your SSH key.
 
 ## 1. Install shipnode in your project
 
@@ -63,7 +72,7 @@ import { shipnode } from '@devalade/shipnode';
 
 export default shipnode
   .backend()
-  .ssh({ host: '203.0.113.10', user: 'deploy' })
+  .ssh({ host: '203.0.113.10', user: 'root' })
   .deployTo('/var/www/api')
   .pm2('api', { instances: 2 })
   .port(3000)
