@@ -97,13 +97,25 @@ If anything is red, fix it before deploying.
 
 ## 4. Upload secrets
 
-If your app reads from `.env`, push it once:
+Most apps need environment variables in production — database URLs, API keys, signing secrets. Keep them in a local file (do **not** commit it) and push it to the server once:
 
 ```bash
-npx shipnode env
+npx shipnode env --file .env.production
 ```
 
-The file lands at `<deployPath>/shared/.env` and is symlinked into every release. PM2 picks up changes on the next `restart` or `deploy` (both use `--update-env`).
+What this does, step by step:
+
+1. **Reads `.env.production`** from your project root locally.
+2. **SSHes into the server** using the host + user from `shipnode.config.ts`.
+3. **Writes the file to `<deployPath>/shared/.env`** — outside any release directory, owned by the deploy user, `chmod 600`.
+4. Every current and future release gets `.env` **symlinked in** from `shared/.env`, so all releases share the same env without you redeploying when a value changes.
+5. **PM2 picks up new values** on the next `shipnode restart` or `shipnode deploy` (both pass `--update-env`).
+
+This separation matters: secrets live in `shared/`, code lives in `releases/<timestamp>/`. Rolling back a release does **not** roll back your secrets, and rotating a secret does **not** require a redeploy.
+
+:::tip
+If you only have one env file called `.env`, you can omit `--file` and shipnode will use whatever the `env` block in `shipnode.config.ts` points at.
+:::
 
 ## 5. Deploy
 
