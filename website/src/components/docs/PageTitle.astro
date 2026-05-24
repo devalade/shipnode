@@ -1,0 +1,69 @@
+---
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+
+const { entry } = Astro.locals.starlightRoute;
+const slug = entry.id.replace(/\.(md|mdx)$/, '');
+const mdUrl = `/${slug}.md`;
+const pageUrl = new URL(Astro.url.pathname, Astro.site ?? 'https://shipnode.dev').toString();
+
+const aiPrompt = `I'm reading the ShipNode docs at ${pageUrl}. Help me apply this to my project.`;
+const claudeUrl = `https://claude.ai/new?q=${encodeURIComponent(aiPrompt)}`;
+const chatgptUrl = `https://chatgpt.com/?q=${encodeURIComponent(aiPrompt)}`;
+---
+
+<Default><slot /></Default>
+
+<div class="page-actions" data-md-url={mdUrl}>
+  <button type="button" class="copy-md" aria-label="Copy this page as Markdown">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="12" height="12"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+    <span class="copy-label">Copy as Markdown</span>
+  </button>
+  <a href={mdUrl} target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M14 3h7v7"></path><path d="M21 3l-9 9"></path><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"></path>
+    </svg>
+    View raw .md
+  </a>
+  <a href={claudeUrl} target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+    </svg>
+    Open in Claude
+  </a>
+  <a href={chatgptUrl} target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M8 12h8M12 8v8"></path>
+    </svg>
+    Open in ChatGPT
+  </a>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('.page-actions .copy-md').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const wrap = btn.closest<HTMLElement>('.page-actions');
+      const url = wrap?.dataset.mdUrl;
+      const label = btn.querySelector<HTMLElement>('.copy-label');
+      if (!url || !label) return;
+      try {
+        const res = await fetch(url);
+        const text = await res.text();
+        await navigator.clipboard.writeText(text);
+        const original = label.textContent;
+        label.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          label.textContent = original;
+          btn.classList.remove('copied');
+        }, 1800);
+      } catch {
+        label.textContent = 'Copy failed';
+        setTimeout(() => (label.textContent = 'Copy as Markdown'), 1800);
+      }
+    });
+  });
+</script>

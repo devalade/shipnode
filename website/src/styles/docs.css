@@ -1,5 +1,172 @@
-:root {
+/* Match the main shipnode.dev brand inside Starlight. */
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  --sl-font: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  --sl-color-bg: #10110f;
+  --sl-color-bg-nav: rgba(16, 17, 15, 0.85);
+  --sl-color-bg-sidebar: #10110f;
+  --sl-color-bg-inline-code: rgba(214, 168, 93, 0.14);
+  --sl-color-bg-accent: #d6a85d;
+
+  --sl-color-text: #f3f1e7;
+  --sl-color-text-accent: #f0c87a;
+  --sl-color-text-invert: #171812;
+  --sl-color-white: #f3f1e7;
+  --sl-color-gray-1: #ededdf;
+  --sl-color-gray-2: #d6d3c4;
+  --sl-color-gray-3: #bab6a6;
+  --sl-color-gray-4: #807c70;
+  --sl-color-gray-5: #3a3a32;
+  --sl-color-gray-6: #1f201a;
+  --sl-color-gray-7: #16170f;
+  --sl-color-black: #0d0e0b;
+
+  --sl-color-accent-low: rgba(214, 168, 93, 0.14);
+  --sl-color-accent: #d6a85d;
+  --sl-color-accent-high: #f0c87a;
+
+  --sl-color-hairline: rgba(237, 237, 223, 0.13);
+  --sl-color-hairline-light: rgba(237, 237, 223, 0.08);
+  --sl-color-hairline-shade: rgba(237, 237, 223, 0.24);
+
   --sl-radius-small: 0;
   --sl-radius-medium: 0;
   --sl-radius-large: 0;
+
+  --sl-shadow-md: 0 18px 50px rgba(5, 6, 4, 0.32);
+  --sl-shadow-lg: 0 18px 50px rgba(5, 6, 4, 0.32);
+}
+
+/* Subtle grid background like the marketing hero. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(237, 237, 223, 0.04) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(237, 237, 223, 0.025) 1px, transparent 1px);
+  background-size: 88px 88px;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 90%);
+}
+
+/* Tighter headings, brand typography weights. */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+  letter-spacing: -0.025em;
+  font-weight: 700;
+}
+
+.sl-markdown-content h1 {
+  font-size: clamp(2rem, 3.5vw, 2.75rem);
+  line-height: 1.05;
+}
+
+.sl-markdown-content :is(h2, h3) {
+  margin-top: 2.5rem;
+}
+
+/* Inline code chip — accent-tinted, square. */
+.sl-markdown-content :not(pre) > code {
+  border: 1px solid var(--sl-color-hairline);
+  padding: 0.1rem 0.4rem;
+  font-size: 0.86em;
+  color: var(--sl-color-text-accent);
+}
+
+/* Code blocks — bg-code from main site. */
+.expressive-code .frame .header,
+.expressive-code pre {
+  border-radius: 0 !important;
+}
+
+.expressive-code pre {
+  background: #0d0e0b !important;
+  border: 1px solid var(--sl-color-hairline) !important;
+}
+
+/* Tables match the marketing style. */
+.sl-markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+}
+
+.sl-markdown-content :is(th, td) {
+  border-bottom: 1px solid var(--sl-color-hairline);
+  padding: 0.7rem 0.5rem;
+  text-align: left;
+}
+
+.sl-markdown-content th {
+  color: var(--sl-color-text-accent);
+  font-family: var(--sl-font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Hide the rotated brand title in the header — site logo is enough. */
+.site-title { font-family: var(--sl-font); letter-spacing: -0.02em; }
+
+/* Sidebar — tighter, monospaced category labels. */
+.sidebar-content summary,
+.sidebar-content .group-label {
+  font-family: var(--sl-font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sl-color-text-accent);
+}
+
+/* Page actions row injected via PageTitle override. */
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.page-actions button,
+.page-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--sl-color-hairline);
+  background: var(--sl-color-gray-7);
+  color: var(--sl-color-text);
+  font-family: var(--sl-font-mono);
+  font-size: 0.76rem;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  transition: border-color 180ms, background 180ms, color 180ms;
+}
+
+.page-actions button:hover,
+.page-actions a:hover {
+  border-color: var(--sl-color-accent);
+  color: var(--sl-color-accent-high);
+  background: var(--sl-color-accent-low);
+}
+
+.page-actions .copied {
+  color: var(--sl-color-accent-high);
+  border-color: var(--sl-color-accent);
+}
+
+.page-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Callouts (asides) — square, hairline border. */
+.sl-markdown-content .starlight-aside {
+  border-radius: 0;
+  border-left-width: 2px;
 }

@@ -22,3 +22,9 @@ You have a VPS (Ubuntu or Debian), a Node.js app, and you want a real deploy wor
 - [Install](/docs/install/)
 - [Quick start](/docs/quick-start/)
 - [Configuration](/docs/configuration/)
+
+## Pair these docs with an AI
+
+Every page on this site has actions in the header to **Copy as Markdown**, **View the raw .md**, or jump straight into **Claude** or **ChatGPT** with the current page pre-loaded as context.
+
+Working inside [Claude Code](https://claude.com/claude-code)? The `shipnode` skill ships with the CLI and knows the full command surface — deploys, rollbacks, Caddy/PM2 templates, `.env` management, server inspection. It auto-triggers when you describe a deploy task, or run `/shipnode` to invoke it directly.

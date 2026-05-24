@@ -14,6 +14,9 @@ export default defineConfig({
         { icon: 'github', label: 'GitHub', href: 'https://github.com/devalade/shipnode' },
       ],
       customCss: ['./src/styles/docs.css'],
+      components: {
+        PageTitle: './src/components/docs/PageTitle.astro',
+      },
       sidebar: [
         {
           label: 'Getting started',
