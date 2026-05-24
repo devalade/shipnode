@@ -170,3 +170,29 @@ body::before {
   border-radius: 0;
   border-left-width: 2px;
 }
+
+/* Force every Starlight chrome element to sharp corners. */
+:where(
+  button,
+  input,
+  select,
+  textarea,
+  kbd,
+  .sl-link-button,
+  [class*='Search'],
+  [class*='search'],
+  site-search button,
+  .sl-flex,
+  starlight-menu-button,
+  starlight-menu-button button,
+  .sidebar-pane a,
+  .sidebar-pane button,
+  .sidebar-pane summary,
+  .top-level a,
+  .top-level button,
+  .pagefind-ui *,
+  .DocSearch,
+  .DocSearch *
+) {
+  border-radius: 0 !important;
+}
