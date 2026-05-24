@@ -54,7 +54,85 @@ export default shipnode
 | `.env(path)` | Path to a `.env` file uploaded as `shared/.env`. |
 | `.keepReleases(n)` | How many old releases to keep on disk (default 5). |
 | `.zeroDowntime(bool)` | Toggle the symlink-flip release strategy. |
+| `.aliases({ name: cmd })` | Define short names for `shipnode run` (see [Aliases](#aliases)). |
+| `.preDeploy(fn)` | Run a function on the server before the health check (see [Hooks](#hooks)). |
+| `.postDeploy(fn)` | Run a function on the server after a healthy release. |
 | `.build()` | Required terminal call. Returns the resolved config. |
+
+## Aliases
+
+`shipnode run` matches its first argument against the alias map and expands it. Useful for one-off operational commands you don't want to memorize.
+
+```ts
+export default shipnode
+  .backend()
+  .ssh({ host: '203.0.113.10', user: 'root' })
+  .deployTo('/var/www/api')
+  .pm2('api')
+  .port(3000)
+  .aliases({
+    migrate: 'pnpm prisma migrate deploy',
+    seed:    'pnpm tsx scripts/seed.ts',
+    repl:    'node --experimental-repl-await',
+  })
+  .build();
+```
+
+Now on the server:
+
+```bash
+npx shipnode run "migrate"
+# -> runs `pnpm prisma migrate deploy` inside the current release
+npx shipnode run "seed"
+```
+
+Anything after the alias name is appended to the expanded command, so `shipnode run "migrate --create-only"` works.
+
+## Hooks
+
+Hooks let you run logic on the server at well-defined points in the deploy. They receive a typed context with the resolved config and a server-side `exec` helper that runs inside the release directory with the project's environment loaded.
+
+```ts
+export default shipnode
+  .backend()
+  .ssh({ host: '203.0.113.10', user: 'root' })
+  .deployTo('/var/www/api')
+  .pm2('api')
+  .port(3000)
+  .preDeploy(async (ctx) => {
+    // Runs inside the new release, before PM2 reload + health check.
+    await ctx.exec('pnpm prisma migrate deploy');
+  })
+  .postDeploy(async (ctx) => {
+    // Runs after the release is healthy.
+    await ctx.exec('curl -X POST $SLACK_WEBHOOK -d \'{"text":"deployed"}\'');
+  })
+  .build();
+```
+
+### When each hook runs
+
+| Hook | Timing |
+|---|---|
+| `preDeploy` | After install + build + symlink flip, **before** PM2 reload and the health check. Throw to abort the deploy — the symlink rolls back. |
+| `postDeploy` | After the health check passes. Failures here log but do not roll back the release. |
+
+### The context
+
+```ts
+type HookFn = (ctx: HookContext) => Promise<void> | void;
+
+interface HookContext {
+  config: ShipnodeConfig;            // the resolved config for this deploy
+  release?: string;                  // the new release directory (absolute path on the server)
+  env: string;                       // 'production' for now
+  exec(cmd: string,
+       options?: { cwd?: string; env?: Record<string, string>; timeout?: number }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+}
+```
+
+`ctx.exec` runs the command on the **remote** server, in the new release directory, with `mise` in `PATH` (so `node`, `pnpm`, etc. are available). Stdout streams to your terminal prefixed with `│`. Non-zero exit throws — that's enough to fail the deploy from a `preDeploy` hook.
 
 ## Where the config can live
 
