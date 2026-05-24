@@ -4,6 +4,8 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-05-24
+
 ### Added
 - **Workers / multi-process deployments** — a backend can now declare additional long-running processes (workers, cron consumers, queues) alongside the web server. PM2 supervises all of them under one deployment.
   - New `.worker({ name, command, instances?, maxMemory?, env? })` builder method appends a worker to the deployment.
