@@ -186,6 +186,76 @@ Audit it anytime:
 npx shipnode doctor --security
 ```
 
+## Troubleshooting
+
+### `Permission denied (publickey)` on any command
+
+The SSH connection is failing before shipnode does anything. Confirm you can connect manually with the same host and user from your config:
+
+```bash
+ssh root@203.0.113.10
+```
+
+If that prompts for a password or fails, your public key isn't in the server's `~/.ssh/authorized_keys`. Fix that first.
+
+### `dig` returns no IP / wrong IP
+
+Your A record hasn't propagated yet, or it points somewhere else. Wait a few minutes and retry. With Cloudflare, turn the proxy (orange cloud) off until Caddy has issued the certificate — the HTTP-01 challenge needs a direct connection to your server on port 80.
+
+### Caddy can't issue an HTTPS certificate
+
+Caddy needs ports **80 and 443 reachable from the public internet** to complete the ACME challenge. Common causes:
+
+- Hosting firewall blocks 80/443 (check your provider's security group / network rules).
+- UFW is enabled and didn't allow web traffic — `shipnode harden` opens 80 and 443 automatically, but a manual UFW config might not.
+- Cloudflare proxy is on and rewriting the challenge. Toggle it off, deploy, then turn it back on.
+
+Inspect Caddy logs on the server:
+
+```bash
+sudo journalctl -u caddy -n 100 --no-pager
+```
+
+### Health check fails after deploy
+
+The release was discarded and the symlink stayed on the previous one — your app isn't healthy. Run:
+
+```bash
+npx shipnode logs
+```
+
+Most common reasons:
+
+- The `healthCheck` path in `shipnode.config.ts` doesn't exist in your app (404).
+- The app didn't bind to the port from `.port(...)`.
+- A required env var isn't set — re-check `npx shipnode env --file .env.production`.
+
+### `Deploy is locked` even though nothing is running
+
+A previous deploy was killed mid-flight and left a stale lock at `<deployPath>/.shipnode/deploy.lock`. After confirming nothing is actually deploying:
+
+```bash
+npx shipnode unlock
+```
+
+### Node version mismatch / build fails on the server
+
+`shipnode setup` installs Node via mise based on `nodeVersion` in your config. If you bumped that field after running setup, re-run it:
+
+```bash
+npx shipnode setup
+```
+
+### Pre-flight check before anything else
+
+When in doubt:
+
+```bash
+npx shipnode doctor
+```
+
+It validates the config, SSH, sudo, Node, PM2, Caddy, disk space, and the live domain. Fix what it flags before running `deploy`.
+
 ## What's next
 
 - [shipnode.config.ts reference](/docs/configuration/) — every method, every option
