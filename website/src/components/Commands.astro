@@ -1,0 +1,185 @@
+---
+const groups = [
+  {
+    label: "Bootstrap",
+    commands: [
+      ["shipnode init", "Create shipnode.config.ts with framework-aware defaults"],
+      ["shipnode setup", "Install Node.js, PM2, Caddy, and package managers"],
+      ["shipnode doctor", "Run local and remote pre-flight diagnostics"],
+      ["shipnode migrate", "Migrate an existing deploy to the release layout"],
+    ],
+  },
+  {
+    label: "Ship",
+    commands: [
+      ["shipnode deploy", "Build, sync, release, health-check"],
+      ["shipnode deploy --config shipnode.staging.config.ts", "Deploy a non-default environment"],
+      ["shipnode rollback --steps 2", "Move current back two releases"],
+      ["shipnode unlock", "Clear a stale deploy lock"],
+    ],
+  },
+  {
+    label: "Operate",
+    commands: [
+      ["shipnode status", "Inspect PM2 and release state"],
+      ["shipnode logs", "Stream process logs"],
+      ["shipnode metrics", "Open the PM2 monitoring dashboard"],
+      ["shipnode restart", "Restart the application"],
+      ["shipnode stop", "Stop the application"],
+      ["shipnode run -- <cmd>", "Run a one-off command on the server"],
+    ],
+  },
+  {
+    label: "Config & env",
+    commands: [
+      ["shipnode env", "Upload local .env to the server"],
+      ["shipnode config show", "Print the resolved configuration"],
+      ["shipnode config validate", "Validate the configuration file"],
+      ["shipnode eject", "Eject PM2/Caddy templates for customization"],
+    ],
+  },
+  {
+    label: "Security & team",
+    commands: [
+      ["shipnode harden", "Apply SSH, firewall, and fail2ban hardening"],
+      ["shipnode doctor --security", "Run a security audit on the server"],
+      ["shipnode user sync", "Sync .shipnode/users.yml to the server"],
+      ["shipnode user list", "List non-system users on the server"],
+    ],
+  },
+  {
+    label: "Backup & edge",
+    commands: [
+      ["shipnode backup setup", "Install backup script and systemd timer"],
+      ["shipnode backup run", "Run a backup immediately to S3"],
+      ["shipnode cloudflare init", "Provision a Cloudflare Tunnel for the app"],
+      ["shipnode cloudflare status", "Show cloudflared and tunnel status"],
+    ],
+  },
+  {
+    label: "CI & self-update",
+    commands: [
+      ["shipnode ci github", "Generate a GitHub Actions deploy workflow"],
+      ["shipnode ci env-sync", "Sync .env into GitHub repository secrets"],
+      ["shipnode upgrade", "Upgrade shipnode to the latest version"],
+    ],
+  },
+];
+---
+
+<section class="shell-section commands" id="commands">
+  <div class="shell-container command-layout">
+    <div class="sticky-copy">
+      <p class="section-kicker">Command map</p>
+      <h2 class="section-title">Small verbs, practical control.</h2>
+      <p class="section-copy">
+        ShipNode does not hide the server. It gives you memorable commands for the tasks
+        that normally scatter across SSH sessions, copied snippets, and half-finished notes.
+      </p>
+    </div>
+
+    <div class="command-table">
+      {groups.map((group) => (
+        <section class="command-group" aria-labelledby={`${group.label.toLowerCase()}-commands`}>
+          <h3 id={`${group.label.toLowerCase()}-commands`}>{group.label}</h3>
+          <div>
+            {group.commands.map(([cmd, desc]) => (
+              <div class="command-row">
+                <code>{cmd}</code>
+                <span>{desc}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .command-layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+    gap: clamp(2rem, 6vw, 6rem);
+    align-items: start;
+  }
+
+  .sticky-copy {
+    position: sticky;
+    top: 6rem;
+  }
+
+  .section-title {
+    margin-top: 1rem;
+  }
+
+  .section-copy {
+    margin-top: 1.25rem;
+  }
+
+  .command-table {
+    border-top: 1px solid var(--border-primary);
+  }
+
+  .command-group {
+    display: grid;
+    grid-template-columns: 10rem minmax(0, 1fr);
+    gap: 1.5rem;
+    padding: 1.4rem 0;
+    border-bottom: 1px solid var(--border-primary);
+  }
+
+  h3 {
+    color: var(--accent-hover);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .command-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1fr);
+    gap: 1rem;
+    padding: 0.72rem 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .command-row:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .command-row code {
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: thin;
+  }
+
+  .command-row span {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+
+  @media (max-width: 920px) {
+    .command-layout,
+    .command-group,
+    .command-row {
+      grid-template-columns: 1fr;
+    }
+
+    .sticky-copy {
+      position: static;
+    }
+
+    .command-group,
+    .command-row {
+      gap: 0.65rem;
+    }
+  }
+</style>

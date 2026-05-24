@@ -1,0 +1,329 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+  canonical?: string;
+  noindex?: boolean;
+  ogType?: "website" | "article";
+  image?: string;
+  imageAlt?: string;
+  structuredData?: Record<string, unknown> | Record<string, unknown>[];
+}
+
+const {
+  title = "ShipNode — Zero-downtime Node.js deployments over SSH",
+  description = "ShipNode deploys Node.js apps to your own Ubuntu or Debian server over SSH with zero-downtime releases, PM2, Caddy HTTPS, health checks, and rollbacks.",
+  canonical,
+  noindex = false,
+  ogType = "website",
+  image,
+  imageAlt = "ShipNode command-line deployment tool preview",
+  structuredData,
+} = Astro.props;
+
+const basePath = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+const site = Astro.site ?? new URL("https://shipnode.dev");
+const canonicalUrl = canonical ?? new URL(Astro.url.pathname, site).toString();
+const socialImage = image ?? new URL(`${basePath}og-image.svg`, site).toString();
+const defaultStructuredData = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "ShipNode",
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "Linux, macOS",
+  description,
+  url: canonicalUrl,
+  codeRepository: "https://github.com/devalade/shipnode",
+  license: "https://github.com/devalade/shipnode/blob/main/LICENSE",
+  author: {
+    "@type": "Person",
+    name: "devalade",
+    url: "https://devalade.me",
+  },
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+};
+const jsonLd = structuredData ?? defaultStructuredData;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <meta name="robots" content={noindex ? "noindex, nofollow" : "index, follow"} />
+    <meta name="author" content="devalade" />
+    <meta name="application-name" content="ShipNode" />
+    <meta
+      name="keywords"
+      content="Node.js deployment, zero downtime deployment, SSH deployment, PM2 deployment, Caddy HTTPS, VPS deployment, Astro deployment, Express deployment, NestJS deployment"
+    />
+    <meta name="theme-color" content="#10110f" />
+    <link rel="canonical" href={canonicalUrl} />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content={ogType} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:site_name" content="ShipNode" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content={socialImage} />
+    <meta property="og:image:alt" content={imageAlt} />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImage} />
+    <meta name="twitter:image:alt" content={imageAlt} />
+    <meta name="twitter:creator" content="@devalade" />
+
+    <link rel="icon" type="image/svg+xml" href={`${basePath}favicon.svg`} />
+    <link rel="alternate" type="application/rss+xml" title="ShipNode releases" href="https://github.com/devalade/shipnode/releases.atom" />
+
+    <!-- Fonts: Geist Sans + JetBrains Mono -->
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=geist@400,500,600,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>{title}</title>
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+  </head>
+  <body>
+    <a href="#main-content" class="skip-link">Skip to content</a>
+    <slot />
+    <div class="grain" aria-hidden="true"></div>
+  </body>
+</html>
+
+<style is:global>
+  *,
+  *::before,
+  *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  :root {
+    --bg-primary: #10110f;
+    --bg-secondary: #151611;
+    --bg-panel: #1b1c16;
+    --bg-rail: #ededdf;
+    --bg-code: #0d0e0b;
+    --bg-soft: rgba(237, 237, 223, 0.055);
+    --bg-card: var(--bg-panel);
+    --bg-elevated: #202119;
+    --bg-badge: var(--accent-muted);
+
+    --border-primary: rgba(237, 237, 223, 0.13);
+    --border-subtle: rgba(237, 237, 223, 0.08);
+    --border-strong: rgba(237, 237, 223, 0.24);
+    --border-accent: var(--border-strong);
+
+    --text-primary: #f3f1e7;
+    --text-secondary: #bab6a6;
+    --text-tertiary: #807c70;
+    --text-invert: #171812;
+    --text-muted: var(--text-tertiary);
+
+    --accent-primary: #d6a85d;
+    --accent-hover: #f0c87a;
+    --accent-muted: rgba(214, 168, 93, 0.14);
+    --accent-glow: var(--accent-muted);
+
+    --green: #7bc38a;
+    --green-muted: rgba(123, 195, 138, 0.15);
+    --red: #df766f;
+    --amber: var(--accent-primary);
+    --amber-muted: var(--accent-muted);
+
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+    --space-xs: 0.25rem;
+    --space-sm: 0.5rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+    --space-xl: 2rem;
+    --space-2xl: 3rem;
+    --space-3xl: 4.5rem;
+    --space-4xl: 7rem;
+
+    --radius-sm: 3px;
+    --radius-md: 8px;
+    --radius-lg: 8px;
+    --radius-xl: 8px;
+    --radius-full: 9999px;
+
+    --shadow-sm: 0 1px 2px rgba(5, 6, 4, 0.45);
+    --shadow-md: 0 18px 50px rgba(5, 6, 4, 0.32);
+    --shadow-lg: var(--shadow-md);
+
+    --transition-fast: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+    --transition-base: 300ms cubic-bezier(0.16, 1, 0.3, 1);
+    --transition-slow: 450ms cubic-bezier(0.16, 1, 0.3, 1);
+
+    --z-grain: 9998;
+    --z-skip: 9999;
+    --z-header: 100;
+    --z-modal: 200;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    overflow-x: hidden;
+    min-width: 320px;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  code, pre {
+    font-family: var(--font-mono);
+  }
+
+  img, svg {
+    display: block;
+  }
+
+  /* Skip link */
+  .skip-link {
+    position: absolute;
+    top: -100%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: var(--z-skip);
+    padding: 0.75rem 1.25rem;
+    background: var(--accent-primary);
+    color: var(--text-invert);
+    font-weight: 600;
+    font-size: 0.875rem;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    transition: top var(--transition-base);
+  }
+  .skip-link:focus {
+    top: 0;
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+  }
+
+  /* Grain overlay */
+  .grain {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-grain);
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 200px 200px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-accent);
+    border-radius: var(--radius-full);
+  }
+
+  /* Selection */
+  ::selection {
+    background: var(--accent-muted);
+    color: var(--text-primary);
+  }
+
+  /* Focus ring utility */
+  :focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  .section-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    color: var(--accent-hover);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .section-kicker::before {
+    content: "";
+    width: 1.6rem;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.7;
+  }
+
+  .section-title {
+    font-size: clamp(2.15rem, 5vw, 4.25rem);
+    font-weight: 700;
+    letter-spacing: -0.045em;
+    line-height: 0.96;
+    text-wrap: balance;
+  }
+
+  .section-copy {
+    max-width: 62ch;
+    color: var(--text-secondary);
+    font-size: clamp(1rem, 1.7vw, 1.125rem);
+    line-height: 1.75;
+    text-wrap: pretty;
+  }
+
+  .shell-section {
+    border-top: 1px solid var(--border-primary);
+    padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 4vw, 2rem);
+  }
+
+  .shell-container {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 1ms !important;
+    }
+  }
+</style>

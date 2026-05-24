@@ -1,0 +1,446 @@
+---
+---
+
+<section class="hero" id="hero">
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <p class="section-kicker">Bash deployment CLI</p>
+      <h1>Ship Node apps to your server. No ceremony.</h1>
+      <p class="subtitle">
+        ShipNode deploys backends and static frontends over SSH, builds releases, flips the
+        <code>current</code> symlink atomically, reloads PM2, verifies health, and rolls back when a release misbehaves.
+      </p>
+      <div class="hero-actions">
+        <div class="install-widget">
+          <div class="pm-tabs" role="tablist" aria-label="Package manager">
+            <button type="button" role="tab" class="pm-tab is-active" data-pm="npm" aria-selected="true">npm</button>
+            <button type="button" role="tab" class="pm-tab" data-pm="pnpm" aria-selected="false">pnpm</button>
+            <button type="button" role="tab" class="pm-tab" data-pm="yarn" aria-selected="false">yarn</button>
+            <button type="button" role="tab" class="pm-tab" data-pm="bun" aria-selected="false">bun</button>
+          </div>
+          <div class="install-cmd" id="install-cmd">
+            <code id="install-cmd-text">npm install -D @devalade/shipnode</code>
+            <button class="copy-btn" id="copy-btn" aria-label="Copy install command">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="12" height="12" rx="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <a href="#how-it-works" class="text-link">Trace the deploy path</a>
+      </div>
+    </div>
+
+    <div class="hero-console" aria-label="ShipNode deploy terminal preview">
+      <div class="console-top">
+        <span>deploy@vps-ams-04</span>
+        <span class="live"><span></span> release healthy</span>
+      </div>
+      <div class="terminal-body">
+        <code class="terminal-line"><span class="muted">$</span> shipnode init</code>
+        <code class="terminal-line"><span class="accent">framework</span>      Express</code>
+        <code class="terminal-line"><span class="accent">package manager</span> pnpm</code>
+        <code class="terminal-line"><span class="accent">app type</span>        backend</code>
+        <code class="terminal-line"><span class="accent">config</span>          shipnode.config.ts created</code>
+        <code class="terminal-line"><span class="muted">$</span> shipnode deploy</code>
+        <code class="terminal-line step step-1">rsync           ./  ->  /var/www/api/releases/20260428194612</code>
+        <code class="terminal-line step step-2">install         pnpm install --frozen-lockfile</code>
+        <code class="terminal-line step step-3">build           pnpm run build</code>
+        <code class="terminal-line step step-4">symlink         current -> releases/20260428194612</code>
+        <code class="terminal-line step step-5">pm2             reload api --update-env</code>
+        <code class="terminal-line step step-6">health          GET /health <span class="ok">200 OK</span> <span class="muted">47ms</span></code>
+        <code class="terminal-line"><span class="ok">deployed</span>        https://api.example.com</code>
+      </div>
+      <div class="release-map">
+        <span>releases/20260428180603</span>
+        <span class="active">current -> 20260428194612</span>
+        <span>shared/.env</span>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="copy-toast" role="status" aria-live="polite">Install command copied</div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    min-height: 100dvh;
+    padding: 8.5rem clamp(1rem, 4vw, 2rem) 5rem;
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(90deg, rgba(237, 237, 223, 0.055) 1px, transparent 1px),
+      linear-gradient(0deg, rgba(237, 237, 223, 0.035) 1px, transparent 1px);
+    background-size: 88px 88px;
+    mask-image: linear-gradient(to bottom, black 0%, transparent 82%);
+  }
+
+  .hero-grid {
+    position: relative;
+    max-width: 1400px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 0.88fr) minmax(420px, 1.12fr);
+    gap: clamp(2rem, 6vw, 6rem);
+    align-items: center;
+  }
+
+  .hero-copy {
+    padding-top: 5vh;
+  }
+
+  h1 {
+    max-width: 680px;
+    margin-top: 1.2rem;
+    font-size: clamp(2.65rem, 5.25vw, 5.35rem);
+    font-weight: 700;
+    line-height: 0.9;
+    letter-spacing: -0.048em;
+    text-wrap: balance;
+  }
+
+  .subtitle {
+    margin-top: 1.5rem;
+    max-width: 65ch;
+    color: var(--text-secondary);
+    font-size: clamp(1rem, 1.7vw, 1.18rem);
+    line-height: 1.75;
+    text-wrap: pretty;
+  }
+
+  .subtitle code {
+    color: var(--accent-hover);
+    font-size: 0.9em;
+  }
+
+  .hero-actions {
+    display: grid;
+    gap: 1rem;
+    margin-top: 2rem;
+    max-width: 760px;
+  }
+
+  .install-cmd {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: rgba(13, 14, 11, 0.9);
+    box-shadow: inset 0 1px 0 rgba(237, 237, 223, 0.08);
+    padding: 0.9rem 0.9rem 0.9rem 1rem;
+    min-width: 0;
+  }
+
+  .install-widget {
+    display: grid;
+    gap: 0.5rem;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .pm-tabs {
+    display: inline-flex;
+    gap: 0.25rem;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    padding: 0.25rem;
+    background: var(--bg-soft);
+    width: fit-content;
+  }
+
+  .pm-tab {
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.35rem 0.7rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+
+  .pm-tab:hover {
+    color: var(--text-primary);
+  }
+
+  .pm-tab.is-active {
+    background: var(--accent-muted);
+    color: var(--text-primary);
+  }
+
+  .install-cmd code {
+    color: var(--text-primary);
+    font-size: clamp(0.68rem, 1.4vw, 0.82rem);
+    line-height: 1.55;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: thin;
+  }
+
+  .copy-btn {
+    width: 2.35rem;
+    height: 2.35rem;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    background: var(--bg-soft);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .copy-btn:hover {
+    border-color: var(--accent-primary);
+    background: var(--accent-muted);
+  }
+
+  .copy-btn:active {
+    transform: scale(0.96) translateY(1px);
+  }
+
+  .text-link {
+    width: fit-content;
+    color: var(--accent-hover);
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: color var(--transition-fast), transform var(--transition-fast);
+  }
+
+  .text-link:hover {
+    color: var(--text-primary);
+  }
+
+  .text-link:active {
+    transform: translateY(1px);
+  }
+
+  .hero-console {
+    position: relative;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: rgba(13, 14, 11, 0.92);
+    box-shadow: var(--shadow-md), inset 0 1px 0 rgba(237, 237, 223, 0.08);
+    overflow: hidden;
+    transform: translateY(3vh);
+  }
+
+  .hero-console::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background: linear-gradient(110deg, transparent 0%, rgba(237, 237, 223, 0.045) 42%, transparent 58%);
+    transform: translateX(-120%);
+    animation: sweep 6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  @keyframes sweep {
+    0%, 42% { transform: translateX(-120%); }
+    70%, 100% { transform: translateX(120%); }
+  }
+
+  .console-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border-primary);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .live {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--green);
+  }
+
+  .live span {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: var(--radius-full);
+    background: currentColor;
+    animation: breathe 2.2s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(0.75); opacity: 0.45; }
+    50% { transform: scale(1.05); opacity: 1; }
+  }
+
+  .terminal-body {
+    display: grid;
+    gap: 0;
+    padding: clamp(1rem, 2vw, 1.5rem);
+    overflow-x: auto;
+    font-size: clamp(0.72rem, 1.4vw, 0.9rem);
+  }
+
+  .terminal-line {
+    display: block;
+    min-width: max-content;
+    margin: 0 -0.35rem;
+    padding: 0 0.35rem;
+    border-radius: var(--radius-sm);
+    line-height: 1.5;
+    white-space: pre;
+  }
+
+  .step {
+    animation: line-focus 9s infinite;
+  }
+
+  .step-2 { animation-delay: 1.5s; }
+  .step-3 { animation-delay: 3s; }
+  .step-4 { animation-delay: 4.5s; }
+  .step-5 { animation-delay: 6s; }
+  .step-6 { animation-delay: 7.5s; }
+
+  @keyframes line-focus {
+    0%, 13%, 100% {
+      background: transparent;
+      color: inherit;
+    }
+    5%, 9% {
+      background: var(--accent-muted);
+      color: var(--text-primary);
+    }
+  }
+
+  .muted { color: var(--text-tertiary); }
+  .accent { color: var(--accent-hover); }
+  .ok { color: var(--green); }
+
+  .release-map {
+    display: grid;
+    grid-template-columns: 1fr;
+    border-top: 1px solid var(--border-primary);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+  }
+
+  .release-map span {
+    padding: 0.72rem 1rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .release-map .active {
+    color: var(--text-primary);
+    background: var(--accent-muted);
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 2rem;
+    transform: translateX(-50%) translateY(140%);
+    z-index: var(--z-modal);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-md);
+    padding: 0.7rem 1rem;
+    font-size: 0.9rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: transform var(--transition-base), opacity var(--transition-base);
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  @media (max-width: 980px) {
+    .hero {
+      padding-top: 7rem;
+    }
+
+    .hero-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .hero-copy {
+      padding-top: 0;
+    }
+
+    .hero-console {
+      transform: none;
+    }
+  }
+
+  @media (max-width: 560px) {
+    h1 {
+      font-size: clamp(2.2rem, 11vw, 3.25rem);
+      line-height: 0.92;
+    }
+
+    .console-top {
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+  }
+</style>
+
+<script>
+  const installCommands: Record<string, string> = {
+    npm: "npm install -D @devalade/shipnode",
+    pnpm: "pnpm add -D @devalade/shipnode",
+    yarn: "yarn add -D @devalade/shipnode",
+    bun: "bun add -d @devalade/shipnode",
+  };
+  let currentPm = "npm";
+  const cmdText = document.getElementById("install-cmd-text");
+  document.querySelectorAll<HTMLButtonElement>(".pm-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const pm = tab.dataset.pm ?? "npm";
+      currentPm = pm;
+      document.querySelectorAll(".pm-tab").forEach((t) => {
+        const active = t === tab;
+        t.classList.toggle("is-active", active);
+        t.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      if (cmdText) cmdText.textContent = installCommands[pm];
+    });
+  });
+
+  const copyBtn = document.getElementById("copy-btn");
+  const toast = document.getElementById("copy-toast");
+  let toastTimer: number | undefined;
+
+  copyBtn?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(installCommands[currentPm]);
+      if (toast) {
+        toast.classList.add("show");
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2200);
+      }
+    } catch {
+      if (toast) {
+        toast.textContent = "Copy unavailable in this browser";
+        toast.classList.add("show");
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2200);
+      }
+    }
+  });
+</script>

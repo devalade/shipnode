@@ -1,0 +1,160 @@
+---
+const comparisons = [
+  ["Docker/Kubernetes", "Great at scale, heavy when you just need a VPS release path."],
+  ["PaaS platforms", "Fast to start, but pricing and platform rules become part of your architecture."],
+  ["Manual SSH", "Transparent, but easy to forget a step under pressure."],
+  ["ShipNode", "Keeps the server visible and turns repeatable release hygiene into commands."],
+];
+---
+
+<section class="shell-section why" id="why-shipnode">
+  <div class="shell-container why-grid">
+    <div class="why-copy">
+      <p class="section-kicker">Why it exists</p>
+      <h2 class="section-title">No magic, just good server hygiene.</h2>
+      <p class="section-copy">
+        ShipNode is for developers who want a real server without rebuilding a deploy
+        platform from shell history. It keeps the moving parts plain: SSH, rsync,
+        releases, PM2, Caddy, health checks, and rollback.
+      </p>
+
+      <div class="comparison" aria-label="Deployment approach comparison">
+        {comparisons.map(([name, copy]) => (
+          <article>
+            <h3>{name}</h3>
+            <p>{copy}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+
+    <div class="config-card" aria-label="shipnode.config.ts example">
+      <div class="config-top">
+        <span>shipnode.config.ts</span>
+        <span>production</span>
+      </div>
+      <pre><code>import {`{ shipnode }`} from '@devalade/shipnode';
+
+export default shipnode
+  .backend()
+  .ssh({`{ host: '203.0.113.10', user: 'deploy' }`})
+  .deployTo('/var/www/api')
+  .pm2('api', {`{ instances: 2 }`})
+  .port(3000)
+  .domain('api.example.com')
+  .healthCheck('/health')
+  .nodeVersion('22')
+  .pkgManager('pnpm')
+  .build();</code></pre>
+    </div>
+  </div>
+</section>
+
+<style>
+  .why-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.72fr);
+    gap: clamp(2rem, 6vw, 6rem);
+    align-items: start;
+  }
+
+  .section-title {
+    max-width: 780px;
+    margin-top: 1rem;
+  }
+
+  .section-copy {
+    margin-top: 1.25rem;
+  }
+
+  .comparison {
+    margin-top: clamp(2rem, 4vw, 3.5rem);
+    border-top: 1px solid var(--border-primary);
+  }
+
+  .comparison article {
+    display: grid;
+    grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1fr);
+    gap: 1.25rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border-primary);
+  }
+
+  h3 {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    letter-spacing: -0.01em;
+  }
+
+  .comparison p {
+    color: var(--text-secondary);
+    font-size: 0.94rem;
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+
+  .comparison article:last-child {
+    background: linear-gradient(90deg, var(--accent-muted), transparent 62%);
+    margin-inline: -1rem 0;
+    padding-inline: 1rem 0;
+  }
+
+  .comparison article:last-child h3 {
+    color: var(--accent-hover);
+  }
+
+  .config-card {
+    position: sticky;
+    top: 6rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--bg-code);
+    box-shadow: var(--shadow-md), inset 0 1px 0 rgba(237, 237, 223, 0.08);
+    overflow: hidden;
+  }
+
+  .config-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border-primary);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .config-top span:first-child {
+    color: var(--accent-hover);
+  }
+
+  pre {
+    padding: clamp(1rem, 2vw, 1.4rem);
+    overflow-x: auto;
+    color: var(--text-primary);
+    font-size: clamp(0.76rem, 1.35vw, 0.9rem);
+    line-height: 1.8;
+  }
+
+  @media (max-width: 940px) {
+    .why-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .config-card {
+      position: static;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .comparison article {
+      grid-template-columns: 1fr;
+      gap: 0.4rem;
+    }
+
+    .config-top {
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+  }
+</style>

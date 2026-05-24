@@ -1,0 +1,147 @@
+---
+const basePath = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+---
+
+<header class="header" id="header">
+  <div class="header-inner">
+    <a href={basePath} class="logo" id="logo" aria-label="ShipNode home">
+      <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="8" fill="#0d0e0b" stroke="#ededdf" stroke-opacity="0.22"/>
+        <path d="M9 11.5L14.5 16L9 20.5" stroke="#f3f1e7" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M16.5 21H23" stroke="#d6a85d" stroke-width="2.15" stroke-linecap="round"/>
+        <circle cx="22.5" cy="10.5" r="2.2" fill="#7bc38a"/>
+        <path d="M20.7 10.5H16.5C15.1 10.5 14 11.6 14 13V16" stroke="#7bc38a" stroke-width="1.45" stroke-linecap="round"/>
+      </svg>
+      <span>ShipNode</span>
+    </a>
+    <nav class="nav" id="main-nav" aria-label="Main">
+      <a href="#how-it-works" data-section="how-it-works">How it works</a>
+      <a href="#features" data-section="features">Features</a>
+      <a href="#commands" data-section="commands">Commands</a>
+      <a href="#frameworks" data-section="frameworks">Frameworks</a>
+    </nav>
+    <a href="https://github.com/devalade/shipnode" target="_blank" rel="noopener" class="github-link" id="github-link" aria-label="View ShipNode on GitHub">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      <span>GitHub</span>
+    </a>
+  </div>
+</header>
+
+<style>
+  .header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: var(--z-header);
+    backdrop-filter: blur(18px) saturate(130%);
+    -webkit-backdrop-filter: blur(18px) saturate(130%);
+    background: rgba(16, 17, 15, 0.82);
+    border-bottom: 1px solid var(--border-primary);
+    box-shadow: inset 0 1px 0 rgba(237, 237, 223, 0.05);
+  }
+
+  .header-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 var(--space-xl);
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--text-primary);
+    transition: opacity var(--transition-fast), transform var(--transition-fast);
+    letter-spacing: -0.01em;
+  }
+  .logo:hover { opacity: 0.8; }
+  .logo:active { transform: scale(0.97); }
+
+  .nav {
+    display: flex;
+    gap: 0.35rem;
+    padding: 0.25rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    background: rgba(237, 237, 223, 0.03);
+  }
+  .nav a {
+    position: relative;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    transition: color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+    font-weight: 500;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius-full);
+  }
+  .nav a:hover { color: var(--text-primary); background: rgba(237, 237, 223, 0.05); }
+  .nav a.active {
+    color: var(--text-primary);
+    background: rgba(237, 237, 223, 0.08);
+  }
+
+  .github-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+    font-weight: 500;
+  }
+  .github-link:hover {
+    border-color: var(--accent-primary);
+    background: var(--accent-muted);
+    transform: translateY(-1px);
+  }
+  .github-link:active {
+    transform: scale(0.97) translateY(0);
+  }
+
+  @media (max-width: 768px) {
+    .nav { display: none; }
+    .github-link span { display: none; }
+    .github-link { padding: 0.5rem; border-radius: var(--radius-md); }
+  }
+
+  @media (max-width: 420px) {
+    .header-inner { padding: 0 var(--space-md); }
+  }
+</style>
+
+<script>
+  // Active section highlighting on scroll
+  const sections = ["how-it-works", "features", "commands", "frameworks"];
+  const navLinks = document.querySelectorAll<HTMLAnchorElement>("#main-nav a[data-section]");
+
+  function updateActive() {
+    let current = "";
+    for (const id of sections) {
+      const el = document.getElementById(id);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        if (rect.top <= 120) {
+          current = id;
+        }
+      }
+    }
+    navLinks.forEach((link) => {
+      link.classList.toggle("active", link.dataset.section === current);
+    });
+  }
+
+  window.addEventListener("scroll", updateActive, { passive: true });
+  updateActive();
+</script>

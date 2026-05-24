@@ -1,0 +1,158 @@
+---
+---
+
+<section class="shell-section get-started" id="get-started">
+  <div class="shell-container cta">
+    <div>
+      <p class="section-kicker">Start shipping</p>
+      <h2 class="section-title">Install once. Deploy from the project folder.</h2>
+    </div>
+    <div class="cta-panel">
+      <div class="pm-tabs" role="tablist" aria-label="Package manager">
+        <button type="button" role="tab" class="pm-tab is-active" data-pm="npm" aria-selected="true">npm</button>
+        <button type="button" role="tab" class="pm-tab" data-pm="pnpm" aria-selected="false">pnpm</button>
+        <button type="button" role="tab" class="pm-tab" data-pm="yarn" aria-selected="false">yarn</button>
+        <button type="button" role="tab" class="pm-tab" data-pm="bun" aria-selected="false">bun</button>
+      </div>
+      <code id="cta-install-cmd">npm install -D @devalade/shipnode</code>
+      <div class="cta-links">
+        <a href="https://github.com/devalade/shipnode" target="_blank" rel="noopener" class="primary">View source</a>
+        <a href="https://github.com/devalade/shipnode#getting-started" target="_blank" rel="noopener">Read docs</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .get-started {
+    padding-bottom: clamp(4rem, 8vw, 7rem);
+  }
+
+  .cta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 0.78fr);
+    gap: clamp(2rem, 6vw, 6rem);
+    align-items: end;
+  }
+
+  .section-title {
+    margin-top: 1rem;
+    max-width: 850px;
+  }
+
+  .cta-panel {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--bg-code);
+    box-shadow: inset 0 1px 0 rgba(237, 237, 223, 0.08);
+    padding: clamp(1.2rem, 3vw, 2rem);
+    min-width: 0;
+  }
+
+  .cta-panel code {
+    display: block;
+    color: var(--text-primary);
+    font-size: clamp(0.74rem, 1.4vw, 0.9rem);
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: thin;
+  }
+
+  .pm-tabs {
+    display: inline-flex;
+    gap: 0.25rem;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    padding: 0.25rem;
+    background: var(--bg-soft);
+    width: fit-content;
+    margin-bottom: 0.85rem;
+  }
+
+  .pm-tab {
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.35rem 0.7rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+
+  .pm-tab:hover { color: var(--text-primary); }
+
+  .pm-tab.is-active {
+    background: var(--accent-muted);
+    color: var(--text-primary);
+  }
+
+  .cta-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    margin-top: 1.5rem;
+  }
+
+  .cta-links a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.7rem;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    padding: 0.7rem 1rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .cta-links .primary {
+    background: var(--bg-rail);
+    color: var(--text-invert);
+    border-color: transparent;
+  }
+
+  .cta-links a:hover {
+    border-color: var(--accent-primary);
+    background: var(--accent-muted);
+  }
+
+  .cta-links .primary:hover {
+    background: var(--accent-hover);
+  }
+
+  .cta-links a:active {
+    transform: scale(0.98) translateY(1px);
+  }
+
+  @media (max-width: 900px) {
+    .cta {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  const installCommands: Record<string, string> = {
+    npm: "npm install -D @devalade/shipnode",
+    pnpm: "pnpm add -D @devalade/shipnode",
+    yarn: "yarn add -D @devalade/shipnode",
+    bun: "bun add -d @devalade/shipnode",
+  };
+  const ctaCmd = document.getElementById("cta-install-cmd");
+  document.querySelectorAll<HTMLButtonElement>("#get-started .pm-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const pm = tab.dataset.pm ?? "npm";
+      document.querySelectorAll("#get-started .pm-tab").forEach((t) => {
+        const active = t === tab;
+        t.classList.toggle("is-active", active);
+        t.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      if (ctaCmd) ctaCmd.textContent = installCommands[pm];
+    });
+  });
+</script>

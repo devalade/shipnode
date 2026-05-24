@@ -1,0 +1,55 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout
+  title="Terms of Service — ShipNode"
+  description="ShipNode is MIT-licensed open-source software provided as-is for deploying Node.js apps to your own server."
+>
+  <main class="page" id="main-content">
+    <div class="container">
+      <h1>Terms of service</h1>
+      <p class="lead">ShipNode is open-source software provided as-is.</p>
+      <p>ShipNode is licensed under the MIT License. You are free to use, modify, and distribute it. There is no warranty of any kind. The authors are not liable for any damages arising from the use of this software.</p>
+      <p>By using ShipNode, you agree to:</p>
+      <ul>
+        <li>Use it at your own risk</li>
+        <li>Keep your server credentials secure</li>
+        <li>Follow your hosting provider's terms of service</li>
+      </ul>
+      <p>For the full license text, see the <a href="https://github.com/devalade/shipnode/blob/main/LICENSE" target="_blank" rel="noopener">LICENSE file on GitHub</a>.</p>
+    </div>
+  </main>
+</Layout>
+
+<style>
+  .page {
+    padding: 8rem var(--space-xl) var(--space-4xl);
+  }
+  .container {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: var(--space-md);
+    text-wrap: balance;
+  }
+  .lead {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xl);
+    line-height: 1.6;
+  }
+  p, ul {
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: var(--space-md);
+  }
+  ul { padding-left: 1.25rem; }
+  li { margin-bottom: var(--space-xs); }
+  a { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { color: var(--text-primary); }
+</style>

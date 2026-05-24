@@ -1,0 +1,55 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout
+  title="Privacy Policy — ShipNode"
+  description="ShipNode is an open-source CLI that does not collect personal data, track usage, or store logs on ShipNode servers."
+>
+  <main class="page" id="main-content">
+    <div class="container">
+      <h1>Privacy policy</h1>
+      <p class="lead">ShipNode does not collect personal data.</p>
+      <p>This is an open-source CLI tool. It runs on your machine and your server. We do not track usage, store logs on our servers, or share any information with third parties.</p>
+      <p>The only network requests ShipNode makes are:</p>
+      <ul>
+        <li>To your own server over SSH</li>
+        <li>To GitHub (optional, for CI/CD workflow generation)</li>
+        <li>To Let's Encrypt (handled by Caddy on your server)</li>
+      </ul>
+      <p>If you have questions, open an issue on <a href="https://github.com/devalade/shipnode" target="_blank" rel="noopener">GitHub</a>.</p>
+    </div>
+  </main>
+</Layout>
+
+<style>
+  .page {
+    padding: 8rem var(--space-xl) var(--space-4xl);
+  }
+  .container {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: var(--space-md);
+    text-wrap: balance;
+  }
+  .lead {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xl);
+    line-height: 1.6;
+  }
+  p, ul {
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: var(--space-md);
+  }
+  ul { padding-left: 1.25rem; }
+  li { margin-bottom: var(--space-xs); }
+  a { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { color: var(--text-primary); }
+</style>

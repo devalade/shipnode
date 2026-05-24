@@ -1,0 +1,72 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const basePath = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+---
+
+<Layout title="Page Not Found — ShipNode" description="The page you are looking for does not exist." noindex={true}>
+  <main class="page" id="main-content">
+    <div class="container">
+      <span class="code">404</span>
+      <h1>Page not found</h1>
+      <p>The page you are looking for does not exist or has been moved.</p>
+      <a href={basePath} class="back-link">Back to home</a>
+    </div>
+  </main>
+</Layout>
+
+<style>
+  .page {
+    padding: 10rem var(--space-xl) var(--space-4xl);
+    text-align: center;
+  }
+  .container {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .code {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--accent-hover);
+    background: var(--bg-badge);
+    border: 1px solid rgba(79, 107, 237, 0.18);
+    padding: 0.375rem 0.875rem;
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-lg);
+  }
+  h1 {
+    font-size: clamp(1.5rem, 4vw, 2.25rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: var(--space-sm);
+    text-wrap: balance;
+  }
+  p {
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: var(--space-xl);
+  }
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 0.625rem 1.25rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    transition: border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .back-link:hover {
+    border-color: var(--border-accent);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .back-link:active { transform: scale(0.97); }
+</style>
