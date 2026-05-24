@@ -134,6 +134,8 @@ interface HookContext {
 
 `ctx.exec` runs the command on the **remote** server, in the new release directory, with `mise` in `PATH` (so `node`, `pnpm`, etc. are available). Stdout streams to your terminal prefixed with `│`. Non-zero exit throws — that's enough to fail the deploy from a `preDeploy` hook.
 
+See [Recipes](/docs/recipes/) for ready-to-paste hook patterns (Prisma migrations, Slack notifications, Sentry releases, CDN purge, cache priming).
+
 ## Where the config can live
 
 Default: `./shipnode.config.ts`. Override with `--config <path>` on any command — useful for multi-environment setups (see [Multi-environment](/docs/environments/)).

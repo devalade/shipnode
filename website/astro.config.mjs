@@ -39,6 +39,12 @@ export default defineConfig({
           items: [{ autogenerate: { directory: 'docs/commands' } }],
         },
         {
+          label: 'Recipes',
+          items: [
+            { label: 'Hook recipes', slug: 'docs/recipes' },
+          ],
+        },
+        {
           label: 'Operations',
           items: [
             { label: 'CI/CD', slug: 'docs/ci-cd' },
