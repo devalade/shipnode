@@ -83,7 +83,15 @@ export class BackendStrategy implements DeploymentStrategy {
       commands.push(`if [ -f package.json ] && jq -e '.scripts.build' package.json >/dev/null 2>&1; then ${runCmd} build; fi`);
     }
 
-    commands.push(`if [ -d build ] && [ -f .env ]; then ln -sf "${ctx.workDir}/.env" build/.env; fi`);
+    // Symlink `.env` into compiled-output directories so frameworks whose env
+    // loaders resolve relative to the *built app root* (AdonisJS, NestJS) find
+    // it. Three sources, in order of trust:
+    //   1. `appRoot` config — explicit user declaration for monorepos
+    //   2. repo-root `build` / `dist` — the single-app convention
+    //   3. obvious monorepo layouts: `apps/*/build`, `packages/*/build`, dist twins
+    // We never traverse into node_modules and never overwrite an existing
+    // `.env` file.
+    commands.push(this.getEnvSymlinkCommand(ctx.workDir));
 
     const installResult = await ctx.executor.exec(commands.join(' && '));
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
@@ -207,6 +215,26 @@ ${appBlocks.join(',\n')}
 ${envLines}
       },
     }`;
+  }
+
+  private getEnvSymlinkCommand(workDir: string): string {
+    if (!this.config.envFile) return 'true';
+    const targets: string[] = [];
+    if (this.config.appRoot) {
+      targets.push(`${this.config.appRoot}/build`, `${this.config.appRoot}/dist`);
+    }
+    // Always include the single-app convention.
+    targets.push('build', 'dist');
+    const explicit = targets.map((t) => `"${t}"`).join(' ');
+    // Wrapped in `{ ...; } || true` so projects without a `.env` file or with
+    // no matching build dirs don't break the install/build chain.
+    // `nullglob` makes `apps/*/build` collapse to nothing when there's no match.
+    return (
+      `{ [ -f .env ] && shopt -s nullglob && ` +
+      `for dir in ${explicit} apps/*/build packages/*/build apps/*/dist packages/*/dist; do ` +
+      `if [ -d "$dir" ] && [ ! -e "$dir/.env" ]; then ln -sf "${workDir}/.env" "$dir/.env"; fi; ` +
+      `done; shopt -u nullglob; } || true`
+    );
   }
 
   private getLinkSharedResourcesCommand(workDir: string): string {

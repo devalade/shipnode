@@ -84,6 +84,7 @@ export function assembleConfig(partial: AssembleInput): ShipnodeConfig {
     sharedDirs: partial.sharedDirs,
     sharedFiles: partial.sharedFiles,
     buildDir: partial.buildDir,
+    appRoot: partial.appRoot,
     database: partial.database,
     redis: partial.redis,
     backup: partial.backup,

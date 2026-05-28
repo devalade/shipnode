@@ -114,6 +114,15 @@ export interface ShipnodeConfig {
   /** Override the install command run on the server. Defaults to the package manager's standard install (e.g. `npm ci`). Use to add flags like `--legacy-peer-deps`, switch to a frozen-lockfile variant, etc. */
   installCommand?: string;
   buildDir?: string;
+  /**
+   * Path (relative to the repo root) of the app within a monorepo whose
+   * compiled output reads `.env` from its own root (AdonisJS, NestJS, etc.).
+   * Shipnode symlinks the shared `.env` into `<appRoot>/build` and
+   * `<appRoot>/dist`. Unset = single-app layout; shipnode auto-detects
+   * `build` / `dist` at the repo root and any obvious `apps/*` / `packages/*`
+   * build outputs.
+   */
+  appRoot?: string;
   sharedDirs?: string[];
   sharedFiles?: string[];
   database?: DatabaseConfig;

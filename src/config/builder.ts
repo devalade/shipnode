@@ -139,6 +139,11 @@ export class ShipnodeBuilder {
     return this;
   }
 
+  appRoot(dir: string): this {
+    this.config.appRoot = dir;
+    return this;
+  }
+
   database(opts: DatabaseConfig): this {
     this.config.database = opts;
     return this;

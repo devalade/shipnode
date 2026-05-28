@@ -189,6 +189,29 @@ describe('BackendStrategy.setupEnvironment', () => {
     expect(cmd).toContain('shared/.env');
   });
 
+  it('symlinks .env into appRoot/build when appRoot is configured (monorepo)', async () => {
+    const config = makeConfig({ appRoot: 'apps/backend' });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.setupEnvironment!(makeCtx(executor, { config }));
+
+    const cmd = executor.getLastCommand()!.command;
+    expect(cmd).toContain('"apps/backend/build"');
+    expect(cmd).toContain('"apps/backend/dist"');
+  });
+
+  it('also scans apps/*/build and packages/*/build for monorepos (no appRoot)', async () => {
+    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.setupEnvironment!(makeCtx(executor));
+
+    const cmd = executor.getLastCommand()!.command;
+    expect(cmd).toContain('apps/*/build');
+    expect(cmd).toContain('packages/*/build');
+    expect(cmd).toContain('"build"');
+    expect(cmd).toContain('"dist"');
+  });
+
   it('links the shared env using the configured envFile name, not a hardcoded .env', async () => {
     const config = makeConfig({ envFile: '.env.production' });
     const strategy = new BackendStrategy(config, '/local/project');

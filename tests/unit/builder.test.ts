@@ -227,6 +227,17 @@ describe('ShipnodeBuilder', () => {
     expect(a.pkgManager).toBe(b.pkgManager);
   });
 
+  it('sets appRoot for monorepo env-file discovery', () => {
+    const config = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '1.2.3.4', user: 'deploy' })
+      .deployTo('/var/www/app')
+      .appRoot('apps/backend')
+      .build();
+
+    expect(config.appRoot).toBe('apps/backend');
+  });
+
   it('sets backup config', () => {
     const config = new ShipnodeBuilder()
       .backend()
