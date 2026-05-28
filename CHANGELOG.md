@@ -5,6 +5,11 @@ All notable changes to `@devalade/shipnode` will be documented here.
 ## [Unreleased]
 
 ### Fixed
+- **`--config <relative-path>` now resolves against the user's cwd, not against shipnode's install dir.** Previously `shipnode deploy --config ./shipnode.frontend.config.ts` threw `Cannot find module './shipnode.frontend.config.ts'` because jiti's anchor is shipnode's own loader file inside `dist/`. Affected anyone using per-app configs in monorepos. Absolute paths kept working and are unchanged.
+
+## [2.5.0] - 2026-05-28
+
+### Fixed
 - **Env vars now actually reach the app under PM2 7.x.** PM2's `env_file` option silently failed to inject variables in 7.0.x, so AdonisJS / NestJS / any framework that re-validates env at boot crashed with "Missing environment variable" after deploy. Each PM2 app is now started as `bash -c "set -a && . <shared-env> && set +a && exec <original-command>"`; the `env_file` line is gone from the generated ecosystem. Secrets stay in the chmod-600 shared env file — they're not duplicated into `ecosystem.config.cjs`. See [ADR-0003](docs/adr/0003-source-env-instead-of-pm2-env-file.md).
 - **`shipnode env` upload now matches the PM2 ecosystem reference.** Upload was hardcoded to `shared/.env`, while the ecosystem referenced `shared/${envFile}`. If you set `.envFile('.env.production')` the names diverged and PM2 couldn't find the file. Upload now writes to `shared/<envFile>`; a `shared/.env` alias is also maintained so external scripts and the workDir-relative `. ./.env` keep working.
 - **`.env` is auto-sourced before install, build, and `preDeploy`/`postDeploy` hooks.** Private-registry tokens referenced via `${VAR}` in `.npmrc` now resolve on the remote, and framework CLIs invoked from hooks (`node ace.js migration:run`, `nest start --watch`, etc.) see the same env vars the running app will. No more crafting bespoke `installCommand: 'set -a && ...'` snippets.

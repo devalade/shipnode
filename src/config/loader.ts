@@ -39,7 +39,11 @@ async function detectEnvFile(configFile: string, cwd: string): Promise<string> {
 }
 
 export async function loadConfig(cwd: string, configPath?: string): Promise<ShipnodeConfig> {
-  const file = configPath ?? resolve(cwd, 'shipnode.config.ts');
+  // Resolve against the user's cwd so `--config ./shipnode.frontend.config.ts`
+  // works the same as `--config shipnode.frontend.config.ts`. Without this,
+  // jiti's anchor is shipnode's own dist/ dir and relative paths blow up with
+  // "Cannot find module". `resolve()` returns absolute paths unchanged.
+  const file = configPath ? resolve(cwd, configPath) : resolve(cwd, 'shipnode.config.ts');
   await loadEnvIntoProcess(await detectEnvFile(file, cwd));
 
   const exists = await pathExists(file);
