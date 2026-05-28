@@ -10,7 +10,12 @@ All notable changes to `@devalade/shipnode` will be documented here.
 - **`.env` is auto-sourced before install, build, and `preDeploy`/`postDeploy` hooks.** Private-registry tokens referenced via `${VAR}` in `.npmrc` now resolve on the remote, and framework CLIs invoked from hooks (`node ace.js migration:run`, `nest start --watch`, etc.) see the same env vars the running app will. No more crafting bespoke `installCommand: 'set -a && ...'` snippets.
 
 ### Added
-- **`.appRoot(path)` builder method** — declare a monorepo's app directory (e.g. `apps/backend`) so shipnode symlinks the shared `.env` into `<appRoot>/build` and `<appRoot>/dist`. Required for frameworks like AdonisJS whose env loader reads `.env` from the compiled app root rather than the repo root. When unset, shipnode also auto-scans common monorepo layouts (`apps/*/build`, `packages/*/build`, plus single-app `build`/`dist` at the repo root).
+- **`.appRoot(path)` builder method** — declare a monorepo's app directory (e.g. `apps/backend`). Used for three things:
+  1. Symlinks the shared `.env` into `<appRoot>/build` and `<appRoot>/dist` so frameworks like AdonisJS (whose env loader reads `.env` from the compiled app root) find it.
+  2. PM2 launches the process with `cwd: <remotePath>/current/<appRoot>` — `pnpm start` now reads `<appRoot>/package.json`'s start script instead of forcing the workspace root to know about `apps/backend/build/bin/server.js`.
+  3. `preDeploy` / `postDeploy` hooks run from `<workDir>/<appRoot>` — `await exec('node build/ace.js migration:run')` works without path duplication.
+  
+  Install and build still run from the workspace root (so workspaces/turbo/nx behave normally). When unset, shipnode also auto-scans common monorepo layouts (`apps/*/build`, `packages/*/build`, plus single-app `build`/`dist` at the repo root) for the env symlink only.
 
 ## [2.3.0] - 2026-05-24
 

@@ -127,10 +127,59 @@ describe('DeployOrchestrator', () => {
     await orchestrator.deploy(fakeStrategy(), { cwd: '/test', skipBuild: false });
 
     expect(captured).toBeDefined();
-    const sourceIdx = captured!.indexOf('set -a && . ./.env && set +a');
+    // Env is sourced via absolute workDir path so it works regardless of
+    // whether the hook runs from workDir or `<workDir>/<appRoot>`.
+    const sourceIdx = captured!.search(/set -a && \. "[^"]*\/\.env" && set \+a/);
     const userIdx = captured!.indexOf('node ace.js migration:run');
     expect(sourceIdx).toBeGreaterThan(-1);
     expect(userIdx).toBeGreaterThan(sourceIdx);
+  });
+
+  it('runs hooks from <workDir>/<appRoot> when appRoot is configured', async () => {
+    const executor = new FakeRemoteExecutor();
+    let captured: string | undefined;
+    const config = makeConfig({
+      envFile: '.env.production',
+      appRoot: 'apps/backend',
+      hooks: {
+        preDeploy: async (ctx) => {
+          await ctx.exec('node build/ace.js migration:run');
+        },
+      },
+      healthCheck: { enabled: false, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
+    });
+
+    executor
+      .when((cmd) => cmd.includes('mkdir -p'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
+      .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
+      .when((cmd) => {
+        if (cmd.includes('migration:run')) captured = cmd;
+        return cmd.includes('migration:run');
+      }, { stdout: '', exitCode: 0 });
+
+    const { ReleaseManager, DeployLock } = await import('../../src/domain/release/manager.js');
+    const { HealthCheckService } = await import('../../src/services/health.service.js');
+    const { CaddyService } = await import('../../src/services/caddy.service.js');
+
+    const orchestrator = new DeployOrchestrator(
+      config,
+      executor,
+      new ReleaseManager(executor, config.remotePath, config.keepReleases),
+      new DeployLock(executor, config.remotePath),
+      new HealthCheckService(executor, config),
+      new CaddyService(executor, config),
+    );
+
+    await orchestrator.deploy(fakeStrategy(), { cwd: '/test', skipBuild: false });
+
+    expect(captured).toBeDefined();
+    // cd targets the app subdir; release path is the dynamic releases/<ts> dir.
+    expect(captured).toMatch(/cd "\/var\/www\/app\/releases\/[^"]+\/apps\/backend"/);
   });
 
   it('skips health check when disabled', async () => {

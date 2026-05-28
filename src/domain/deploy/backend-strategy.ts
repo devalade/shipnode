@@ -227,10 +227,18 @@ ${appBlocks.join(',\n')}
       argsLine = origArgs ? `\n      args: '${escapeSingleQuotes(origArgs)}',` : '';
     }
 
+    // When appRoot is set, launch the process from that subdir so e.g.
+    // `pnpm start` reads `<appRoot>/package.json`'s start script and Node
+    // resolves require paths against the app, not the workspace root.
+    // Install/build still run at the workspace root.
+    const cwdLine = this.config.appRoot
+      ? `\n      cwd: '${escapeSingleQuotes(`${this.config.remotePath}/current/${this.config.appRoot}`)}',`
+      : '';
+
     return `    {
       name: '${escapeSingleQuotes(pm2Name)}',
       namespace: '${escapeSingleQuotes(namespace)}',
-      ${scriptLine}${argsLine}
+      ${scriptLine}${argsLine}${cwdLine}
       instances: ${instances},
       exec_mode: 'fork',
       max_memory_restart: '${maxMemory}',

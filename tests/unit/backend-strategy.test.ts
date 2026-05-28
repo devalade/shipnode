@@ -418,6 +418,28 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).toContain('exec');
   });
 
+  it('sets PM2 cwd to <remotePath>/current/<appRoot> when appRoot is configured', async () => {
+    const config = makeConfig({ appRoot: 'apps/backend' });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { config }));
+
+    const writeCmd = executor.getHistory()[0].command;
+    // PM2 launches the script from inside the app dir so `pnpm start` reads
+    // apps/backend/package.json, not the workspace root.
+    expect(writeCmd).toContain('/var/www/app/current/apps/backend');
+    expect(writeCmd).toMatch(/cwd:/);
+  });
+
+  it('omits PM2 cwd when no appRoot — single-app layout stays default', async () => {
+    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor));
+
+    const writeCmd = executor.getHistory()[0].command;
+    expect(writeCmd).not.toMatch(/cwd:/);
+  });
+
   it('wraps worker commands too so workers see the same env as the web app', async () => {
     const config = assembleConfig({
       app: 'backend',

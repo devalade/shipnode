@@ -115,12 +115,17 @@ export class DeployOrchestrator {
     if (!hook) return;
 
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-    // Source `.env` (symlinked into workDir during setupEnvironment) so hook
-    // commands like `node ace.js migration:run` see the same env vars that
-    // PM2 will load at startup. Without this, framework CLIs (AdonisJS,
-    // NestJS) re-validate env from the build dir and crash on missing vars.
-    // No-op when the project declares no envFile.
-    const envSource = this.config.envFile ? `set -a && . ./.env && set +a && ` : '';
+    // When appRoot is set, run hook commands from inside the app subdir so
+    // relative paths in user commands (`node build/ace.js`, `pnpm exec ...`)
+    // resolve against the app, not the workspace root.
+    const hookCwd = this.config.appRoot ? `${workDir}/${this.config.appRoot}` : workDir;
+    // Source `.env` via absolute workDir path so it works regardless of
+    // hookCwd. The file is symlinked into workDir during setupEnvironment;
+    // PM2 will load the same vars at startup, so hooks and the app agree on
+    // their environment. No-op when the project declares no envFile.
+    const envSource = this.config.envFile
+      ? `set -a && . "${workDir}/.env" && set +a && `
+      : '';
     const prefix = chalk.dim('  │ ');
 
     const onData = (chunk: string): void => {
@@ -134,7 +139,7 @@ export class DeployOrchestrator {
       env: 'production',
       exec: async (cmd: string): Promise<ExecResult> => {
         const result = await this.executor.exec(
-          `cd "${workDir}" && ${mise} && ${envSource}${cmd}`,
+          `cd "${hookCwd}" && ${mise} && ${envSource}${cmd}`,
           { onData },
         );
         if (result.exitCode !== 0) {
