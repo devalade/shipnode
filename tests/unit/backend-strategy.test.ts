@@ -212,6 +212,18 @@ describe('BackendStrategy.setupEnvironment', () => {
     expect(cmd).toContain('"dist"');
   });
 
+  it('sources .env before install so private-registry tokens (npmrc ${VAR}) resolve', async () => {
+    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.setupEnvironment!(makeCtx(executor));
+
+    const cmd = executor.getLastCommand()!.command;
+    const sourceIdx = cmd.indexOf('set -a && . ./.env && set +a');
+    const installIdx = cmd.indexOf('pnpm install');
+    expect(sourceIdx).toBeGreaterThan(-1);
+    expect(installIdx).toBeGreaterThan(sourceIdx);
+  });
+
   it('links the shared env using the configured envFile name, not a hardcoded .env', async () => {
     const config = makeConfig({ envFile: '.env.production' });
     const strategy = new BackendStrategy(config, '/local/project');

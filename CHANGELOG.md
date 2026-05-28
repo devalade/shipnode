@@ -4,6 +4,14 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Env vars now actually reach the app under PM2 7.x.** PM2's `env_file` option silently failed to inject variables in 7.0.x, so AdonisJS / NestJS / any framework that re-validates env at boot crashed with "Missing environment variable" after deploy. Each PM2 app is now started as `bash -c "set -a && . <shared-env> && set +a && exec <original-command>"`; the `env_file` line is gone from the generated ecosystem. Secrets stay in the chmod-600 shared env file — they're not duplicated into `ecosystem.config.cjs`. See [ADR-0003](docs/adr/0003-source-env-instead-of-pm2-env-file.md).
+- **`shipnode env` upload now matches the PM2 ecosystem reference.** Upload was hardcoded to `shared/.env`, while the ecosystem referenced `shared/${envFile}`. If you set `.envFile('.env.production')` the names diverged and PM2 couldn't find the file. Upload now writes to `shared/<envFile>`; a `shared/.env` alias is also maintained so external scripts and the workDir-relative `. ./.env` keep working.
+- **`.env` is auto-sourced before install, build, and `preDeploy`/`postDeploy` hooks.** Private-registry tokens referenced via `${VAR}` in `.npmrc` now resolve on the remote, and framework CLIs invoked from hooks (`node ace.js migration:run`, `nest start --watch`, etc.) see the same env vars the running app will. No more crafting bespoke `installCommand: 'set -a && ...'` snippets.
+
+### Added
+- **`.appRoot(path)` builder method** — declare a monorepo's app directory (e.g. `apps/backend`) so shipnode symlinks the shared `.env` into `<appRoot>/build` and `<appRoot>/dist`. Required for frameworks like AdonisJS whose env loader reads `.env` from the compiled app root rather than the repo root. When unset, shipnode also auto-scans common monorepo layouts (`apps/*/build`, `packages/*/build`, plus single-app `build`/`dist` at the repo root).
+
 ## [2.3.0] - 2026-05-24
 
 ### Added

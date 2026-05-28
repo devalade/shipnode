@@ -20,6 +20,20 @@ function parseCommand(command: string | undefined, pkgManager: string): { script
   return { script: parts[0], args: parts.slice(1).join(' ') };
 }
 
+/**
+ * Shell snippet that sources the workDir-local `.env` into the current shell
+ * so subsequent && commands inherit the variables. Returns empty string when
+ * the project has no envFile so callers can interpolate it unconditionally.
+ *
+ * Used during install, build, and post-symlink relink. The PM2 wrapper takes
+ * the same approach (see generateAppBlock) but sources `<shared>/<envFile>`
+ * directly — it doesn't depend on the workDir symlink.
+ */
+function sourceEnvCommand(envFile: string | undefined): string {
+  if (!envFile) return '';
+  return `set -a && . ./.env && set +a`;
+}
+
 export class BackendStrategy implements DeploymentStrategy {
   readonly name = 'backend';
 
@@ -66,6 +80,11 @@ export class BackendStrategy implements DeploymentStrategy {
       // Use the configured env filename in the shared path; the local workDir
       // alias stays `.env` (the well-known name framework loaders look for).
       commands.push(`ln -sf "${this.config.remotePath}/shared/${this.config.envFile}" .env`);
+      // Source it so install/build see env vars (private-registry tokens in
+      // `.npmrc` via `${TOKEN}`, build-time secrets, etc.). Affects this shell
+      // chain only; the PM2 wrapper sources independently at process start.
+      const sourceCmd = sourceEnvCommand(this.config.envFile);
+      if (sourceCmd) commands.push(sourceCmd);
     }
 
     // Ensure third-party package managers are available on the remote
@@ -124,8 +143,12 @@ export class BackendStrategy implements DeploymentStrategy {
     // chosen their flags and appending --prefer-offline would compose poorly.
     const baseInstall = this.config.installCommand ?? getInstallCommand(pkgManager);
     const relinkInstall = this.config.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
+    // Source env before relinking too — same reason as setupEnvironment:
+    // private-registry tokens in `.npmrc` use env-var interpolation.
+    const sourceCmd = sourceEnvCommand(this.config.envFile);
+    const sourceStep = sourceCmd ? `${sourceCmd} && ` : '';
     const installResult = await ctx.executor.exec(
-      `cd "${cdPath}" && ${mise} && ${relinkInstall}`,
+      `cd "${cdPath}" && ${mise} && ${sourceStep}${relinkInstall}`,
     );
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
     if (installResult.exitCode !== 0) {

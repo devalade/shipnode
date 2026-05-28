@@ -115,6 +115,12 @@ export class DeployOrchestrator {
     if (!hook) return;
 
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    // Source `.env` (symlinked into workDir during setupEnvironment) so hook
+    // commands like `node ace.js migration:run` see the same env vars that
+    // PM2 will load at startup. Without this, framework CLIs (AdonisJS,
+    // NestJS) re-validate env from the build dir and crash on missing vars.
+    // No-op when the project declares no envFile.
+    const envSource = this.config.envFile ? `set -a && . ./.env && set +a && ` : '';
     const prefix = chalk.dim('  │ ');
 
     const onData = (chunk: string): void => {
@@ -127,7 +133,10 @@ export class DeployOrchestrator {
       config: this.config,
       env: 'production',
       exec: async (cmd: string): Promise<ExecResult> => {
-        const result = await this.executor.exec(`cd "${workDir}" && ${mise} && ${cmd}`, { onData });
+        const result = await this.executor.exec(
+          `cd "${workDir}" && ${mise} && ${envSource}${cmd}`,
+          { onData },
+        );
         if (result.exitCode !== 0) {
           throw new Error(result.stderr || result.stdout || `Command failed: ${cmd}`);
         }
