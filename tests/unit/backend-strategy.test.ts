@@ -188,6 +188,17 @@ describe('BackendStrategy.setupEnvironment', () => {
     const cmd = executor.getLastCommand()!.command;
     expect(cmd).toContain('shared/.env');
   });
+
+  it('links the shared env using the configured envFile name, not a hardcoded .env', async () => {
+    const config = makeConfig({ envFile: '.env.production' });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.setupEnvironment!(makeCtx(executor, { config }));
+
+    const cmd = executor.getLastCommand()!.command;
+    expect(cmd).toContain('shared/.env.production');
+    expect(cmd).toContain('ln -sf "/var/www/app/shared/.env.production" .env');
+  });
 });
 
 // ── startApp ──────────────────────────────────────────────────────

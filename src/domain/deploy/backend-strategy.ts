@@ -63,7 +63,9 @@ export class BackendStrategy implements DeploymentStrategy {
     }
 
     if (this.config.envFile) {
-      commands.push(`ln -sf "${this.config.remotePath}/shared/.env" .env`);
+      // Use the configured env filename in the shared path; the local workDir
+      // alias stays `.env` (the well-known name framework loaders look for).
+      commands.push(`ln -sf "${this.config.remotePath}/shared/${this.config.envFile}" .env`);
     }
 
     // Ensure third-party package managers are available on the remote

@@ -26,6 +26,18 @@ describe('env upload — executor contract', () => {
     expect(history.some((h) => h.command.includes('chmod 600'))).toBe(true);
   });
 
+  it('uploads to shared/<envFile name>, not a hardcoded shared/.env', async () => {
+    // The previous behavior hardcoded shared/.env regardless of the configured
+    // filename, which broke the PM2 ecosystem reference that already used
+    // `shared/${envFile}`. Upload + ecosystem now agree.
+    const remotePath = '/var/www/app';
+    const envFile = '.env.production';
+    const sharedEnv = `${remotePath}/shared/${envFile}`;
+
+    expect(sharedEnv).toBe('/var/www/app/shared/.env.production');
+    expect(sharedEnv).not.toBe(`${remotePath}/shared/.env`);
+  });
+
   it('links shared .env into current release for zero-downtime', async () => {
     const executor = new FakeRemoteExecutor();
     executor

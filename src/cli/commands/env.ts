@@ -24,10 +24,18 @@ export async function cmdEnv(
       const content = await readFile(localEnvPath);
       const b64 = content.toString('base64');
 
-      const sharedEnv = `${config.remotePath}/shared/.env`;
+      // Store with the configured envFile name so the PM2 ecosystem reference
+      // (`shared/${envFile}`) and the workDir symlink target stay consistent.
+      // Maintain a `.env` alias too — older configs and any external scripts
+      // that read `shared/.env` keep working.
+      const sharedEnv = `${config.remotePath}/shared/${config.envFile}`;
+      const sharedEnvAlias = `${config.remotePath}/shared/.env`;
       await executor.exec(`mkdir -p "${config.remotePath}/shared"`);
       await executor.exec(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
       await executor.exec(`chmod 600 "${sharedEnv}"`);
+      if (config.envFile !== '.env') {
+        await executor.exec(`ln -sf "${sharedEnv}" "${sharedEnvAlias}"`);
+      }
       ui.success(`Uploaded to ${sharedEnv}`);
 
       const linkResult = await executor.exec(
