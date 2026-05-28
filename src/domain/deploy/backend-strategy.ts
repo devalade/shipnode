@@ -159,8 +159,16 @@ ${appBlocks.join(',\n')}
 };`;
   }
 
+  /**
+   * Render one PM2 ecosystem entry.
+   *
+   * We deliberately avoid PM2's `env_file` option (unreliable in PM2 7.x — see
+   * ADR-0003) and wrap the user's command in `bash -c` that sources the shared
+   * env file before `exec`ing the real script. `args` is emitted as an array
+   * to avoid PM2 word-splitting the wrapped command on whitespace.
+   */
   private generateAppBlock(app: Pm2App, pkgManager: string, namespace: string, envFilePath: string): string {
-    const { script, args } = parseCommand(app.command, pkgManager);
+    const { script: origScript, args: origArgs } = parseCommand(app.command, pkgManager);
     const instances = app.instances ?? 1;
     const maxMemory = app.maxMemory ?? '512M';
 
@@ -174,14 +182,27 @@ ${appBlocks.join(',\n')}
 
     const pm2Name = getPm2Name(namespace, app.name);
 
+    const useWrapper = Boolean(this.config.envFile);
+    let scriptLine: string;
+    let argsLine: string;
+
+    if (useWrapper) {
+      const tail = origArgs ? `${origScript} ${origArgs}` : origScript;
+      const inner = `set -a && . '${escapeSingleQuotes(envFilePath)}' && set +a && exec ${tail}`;
+      scriptLine = `script: 'bash',`;
+      argsLine = `\n      args: ['-c', '${escapeSingleQuotes(inner)}'],`;
+    } else {
+      scriptLine = `script: '${escapeSingleQuotes(origScript)}',`;
+      argsLine = origArgs ? `\n      args: '${escapeSingleQuotes(origArgs)}',` : '';
+    }
+
     return `    {
       name: '${escapeSingleQuotes(pm2Name)}',
       namespace: '${escapeSingleQuotes(namespace)}',
-      script: '${escapeSingleQuotes(script)}',${args ? `\n      args: '${escapeSingleQuotes(args)}',` : ''}
+      ${scriptLine}${argsLine}
       instances: ${instances},
       exec_mode: 'fork',
       max_memory_restart: '${maxMemory}',
-      env_file: '${envFilePath}',
       env: {
 ${envLines}
       },

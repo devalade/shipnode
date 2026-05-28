@@ -370,6 +370,39 @@ describe('BackendStrategy.startApp', () => {
     await expect(strategy.startApp!(makeCtx(executor))).rejects.toThrow('pnpm approve-builds');
   });
 
+  it('drops the env_file ecosystem entry in favor of a bash -c env wrapper (ADR-0003)', async () => {
+    const strategy = new BackendStrategy(makeConfig({ envFile: '.env.production' }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor));
+
+    const writeCmd = executor.getHistory()[0].command;
+    expect(writeCmd).not.toContain('env_file:');
+    expect(writeCmd).toContain(`script: '"'"'bash'"'"',`);
+    expect(writeCmd).toContain('shared/.env.production');
+    expect(writeCmd).toContain('set -a');
+    expect(writeCmd).toContain('exec');
+  });
+
+  it('wraps worker commands too so workers see the same env as the web app', async () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: { apps: [
+        { name: 'api', port: 3000 },
+        { name: 'worker', command: 'node dist/worker.js --queue=mail' },
+      ] },
+      envFile: '.env.production',
+      pkgManager: 'npm',
+    });
+    const strategy = new BackendStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { config }));
+
+    const writeCmd = executor.getHistory()[0].command;
+    expect(writeCmd).toContain('exec node dist/worker.js --queue=mail');
+  });
+
   it('throws DeployError when pnpm reports ERR_PNPM_IGNORED_BUILDS during setupEnvironment', async () => {
     const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
