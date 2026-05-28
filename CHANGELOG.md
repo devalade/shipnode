@@ -4,6 +4,8 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-05-28
+
 ### Fixed
 - **`--config <relative-path>` now resolves against the user's cwd, not against shipnode's install dir.** Previously `shipnode deploy --config ./shipnode.frontend.config.ts` threw `Cannot find module './shipnode.frontend.config.ts'` because jiti's anchor is shipnode's own loader file inside `dist/`. Affected anyone using per-app configs in monorepos. Absolute paths kept working and are unchanged.
 
