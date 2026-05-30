@@ -1,4 +1,7 @@
 ---
+const basePath = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
 ---
 
 <section class="shell-section get-started" id="get-started">
@@ -17,7 +20,7 @@
       <code id="cta-install-cmd">npm install -D @devalade/shipnode</code>
       <div class="cta-links">
         <a href="https://github.com/devalade/shipnode" target="_blank" rel="noopener" class="primary">View source</a>
-        <a href="https://github.com/devalade/shipnode#getting-started" target="_blank" rel="noopener">Read docs</a>
+        <a href={`${basePath}docs/`}>Read docs</a>
       </div>
     </div>
   </div>
