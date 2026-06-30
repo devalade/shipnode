@@ -66,7 +66,6 @@ export interface BackupConfig {
 
 export interface CloudflareConfig {
   zone: string;
-  appHostname?: string;
   sshHostname?: string;
   tunnelName?: string;
   lockdownFirewall?: boolean;

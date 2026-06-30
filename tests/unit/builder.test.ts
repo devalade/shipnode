@@ -29,7 +29,7 @@ describe('ShipnodeBuilder', () => {
       .database({ type: 'postgres', host: 'localhost', port: 5432, name: 'db', user: 'u', password: 'p' })
       .redis({ host: 'localhost', port: 6379, password: 'rp' })
       .backup({ s3Bucket: 'backups', s3Prefix: 'prod', schedule: 'daily', retentionDays: 30 })
-      .cloudflare({ zone: 'example.com', appHostname: 'api.example.com', tunnelName: 't', lockdownFirewall: true })
+      .cloudflare({ zone: 'example.com', tunnelName: 't', lockdownFirewall: true })
       .preDeploy(preDeploy)
       .postDeploy(postDeploy)
       .aliases({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' })
@@ -55,7 +55,7 @@ describe('ShipnodeBuilder', () => {
     expect(config.database).toMatchObject({ type: 'postgres', host: 'localhost', port: 5432, name: 'db', user: 'u', password: 'p' });
     expect(config.redis).toEqual({ host: 'localhost', port: 6379, password: 'rp' });
     expect(config.backup).toMatchObject({ s3Bucket: 'backups', s3Prefix: 'prod', schedule: 'daily', retentionDays: 30 });
-    expect(config.cloudflare).toMatchObject({ zone: 'example.com', appHostname: 'api.example.com', tunnelName: 't', lockdownFirewall: true });
+    expect(config.cloudflare).toMatchObject({ zone: 'example.com', tunnelName: 't', lockdownFirewall: true });
     expect(config.apps[0].hooks?.preDeploy).toBe(preDeploy);
     expect(config.apps[0].hooks?.postDeploy).toBe(postDeploy);
     expect(config.aliases).toEqual({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' });
@@ -316,11 +316,10 @@ describe('ShipnodeBuilder', () => {
       .backend()
       .ssh({ host: '1.2.3.4', user: 'deploy' })
       .deployTo('/var/www/app')
-      .cloudflare({ zone: 'example.com', appHostname: 'app.example.com', lockdownFirewall: true })
+      .cloudflare({ zone: 'example.com', tunnelName: 'app', lockdownFirewall: true })
       .build();
 
     expect(config.cloudflare?.zone).toBe('example.com');
-    expect(config.cloudflare?.appHostname).toBe('app.example.com');
     expect(config.cloudflare?.lockdownFirewall).toBe(true);
   });
 });

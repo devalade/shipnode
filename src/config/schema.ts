@@ -69,7 +69,6 @@ export const BackupConfigSchema = z.object({
 
 export const CloudflareConfigSchema = z.object({
   zone: z.string().min(1, 'Cloudflare zone is required'),
-  appHostname: z.string().optional(),
   sshHostname: z.string().optional(),
   tunnelName: z.string().optional(),
   lockdownFirewall: z.boolean().default(false),

@@ -30,7 +30,9 @@ export async function cmdCloudflareAudit(
     const orchestrator = new CloudflareOrchestrator(executor, config, requireToken());
     const result = await orchestrator.audit();
     console.log(`  Zone: ${result.zone.name} (${result.zone.id}) — ${result.zone.status}`);
-    if (result.dns) console.log(`  DNS: ${result.dns}`);
+    for (const app of result.apps) {
+      console.log(`  DNS ${app.domain} → localhost:${app.port}`);
+    }
     console.log(`  cloudflared tunnels:\n${result.tunnelList}`);
     console.log(`  cloudflared service: ${result.service}`);
   }, { configPath: options.config });

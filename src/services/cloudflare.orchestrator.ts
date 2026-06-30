@@ -1,7 +1,7 @@
 import type { ShipnodeConfig } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { CloudflareApi } from '../infrastructure/cloudflare/api.js';
-import { getWebApp } from '../domain/pm2/apps.js';
+import { Tunnel } from '../domain/cloudflare/tunnel.js';
 
 export class CloudflareOrchestrator {
   private api: CloudflareApi;
@@ -19,21 +19,27 @@ export class CloudflareOrchestrator {
     if (!cf) throw new Error('No cloudflare config found.');
 
     await this.ensureCloudflaredInstalled();
-
     const tunnelName = cf.tunnelName ?? `shipnode-${this.config.ssh.host.replace(/\./g, '-')}`;
 
     await this.executor.exec(`cloudflared tunnel create "${tunnelName}" 2>&1`);
     const tunnelId = await this.resolveTunnelId();
 
-    if (cf.appHostname) {
-      await this.executor.exec(`cloudflared tunnel route dns "${tunnelName}" "${cf.appHostname}"`);
+    const tunnel = new Tunnel(tunnelName, tunnelId, `/root/.cloudflared/${tunnelId}.json`);
+
+    for (const app of this.config.apps) {
+      const webApp = app.pm2?.apps.find((a) => a.port !== undefined);
+      if (app.domain && webApp) {
+        tunnel.addIngress(app.domain, `http://localhost:${webApp.port}`);
+        await this.executor.exec(`cloudflared tunnel route dns "${tunnelName}" "${app.domain}"`);
+      }
     }
 
     if (cf.sshHostname) {
+      tunnel.addIngress(cf.sshHostname, 'ssh://localhost:22');
       await this.executor.exec(`cloudflared tunnel route dns "${tunnelName}" "${cf.sshHostname}"`);
     }
 
-    await this.writeTunnelConfig(tunnelId, cf);
+    await this.writeConfig(tunnel);
     await this.installAndStartService();
 
     if (cf.lockdownFirewall) {
@@ -45,18 +51,19 @@ export class CloudflareOrchestrator {
     }
   }
 
-  async audit(): Promise<{ zone: { name: string; id: string; status: string }; dns: string; tunnelList: string; service: string }> {
+  async audit(): Promise<{ zone: { name: string; id: string; status: string }; apps: { domain: string; port: number | undefined }[]; tunnelList: string; service: string }> {
     const cf = this.config.cloudflare;
     if (!cf) throw new Error('No cloudflare config found.');
 
     const zoneId = await this.api.getZoneId(cf.zone);
     const zoneInfo = await this.api.fetch<{ id: string; name: string; status: string }>(`/zones/${zoneId}`);
 
-    let dns = '';
-    if (cf.appHostname) {
-      const records = await this.api.getDnsRecords(zoneId, cf.appHostname);
-      dns = records.length ? `${records[0].type} → ${records[0].content}` : 'NOT FOUND';
-    }
+    const apps = this.config.apps
+      .map((a) => {
+        const web = a.pm2?.apps.find((p) => p.port !== undefined);
+        return web && a.domain ? { domain: a.domain, port: web.port } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
 
     const tunnelResult = await this.executor.exec('cloudflared tunnel list 2>/dev/null || echo MISSING');
     const tunnelList = tunnelResult.stdout.includes('MISSING') ? 'not installed' : tunnelResult.stdout.trim();
@@ -65,7 +72,7 @@ export class CloudflareOrchestrator {
 
     return {
       zone: { name: zoneInfo.name, id: zoneInfo.id, status: zoneInfo.status },
-      dns,
+      apps,
       tunnelList,
       service: svcResult.stdout.trim(),
     };
@@ -100,28 +107,9 @@ export class CloudflareOrchestrator {
     return tunnelId;
   }
 
-  private async writeTunnelConfig(tunnelId: string, cf: NonNullable<ShipnodeConfig['cloudflare']>): Promise<void> {
-    const webApp = getWebApp(this.config);
-    if (cf.appHostname && !webApp) {
-      throw new Error('cloudflare.appHostname is set but no pm2.apps entry declares a port — nothing to route HTTP to.');
-    }
-    const appIngress = cf.appHostname && webApp
-      ? `  - hostname: ${cf.appHostname}\n    service: http://localhost:${webApp.port}`
-      : '';
-    const sshIngress = cf.sshHostname
-      ? `  - hostname: ${cf.sshHostname}\n    service: ssh://localhost:22`
-      : '';
-
-    const cfConfig = `tunnel: ${tunnelId}
-credentials-file: /root/.cloudflared/${tunnelId}.json
-
-ingress:
-${appIngress}
-${sshIngress}
-  - service: http_status:404
-`;
-
-    const b64 = Buffer.from(cfConfig).toString('base64');
+  private async writeConfig(tunnel: Tunnel): Promise<void> {
+    const yaml = tunnel.toYaml();
+    const b64 = Buffer.from(yaml).toString('base64');
     await this.executor.exec(
       `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
       `mkdir -p /etc/cloudflared && ` +
@@ -137,19 +125,25 @@ ${sshIngress}
   }
 
   private async lockdownFirewall(): Promise<void> {
-    const webApp = getWebApp(this.config);
-    if (!webApp) return;
+    const webPorts = this.config.apps
+      .flatMap((a) => a.pm2?.apps ?? [])
+      .filter((a) => a.port !== undefined)
+      .map((a) => a.port!);
+
+    if (!webPorts.length) return;
 
     const cfIps = await this.api.getCloudflareIps();
-    for (const cidr of cfIps.ipv4_cidrs ?? []) {
+    for (const port of webPorts) {
+      for (const cidr of cfIps.ipv4_cidrs ?? []) {
+        await this.executor.exec(
+          `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+          `$SUDO ufw allow from ${cidr} to any port ${port} 2>/dev/null || true`,
+        );
+      }
       await this.executor.exec(
         `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
-        `$SUDO ufw allow from ${cidr} to any port ${webApp.port} 2>/dev/null || true`,
+        `$SUDO ufw deny ${port} 2>/dev/null || true`,
       );
     }
-    await this.executor.exec(
-      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
-      `$SUDO ufw deny ${webApp.port} 2>/dev/null || true`,
-    );
   }
 }
