@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { cmdInit } from './commands/init.js';
 import { cmdDeploy } from './commands/deploy.js';
@@ -25,12 +28,18 @@ import { cmdUpgrade } from './commands/upgrade.js';
 import { cmdBackupSetup, cmdBackupRun, cmdBackupStatus, cmdBackupList } from './commands/backup.js';
 import { cmdCloudflareInit, cmdCloudflareAudit, cmdCloudflareStatus } from './commands/cloudflare.js';
 
+// Read version from package.json so `shipnode --version` stays in sync with the published
+// version automatically. The dist layout puts this file at dist/cli/index.js, so the
+// package.json is two levels up.
+const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+const { version } = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version: string };
+
 const program = new Command();
 
 program
   .name('shipnode')
   .description('Deploy Node.js apps to a single VPS')
-  .version('2.0.0');
+  .version(version);
 
 // ── Core ──────────────────────────────────────────────────────────
 
