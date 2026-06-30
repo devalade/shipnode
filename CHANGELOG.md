@@ -2,7 +2,7 @@
 
 All notable changes to `@devalade/shipnode` will be documented here.
 
-## [3.0.0] - unreleased
+## [3.0.0] - 2026-07-01
 
 ### Added
 - **Multi-app workspaces** — a single `shipnode.config.ts` can now declare multiple applications deployed to the same server, each with its own domain, PM2 process set, health check, env file, build steps, and hooks:
@@ -12,22 +12,31 @@ All notable changes to `@devalade/shipnode` will be documented here.
   - Orchestrator iterates over all apps, selecting the right strategy per-app (backend/frontend).
 - **`--app <name>` CLI flag** — target a single app in a multi-app workspace (`shipnode deploy --app api`, `shipnode logs --app web`). Commands without `--app` apply to all apps. `rollback` requires `--app`.
 - **`getActiveApp(config, name?)` workspace helper** — selects the right app by name or returns `apps[0]` when called without a name.
+- **`domain/cloudflare/` domain model** — `Tunnel` class with typed `Ingress` entries, `toYaml()`/`fromYaml()` serialization, and sorted hostname output for stable, diffable configs.
+- **Multi-hostname tunnel** — `cloudflare init` now enumerates all workspace apps with `domain` + web port and creates one ingress entry per app, with automatic DNS routing.
 
 ### Changed
 - **Config shape split: workspace-level vs. per-app fields.** Workspace-level (`remotePath`, `ssh`, `pkgManager`, `aliases`, `nodeVersion`, etc.) stays on the root config. Per-app fields (`domain`, `pm2`, `healthCheck`, `envFile`, `keepReleases`, `buildDir`, `appRoot`, `sharedDirs`, `sharedFiles`, `hooks`) moved into `apps[]`.
   - Legacy top-level input fields are still accepted and synthesized onto `apps[0]` via `z.preprocess` — backward compatible.
 - **Schema-based assembly** — `assembleConfig` no longer enumerates every field manually. The zod schema is the single source of truth; assembly normalizes legacy input and calls `ShipnodeConfigSchema.parse()`. Prevents drift between builder, schema, and assembly (fixes the pattern that dropped `.aliases()` in 2.5.1).
 - **`BuilderState` is now a standalone type** with workspace-level and legacy input fields, no longer derives from `ShipnodeConfig` (which no longer has those legacy mirrors).
+- **CLI commands are now thin adapters** — `cli/commands/` files are under 80 lines (cloudflare went from 249→49). Business logic extracted to `services/*-orchestrator.ts` and I/O to `infrastructure/`.
+- **`cloudflare init` rewritten** — uses the `Tunnel` domain model, iterates over `config.apps` for ingress entries instead of a single `appHostname`.
 
 ### Removed
 - Legacy top-level mirrors from `ShipnodeConfig` TypeScript shape:
   `config.app`, `config.pm2`, `config.domain`, `config.healthCheck`,
   `config.envFile`, `config.keepReleases`, `config.buildDir`, `config.appRoot`,
   `config.sharedDirs`, `config.sharedFiles`, `config.hooks` — read from `config.apps[i]` instead.
+- **`CloudflareConfig.appHostname`** — use per-app `domain` instead. Ingress entries are now derived automatically from apps with `domain` + web port.
 
 ### Internal
 - **`HooksConfigSchema` uses `z.custom<HookFn>` instead of `z.function()`** — preserves reference equality so `config.hooks.postDeploy === userFn` is true after parse.
 - **Schema-coverage test** (`tests/unit/builder.test.ts`) — every builder setter is exercised in a round-trip; prevents future drift between builder, schema, and assembly.
+- **`src/infrastructure/cloudflare/api.ts`** — Cloudflare API client extracted from CLI command.
+- **`src/infrastructure/provisioning/commands.ts`** — database/Redis setup command builders extracted from setup command.
+- **`src/infrastructure/provisioning/security.ts`** — SSH/UFW/fail2ban command builders extracted from harden command.
+- **`tests/unit/cloudflare.tunnel.test.ts`** — `Tunnel.fromYaml().addIngress(...).toYaml()` round-trip tests.
 
 ## [2.5.2] - 2026-06-30
 

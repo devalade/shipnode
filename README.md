@@ -25,6 +25,8 @@ shipnode deploy
 
 `shipnode init` creates a `shipnode.config.ts` in your project root. You can also write it by hand using the fluent builder:
 
+### Single app (simple)
+
 ```ts
 import { shipnode } from '@devalade/shipnode';
 
@@ -40,6 +42,41 @@ export default shipnode
   .pkgManager('pnpm')
   .build();
 ```
+
+### Multi-app workspace
+
+A monorepo with two apps? Use `.apps([...])` to deploy them together:
+
+```ts
+const api = shipnode
+  .app()
+  .backend()
+  .name('api')
+  .appRoot('apps/backend')
+  .domain('api.example.com')
+  .port(3333)
+  .pm2('api')
+  .preDeploy(async ({ exec }) => exec('node ace.js migration:run --force'));
+
+const web = shipnode
+  .app()
+  .frontend()
+  .name('web')
+  .appRoot('apps/frontend')
+  .domain('www.example.com');
+
+export default shipnode
+  .ssh({ host: '1.2.3.4', user: 'deploy' })
+  .deployTo('/var/www/example')
+  .nodeVersion('22')
+  .pkgManager('pnpm')
+  .apps([api, web])
+  .cloudflare({ zone: 'example.com', tunnelName: 'example' })
+  .database({ type: 'postgres', host: 'localhost', port: 5432, name: 'example', user: 'example' })
+  .build();
+```
+
+Each app gets its own release directory, Caddy site, PM2 ecosystem, and health check. Deploy everything with `shipnode deploy`, or target one app with `shipnode deploy --app api`.
 
 ### Web + workers
 
