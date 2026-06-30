@@ -2,12 +2,32 @@
 
 All notable changes to `@devalade/shipnode` will be documented here.
 
-## [Unreleased]
+## [3.0.0] - unreleased
 
-### Changed (internal, towards 3.0)
-- **Schema is now the single source of truth for the config shape.** `assembleConfig` no longer enumerates every field into a `withDefaults` object — that pattern was how `.aliases()` got dropped in 2.5.1. The function is now a thin transformer: normalize the legacy `pm2 { name }` input onto canonical `pm2.apps`, then hand the whole partial to `ShipnodeConfigSchema.parse`. New fields added to the schema (and their builder methods) are preserved automatically. Schema defaults moved to the schema itself (`app: 'backend'`, `remotePath: '/var/www/app'`) so they are reachable without going through the assembler.
-- **`HooksConfigSchema` uses `z.custom<HookFn>` instead of `z.function()`.** `z.function()` wraps the user's function in a validator, breaking reference equality — `config.hooks.postDeploy === userFn` was false after parse. The custom-with-refine variant validates "is callable" while preserving the reference, which is what the deploy orchestrator needs to invoke the original hook. Aligned with zod 4's deprecation of `z.function()` for value validation.
-- **Schema-coverage test (`tests/unit/builder.test.ts`).** Every builder setter is exercised in a single round-trip; the resulting config is asserted to contain each field written by the builder. Prevents future drift between builder, schema, and assembly.
+### Added
+- **Multi-app workspaces** — a single `shipnode.config.ts` can now declare multiple applications deployed to the same server, each with its own domain, PM2 process set, health check, env file, build steps, and hooks:
+  - New `.app(name, fn)` builder method to define per-app configuration inside a workspace.
+  - New `.apps([api, web])` builder method to compose multiple apps into one deployment.
+  - Each app gets its own release directory (`<remotePath>/<app-name>/releases/<ts>/`), own Caddy site block, own PM2 ecosystem, and own lock file.
+  - Orchestrator iterates over all apps, selecting the right strategy per-app (backend/frontend).
+- **`--app <name>` CLI flag** — target a single app in a multi-app workspace (`shipnode deploy --app api`, `shipnode logs --app web`). Commands without `--app` apply to all apps. `rollback` requires `--app`.
+- **`getActiveApp(config, name?)` workspace helper** — selects the right app by name or returns `apps[0]` when called without a name.
+
+### Changed
+- **Config shape split: workspace-level vs. per-app fields.** Workspace-level (`remotePath`, `ssh`, `pkgManager`, `aliases`, `nodeVersion`, etc.) stays on the root config. Per-app fields (`domain`, `pm2`, `healthCheck`, `envFile`, `keepReleases`, `buildDir`, `appRoot`, `sharedDirs`, `sharedFiles`, `hooks`) moved into `apps[]`.
+  - Legacy top-level input fields are still accepted and synthesized onto `apps[0]` via `z.preprocess` — backward compatible.
+- **Schema-based assembly** — `assembleConfig` no longer enumerates every field manually. The zod schema is the single source of truth; assembly normalizes legacy input and calls `ShipnodeConfigSchema.parse()`. Prevents drift between builder, schema, and assembly (fixes the pattern that dropped `.aliases()` in 2.5.1).
+- **`BuilderState` is now a standalone type** with workspace-level and legacy input fields, no longer derives from `ShipnodeConfig` (which no longer has those legacy mirrors).
+
+### Removed
+- Legacy top-level mirrors from `ShipnodeConfig` TypeScript shape:
+  `config.app`, `config.pm2`, `config.domain`, `config.healthCheck`,
+  `config.envFile`, `config.keepReleases`, `config.buildDir`, `config.appRoot`,
+  `config.sharedDirs`, `config.sharedFiles`, `config.hooks` — read from `config.apps[i]` instead.
+
+### Internal
+- **`HooksConfigSchema` uses `z.custom<HookFn>` instead of `z.function()`** — preserves reference equality so `config.hooks.postDeploy === userFn` is true after parse.
+- **Schema-coverage test** (`tests/unit/builder.test.ts`) — every builder setter is exercised in a round-trip; prevents future drift between builder, schema, and assembly.
 
 ## [2.5.2] - 2026-06-30
 
