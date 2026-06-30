@@ -90,6 +90,7 @@ export function assembleConfig(partial: AssembleInput): ShipnodeConfig {
     backup: partial.backup,
     cloudflare: partial.cloudflare,
     hooks: partial.hooks,
+    aliases: partial.aliases,
   };
 
   return ShipnodeConfigSchema.parse(withDefaults) as ShipnodeConfig;

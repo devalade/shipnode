@@ -91,6 +91,16 @@ describe('assembleConfig', () => {
     })).toThrow();
   });
 
+  it('preserves aliases through assembly', () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      aliases: { migrate: 'pnpm db:apply', seed: 'pnpm db:seed' },
+    });
+    expect(config.aliases).toEqual({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' });
+  });
+
   it('rejects pm2 on frontend apps', () => {
     expect(() => assembleConfig({
       app: 'frontend',

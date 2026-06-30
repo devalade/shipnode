@@ -4,6 +4,11 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-06-30
+
+### Fixed
+- **`.aliases(map)` is no longer silently dropped at config assembly.** The builder stored the map on its internal state, but the zod schema didn't declare an `aliases` field and `assembleConfig` didn't propagate it into the parsed object — so `shipnode run <name>` looked up an empty map and fell through every alias as a raw command. The schema now declares `aliases?: Record<string, string>` and the assembler forwards it. A regression test in `tests/unit/assembly.test.ts` covers the round-trip.
+
 ## [2.5.1] - 2026-05-28
 
 ### Fixed

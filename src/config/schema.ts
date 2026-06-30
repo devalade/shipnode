@@ -102,6 +102,7 @@ export const ShipnodeConfigSchema = z.object({
   backup: BackupConfigSchema,
   cloudflare: CloudflareConfigSchema,
   hooks: HooksConfigSchema,
+  aliases: z.record(z.string(), z.string()).optional(),
 }).refine(
   (cfg) => !(cfg.app === 'frontend' && cfg.pm2),
   { message: 'frontend apps cannot declare pm2 (frontends are static files served by Caddy)', path: ['pm2'] },
