@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { pathExists, ensureDir } from 'fs-extra';
 import { execa } from 'execa';
 import { loadConfig } from '../../config/loader.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { confirm } from '../prompt.js';
 import { ui } from '../ui.js';
 
@@ -195,10 +196,11 @@ export async function cmdCiEnvSync(
   options: { all?: boolean },
 ): Promise<void> {
   const config = await loadConfig(cwd, undefined);
+  const app = getActiveApp(config);
 
-  const envPath = resolve(cwd, config.envFile);
+  const envPath = resolve(cwd, app.envFile);
   if (!(await pathExists(envPath))) {
-    ui.error(`Env file not found: ${config.envFile}`);
+    ui.error(`Env file not found: ${app.envFile}`);
     process.exit(1);
   }
 

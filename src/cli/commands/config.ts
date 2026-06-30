@@ -3,18 +3,20 @@ import { pathExists } from 'fs-extra';
 import { runLocalCommand } from '../runner.js';
 import { ui } from '../ui.js';
 import { loadConfig } from '../../config/loader.js';
+import { getActiveApp } from '../../domain/workspace.js';
 
 export async function cmdConfigShow(cwd: string, options: { config?: string }): Promise<void> {
   await runLocalCommand(
     cwd,
     async (config) => {
+      const app = getActiveApp(config);
       ui.heading('Shipnode Configuration');
 
       ui.section('App', [
-        ['app', config.app],
+        ['app', app.appType],
         ['nodeVersion', config.nodeVersion],
-        ['envFile', config.envFile],
-        ['keepReleases', String(config.keepReleases)],
+        ['envFile', app.envFile],
+        ['keepReleases', String(app.keepReleases)],
       ]);
 
       ui.section('SSH', [
@@ -22,42 +24,42 @@ export async function cmdConfigShow(cwd: string, options: { config?: string }): 
         ['remotePath', config.remotePath],
       ]);
 
-      if (config.pm2) {
-        for (const app of config.pm2.apps) {
-          const rows: [string, string][] = [['name', app.name]];
-          if (app.command) rows.push(['command', app.command]);
-          if (app.port !== undefined) rows.push(['port', String(app.port)]);
-          if (app.instances !== undefined) rows.push(['instances', String(app.instances)]);
-          if (app.maxMemory !== undefined) rows.push(['maxMemory', app.maxMemory]);
-          if (app.env) {
-            for (const [k, v] of Object.entries(app.env)) rows.push([`env.${k}`, v]);
+      if (app.pm2) {
+        for (const pm2App of app.pm2.apps) {
+          const rows: [string, string][] = [['name', pm2App.name]];
+          if (pm2App.command) rows.push(['command', pm2App.command]);
+          if (pm2App.port !== undefined) rows.push(['port', String(pm2App.port)]);
+          if (pm2App.instances !== undefined) rows.push(['instances', String(pm2App.instances)]);
+          if (pm2App.maxMemory !== undefined) rows.push(['maxMemory', pm2App.maxMemory]);
+          if (pm2App.env) {
+            for (const [k, v] of Object.entries(pm2App.env)) rows.push([`env.${k}`, v]);
           }
-          ui.section(app.port !== undefined ? `PM2 app: ${app.name} (web)` : `PM2 app: ${app.name}`, rows);
+          ui.section(pm2App.port !== undefined ? `PM2 app: ${pm2App.name} (web)` : `PM2 app: ${pm2App.name}`, rows);
         }
       }
 
-      if (config.domain) {
+      if (app.domain) {
         ui.section('Domain', [
-          ['domain', config.domain],
+          ['domain', app.domain],
         ]);
       }
 
-      if (config.app === 'backend') {
+      if (app.appType === 'backend') {
         ui.section('Health Check', [
-          ['enabled', String(config.healthCheck.enabled)],
-          ['path', config.healthCheck.path],
-          ['timeout', String(config.healthCheck.timeout)],
-          ['retries', String(config.healthCheck.retries)],
-          ['startupDelay', String(config.healthCheck.startupDelay)],
+          ['enabled', String(app.healthCheck.enabled)],
+          ['path', app.healthCheck.path],
+          ['timeout', String(app.healthCheck.timeout)],
+          ['retries', String(app.healthCheck.retries)],
+          ['startupDelay', String(app.healthCheck.startupDelay)],
         ]);
       }
 
-      if (config.sharedDirs && config.sharedDirs.length > 0) {
-        ui.section('Shared Dirs', config.sharedDirs.map((d, i) => [`[${i}]`, d]));
+      if (app.sharedDirs && app.sharedDirs.length > 0) {
+        ui.section('Shared Dirs', app.sharedDirs.map((d, i) => [`[${i}]`, d]));
       }
 
-      if (config.sharedFiles && config.sharedFiles.length > 0) {
-        ui.section('Shared Files', config.sharedFiles.map((f, i) => [`[${i}]`, f]));
+      if (app.sharedFiles && app.sharedFiles.length > 0) {
+        ui.section('Shared Files', app.sharedFiles.map((f, i) => [`[${i}]`, f]));
       }
 
       if (config.database) {

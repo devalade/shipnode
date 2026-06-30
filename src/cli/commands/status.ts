@@ -1,14 +1,16 @@
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, getPm2Name } from '../../domain/pm2/apps.js';
 
 export async function cmdStatus(cwd: string, options: { config?: string }): Promise<void> {
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
+      const app = getActiveApp(config);
       ui.info(`Checking status on ${config.ssh.host}...`);
 
-      if (config.app === 'backend' && config.pm2) {
+      if (app.appType === 'backend' && app.pm2) {
         const pm2Result = await executor.exec(
           `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH" && pm2 jlist`,
         );
@@ -21,7 +23,7 @@ export async function cmdStatus(cwd: string, options: { config?: string }): Prom
               pm2_env?: { status?: string; pm_uptime?: number; restart_time?: number };
               monit?: { memory: number; cpu: number };
             }>;
-            const declared = config.pm2.apps;
+            const declared = app.pm2.apps;
             const namespace = getDeploymentName(config) ?? '';
             const byName = new Map(allApps.map((a) => [a.name, a]));
             for (const app of declared) {

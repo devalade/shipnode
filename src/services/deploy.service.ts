@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import type { ShipnodeConfig } from '../shared/types.js';
+import { getActiveApp } from '../domain/workspace.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { ReleaseManager, DeployLock } from '../domain/release/manager.js';
 import { HealthCheckService } from '../services/health.service.js';
@@ -27,7 +28,7 @@ export class DeployService {
     private cwd: string,
   ) {
     this.config = config;
-    const releases = new ReleaseManager(executor, config.remotePath, config.keepReleases);
+    const releases = new ReleaseManager(executor, config.remotePath, getActiveApp(config).keepReleases);
     const lock = new DeployLock(executor, config.remotePath);
     const healthCheck = new HealthCheckService(executor, config);
     const caddy = new CaddyService(executor, config);
@@ -47,7 +48,7 @@ export class DeployService {
 
   async execute(skipBuild = false): Promise<void> {
     const gitCommit = await getGitCommit(this.cwd);
-    const strategy = this.config.app === 'backend'
+    const strategy = getActiveApp(this.config).appType === 'backend'
       ? this.backendStrategy
       : this.frontendStrategy;
 

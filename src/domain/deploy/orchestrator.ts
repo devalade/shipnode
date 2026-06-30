@@ -1,5 +1,6 @@
 import chalk from 'chalk';
-import type { ShipnodeConfig, ExecResult } from '../../shared/types.js';
+import type { ShipnodeConfig, ShipnodeApp, ExecResult } from '../../shared/types.js';
+import { getActiveApp } from '../workspace.js';
 import type { RemoteExecutor } from '../remote/executor.js';
 import { ReleaseManager, DeployLock } from '../release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
@@ -26,6 +27,10 @@ export class DeployOrchestrator {
     private healthCheck: HealthCheckService,
     private caddy: CaddyService,
   ) {}
+
+  private get app(): ShipnodeApp {
+    return getActiveApp(this.config);
+  }
 
   async deploy(
     strategy: DeploymentStrategy,
@@ -75,7 +80,7 @@ export class DeployOrchestrator {
       let healthAttempts: number | undefined;
       let healthResponseMs: number | undefined;
 
-      if (this.config.app === 'backend' && this.config.healthCheck.enabled) {
+      if (this.app.appType === 'backend' && this.app.healthCheck.enabled) {
         const healthResult = await this.healthCheck.perform();
         healthAttempts = healthResult.attempts;
         healthResponseMs = healthResult.responseMs;
@@ -95,8 +100,8 @@ export class DeployOrchestrator {
       await this.runHook('postDeploy', releasePath);
       await this.releases.cleanupOldReleases();
 
-      if (this.config.domain) {
-        if (this.config.app === 'backend') {
+      if (this.app.domain) {
+        if (this.app.appType === 'backend') {
           await this.caddy.configureBackend();
         } else {
           await this.caddy.configureFrontend();
@@ -111,19 +116,19 @@ export class DeployOrchestrator {
   }
 
   private async runHook(hookName: 'preDeploy' | 'postDeploy', workDir: string): Promise<void> {
-    const hook = this.config.hooks?.[hookName];
+    const hook = this.app.hooks?.[hookName];
     if (!hook) return;
 
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
     // When appRoot is set, run hook commands from inside the app subdir so
     // relative paths in user commands (`node build/ace.js`, `pnpm exec ...`)
     // resolve against the app, not the workspace root.
-    const hookCwd = this.config.appRoot ? `${workDir}/${this.config.appRoot}` : workDir;
+    const hookCwd = this.app.appRoot ? `${workDir}/${this.app.appRoot}` : workDir;
     // Source `.env` via absolute workDir path so it works regardless of
     // hookCwd. The file is symlinked into workDir during setupEnvironment;
     // PM2 will load the same vars at startup, so hooks and the app agree on
     // their environment. No-op when the project declares no envFile.
-    const envSource = this.config.envFile
+    const envSource = this.app.envFile
       ? `set -a && . "${workDir}/.env" && set +a && `
       : '';
     const prefix = chalk.dim('  │ ');

@@ -3,6 +3,7 @@ import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName } from '../../domain/pm2/apps.js';
 
 export async function cmdEnv(
@@ -12,7 +13,8 @@ export async function cmdEnv(
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      const envFile = options.file ?? config.envFile;
+      const app = getActiveApp(config);
+      const envFile = options.file ?? app.envFile;
       const localEnvPath = resolve(cwd, envFile);
 
       if (!(await pathExists(localEnvPath))) {
@@ -28,12 +30,12 @@ export async function cmdEnv(
       // (`shared/${envFile}`) and the workDir symlink target stay consistent.
       // Maintain a `.env` alias too — older configs and any external scripts
       // that read `shared/.env` keep working.
-      const sharedEnv = `${config.remotePath}/shared/${config.envFile}`;
+      const sharedEnv = `${config.remotePath}/shared/${app.envFile}`;
       const sharedEnvAlias = `${config.remotePath}/shared/.env`;
       await executor.exec(`mkdir -p "${config.remotePath}/shared"`);
       await executor.exec(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
       await executor.exec(`chmod 600 "${sharedEnv}"`);
-      if (config.envFile !== '.env') {
+      if (app.envFile !== '.env') {
         await executor.exec(`ln -sf "${sharedEnv}" "${sharedEnvAlias}"`);
       }
       ui.success(`Uploaded to ${sharedEnv}`);
@@ -48,7 +50,7 @@ export async function cmdEnv(
       }
 
       const namespace = getDeploymentName(config);
-      if (config.app === 'backend' && namespace) {
+      if (app.appType === 'backend' && namespace) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
         const checkResult = await executor.exec(

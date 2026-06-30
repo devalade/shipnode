@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DeployOrchestrator } from '../../src/domain/deploy/orchestrator.js';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
+import { assembleConfig } from '../../src/config/assembly.js';
 import type { DeploymentStrategy, StrategyContext } from '../../src/domain/deploy/strategy.js';
-import type { ShipnodeConfig } from '../../src/shared/types.js';
 
-function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
-  return {
+function makeConfig(overrides: Record<string, unknown> = {}): ReturnType<typeof assembleConfig> {
+  return assembleConfig({
     app: 'backend',
     ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
     remotePath: '/var/www/app',
@@ -13,8 +13,8 @@ function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
     healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
     envFile: '.env',
     nodeVersion: 'lts',
-    ...overrides,
-  } as ShipnodeConfig;
+    ...overrides as Parameters<typeof assembleConfig>[0],
+  });
 }
 
 function fakeStrategy(): DeploymentStrategy & { calls: string[] } {

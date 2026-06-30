@@ -1,4 +1,9 @@
-import type { ShipnodeConfig, Pm2App } from '../../shared/types.js';
+import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../../shared/types.js';
+import { getActiveApp } from '../workspace.js';
+
+function getPm2Config(config: ShipnodeConfig): ShipnodeApp['pm2'] {
+  return getActiveApp(config).pm2;
+}
 
 /**
  * The deployment-level PM2 namespace — shared by every supervised process.
@@ -8,18 +13,11 @@ import type { ShipnodeConfig, Pm2App } from '../../shared/types.js';
  * the whole deployment at once (`pm2 reload <namespace>`, `pm2 stop <namespace>`).
  */
 export function getDeploymentName(config: ShipnodeConfig): string | undefined {
-  return config.pm2?.apps[0]?.name;
+  return getPm2Config(config)?.apps[0]?.name;
 }
 
-/**
- * The web app — the single `pm2.apps` entry with a `port`, if any.
- *
- * Returns undefined for worker-only deployments. Callers that need the HTTP
- * surface (Caddy, Cloudflare firewall, deploy summary) should treat undefined
- * as "no public HTTP for this deployment" rather than defaulting to a port.
- */
 export function getWebApp(config: ShipnodeConfig): Pm2App | undefined {
-  return config.pm2?.apps.find((a) => a.port !== undefined);
+  return getPm2Config(config)?.apps.find((a) => a.port !== undefined);
 }
 
 /**
@@ -50,11 +48,12 @@ export function getPm2Name(namespace: string, appName: string): string {
  * typo than to silently no-op `pm2 reload` against a name that doesn't exist.
  */
 export function resolveProcessTarget(config: ShipnodeConfig, shortName: string): string {
+  const pm2Config = getPm2Config(config);
   const namespace = getDeploymentName(config);
   if (!namespace) throw new Error(`Cannot resolve '${shortName}': no PM2 apps configured.`);
-  const match = config.pm2?.apps.find((a) => a.name === shortName);
+  const match = pm2Config?.apps.find((a) => a.name === shortName);
   if (!match) {
-    const names = config.pm2?.apps.map((a) => a.name).join(', ') ?? '';
+    const names = pm2Config?.apps.map((a) => a.name).join(', ') ?? '';
     throw new Error(`No PM2 app named '${shortName}' in this deployment. Known apps: ${names}`);
   }
   return getPm2Name(namespace, match.name);

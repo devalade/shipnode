@@ -1,5 +1,6 @@
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, resolveProcessTarget } from '../../domain/pm2/apps.js';
 
 export async function cmdRestart(cwd: string, options: { config?: string; process?: string }): Promise<void> {
@@ -7,7 +8,7 @@ export async function cmdRestart(cwd: string, options: { config?: string; proces
     cwd,
     async ({ config, executor }) => {
       const namespace = getDeploymentName(config);
-      if (config.app !== 'backend' || !namespace) {
+      if (getActiveApp(config).appType !== 'backend' || !namespace) {
         throw new Error('Restart only available for backend apps with PM2');
       }
       const target = options.process ? resolveProcessTarget(config, options.process) : namespace;

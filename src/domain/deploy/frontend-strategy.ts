@@ -1,7 +1,8 @@
 import { execa } from 'execa';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
-import type { ShipnodeConfig } from '../../shared/types.js';
+import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
+import { getActiveApp } from '../workspace.js';
 import { getRunCommand, detectPkgManager } from '../framework/detector.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
 
@@ -12,6 +13,10 @@ export class FrontendStrategy implements DeploymentStrategy {
     private config: ShipnodeConfig,
     private cwd: string,
   ) {}
+
+  private get app(): ShipnodeApp {
+    return getActiveApp(this.config);
+  }
 
   async stage(ctx: StrategyContext): Promise<void> {
     if (!ctx.skipBuild) {
@@ -48,7 +53,7 @@ export class FrontendStrategy implements DeploymentStrategy {
   }
 
   private async detectFrontendBuildDir(): Promise<string> {
-    if (this.config.buildDir) return this.config.buildDir;
+    if (this.app.buildDir) return this.app.buildDir;
     if (await pathExists(`${this.cwd}/build`)) return 'build';
     if (await pathExists(`${this.cwd}/public`)) return 'public';
     if (await pathExists(`${this.cwd}/dist`)) return 'dist';

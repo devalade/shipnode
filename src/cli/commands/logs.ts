@@ -1,4 +1,5 @@
 import { runRemoteCommand } from '../runner.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, resolveProcessTarget } from '../../domain/pm2/apps.js';
 
 export async function cmdLogs(cwd: string, options: { lines?: number; config?: string; process?: string }): Promise<void> {
@@ -6,7 +7,7 @@ export async function cmdLogs(cwd: string, options: { lines?: number; config?: s
     cwd,
     async ({ config, executor }) => {
       const namespace = getDeploymentName(config);
-      if (config.app !== 'backend' || !namespace) {
+      if (getActiveApp(config).appType !== 'backend' || !namespace) {
         throw new Error('Logs only available for backend apps with PM2');
       }
       const target = options.process ? resolveProcessTarget(config, options.process) : namespace;

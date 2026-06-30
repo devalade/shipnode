@@ -2,12 +2,14 @@ import { confirm } from '../prompt.js';
 import { runRemoteCommand } from '../runner.js';
 import { ReleaseManager } from '../../domain/release/manager.js';
 import { ui } from '../ui.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName } from '../../domain/pm2/apps.js';
 
 export async function cmdMigrate(cwd: string, options: { config?: string }): Promise<void> {
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
+      const app = getActiveApp(config);
       const remotePath = config.remotePath;
 
       ui.heading('Zero-Downtime Migration');
@@ -69,7 +71,7 @@ export async function cmdMigrate(cwd: string, options: { config?: string }): Pro
 
       // Reload PM2 if applicable
       const namespace = getDeploymentName(config);
-      if (config.app === 'backend' && namespace) {
+      if (app.appType === 'backend' && namespace) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
         ui.info('Reloading PM2 from new path...');
@@ -80,7 +82,7 @@ export async function cmdMigrate(cwd: string, options: { config?: string }): Pro
       }
 
       // Record the initial migrated release
-      const releases = new ReleaseManager(executor, remotePath, config.keepReleases);
+      const releases = new ReleaseManager(executor, remotePath, app.keepReleases);
       await releases.recordRelease({
         timestamp,
         status: 'success',

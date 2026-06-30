@@ -5,6 +5,7 @@ import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
 import type { ShipnodeConfig } from '../../shared/types.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, getWebApp } from '../../domain/pm2/apps.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; config?: string }): Promise<void> {
@@ -19,14 +20,14 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
     cwd,
     async ({ config, executor }) => {
       ui.banner();
-      ui.step(`Deploying ${chalk.bold(getDeploymentName(config) ?? config.app)} → ${config.ssh.user}@${config.ssh.host}`);
+      ui.step(`Deploying ${chalk.bold(getDeploymentName(config) ?? getActiveApp(config).appType)} → ${config.ssh.user}@${config.ssh.host}`);
 
       const deployer = new DeployService(new LoggingExecutor(executor), config, cwd);
       await deployer.execute(options.skipBuild ?? false);
 
       const lines = [
         `host     ${config.ssh.user}@${config.ssh.host}`,
-        config.domain ? `url      https://${config.domain}` : '',
+        getActiveApp(config).domain ? `url      https://${getActiveApp(config).domain}` : '',
       ].filter(Boolean).join('\n');
 
       ui.note(lines, 'Done');
@@ -39,15 +40,17 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
 function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
   ui.banner();
 
+  const app = getActiveApp(config);
+
   const serverRows: [string, string][] = [
-    ['App type', config.app],
+    ['App type', app.appType],
     ['Host', `${config.ssh.user}@${config.ssh.host}:${config.ssh.port}`],
     ['Remote path', config.remotePath],
-    ['Keep releases', String(config.keepReleases)],
+    ['Keep releases', String(app.keepReleases)],
   ];
 
-  if (config.app === 'backend') {
-    const apps = config.pm2?.apps ?? [];
+  if (app.appType === 'backend') {
+    const apps = app.pm2?.apps ?? [];
     if (apps.length) {
       serverRows.push(['PM2 deployment', getDeploymentName(config) ?? '']);
       serverRows.push(['PM2 apps', apps.map((a) => a.port !== undefined ? `${a.name}(web:${a.port})` : a.name).join(', ')]);
@@ -56,14 +59,14 @@ function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
     if (web) serverRows.push(['Port', String(web.port)]);
   }
 
-  if (config.domain) serverRows.push(['Domain', config.domain]);
+  if (app.domain) serverRows.push(['Domain', app.domain]);
 
   const buildRows: [string, string][] = [];
   if (skipBuild) {
     buildRows.push(['', chalk.dim('skipped (--skip-build)')]);
-  } else if (config.app === 'frontend') {
+  } else if (app.appType === 'frontend') {
     buildRows.push(['', 'npm run build']);
-    buildRows.push(['output', config.buildDir ?? 'dist/ (auto-detected)']);
+    buildRows.push(['output', app.buildDir ?? 'dist/ (auto-detected)']);
   } else {
     buildRows.push(['', chalk.dim('runs on remote server')]);
   }
@@ -73,13 +76,13 @@ function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
     'Create release directory',
     'Rsync files',
     'Install dependencies',
-    config.hooks?.preDeploy ? 'Run preDeploy hook' : '',
+    app.hooks?.preDeploy ? 'Run preDeploy hook' : '',
     'Switch symlink (atomic)',
-    config.app === 'backend' ? 'Reload PM2' : '',
-    config.healthCheck.enabled ? `Health check ${config.healthCheck.path}` : '',
+    app.appType === 'backend' ? 'Reload PM2' : '',
+    app.healthCheck.enabled ? `Health check ${app.healthCheck.path}` : '',
     'Record release',
     'Clean old releases',
-    config.hooks?.postDeploy ? 'Run postDeploy hook' : '',
+    app.hooks?.postDeploy ? 'Run postDeploy hook' : '',
     'Release lock',
   ].filter(Boolean);
 

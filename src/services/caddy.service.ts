@@ -1,4 +1,5 @@
-import type { ShipnodeConfig } from '../shared/types.js';
+import type { ShipnodeConfig, ShipnodeApp } from '../shared/types.js';
+import { getActiveApp } from '../domain/workspace.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { getDeploymentName, getWebApp } from '../domain/pm2/apps.js';
 
@@ -8,8 +9,12 @@ export class CaddyService {
     private config: ShipnodeConfig,
   ) {}
 
+  private get app(): ShipnodeApp {
+    return getActiveApp(this.config);
+  }
+
   async configureBackend(): Promise<void> {
-    if (!this.config.domain || !this.config.pm2) return;
+    if (!this.app.domain || !this.app.pm2) return;
 
     const webApp = getWebApp(this.config);
     const appName = getDeploymentName(this.config);
@@ -24,7 +29,7 @@ export class CaddyService {
   }
 
   async configureFrontend(): Promise<void> {
-    if (!this.config.domain) return;
+    if (!this.app.domain) return;
 
     const servePath = `${this.config.remotePath}/current`;
 
@@ -37,7 +42,7 @@ export class CaddyService {
   }
 
   private generateBackendCaddyfile(appName: string, port: number): string {
-    return `${this.config.domain} {
+    return `${this.app.domain} {
     reverse_proxy localhost:${port}
 
     encode gzip
@@ -49,7 +54,7 @@ export class CaddyService {
   }
 
   private generateFrontendCaddyfile(appName: string, servePath: string): string {
-    return `${this.config.domain} {
+    return `${this.app.domain} {
     root * ${servePath}
     file_server
 

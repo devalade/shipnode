@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FrontendStrategy } from '../../src/domain/deploy/frontend-strategy.js';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
-import type { ShipnodeConfig } from '../../src/shared/types.js';
+import { assembleConfig } from '../../src/config/assembly.js';
 import type { StrategyContext } from '../../src/domain/deploy/strategy.js';
 
 vi.mock('execa', () => ({
@@ -17,8 +17,8 @@ const { pathExists } = await import('fs-extra');
 const mockedExeca = vi.mocked(execa);
 const mockedPathExists = vi.mocked(pathExists);
 
-function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
-  return {
+function makeConfig(overrides: Record<string, unknown> = {}): ReturnType<typeof assembleConfig> {
+  return assembleConfig({
     app: 'frontend',
     ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
     remotePath: '/var/www/app',
@@ -27,8 +27,8 @@ function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
     envFile: '.env',
     nodeVersion: 'lts',
     pkgManager: 'npm',
-    ...overrides,
-  } as ShipnodeConfig;
+    ...overrides as Parameters<typeof assembleConfig>[0],
+  });
 }
 
 function makeCtx(overrides: Partial<StrategyContext> = {}): StrategyContext {

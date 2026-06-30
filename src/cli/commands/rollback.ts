@@ -3,6 +3,7 @@ import { ReleaseManager } from '../../domain/release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
 import { ui } from '../ui.js';
 import { confirm } from '../prompt.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, getEcosystemPath } from '../../domain/pm2/apps.js';
 
 export async function cmdRollback(
@@ -12,7 +13,8 @@ export async function cmdRollback(
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      const releases = new ReleaseManager(executor, config.remotePath, config.keepReleases);
+      const app = getActiveApp(config);
+      const releases = new ReleaseManager(executor, config.remotePath, app.keepReleases);
       const stepsBack = options.steps ?? 1;
 
       ui.info('Fetching release history...');
@@ -46,7 +48,7 @@ export async function cmdRollback(
       ui.success('Symlink switched');
 
       const namespace = getDeploymentName(config);
-      if (config.app === 'backend' && namespace) {
+      if (app.appType === 'backend' && namespace) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
         // Prefer reloading from the rolled-back release's ecosystem file (ADR-0001 — it
@@ -60,7 +62,7 @@ export async function cmdRollback(
         ui.success('PM2 reloaded');
       }
 
-      if (config.app === 'backend' && config.healthCheck.enabled) {
+      if (app.appType === 'backend' && app.healthCheck.enabled) {
         ui.info('Running health check...');
         const health = new HealthCheckService(executor, config);
         await health.perform();

@@ -1,10 +1,11 @@
 import { execa } from 'execa';
 import { loadConfig } from '../../config/loader.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName } from '../../domain/pm2/apps.js';
 
 export async function cmdMetrics(cwd: string, options: { config?: string }): Promise<void> {
   const config = await loadConfig(cwd, options.config);
-  if (config.app !== 'backend' || !getDeploymentName(config)) {
+  if (getActiveApp(config).appType !== 'backend' || !getDeploymentName(config)) {
     throw new Error('Metrics only available for backend apps with PM2');
   }
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;

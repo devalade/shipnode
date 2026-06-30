@@ -1,8 +1,9 @@
 import { execa } from 'execa';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
-import type { ShipnodeConfig, Pm2App } from '../../shared/types.js';
+import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../../shared/types.js';
 import { getDeploymentName, getPm2Name } from '../pm2/apps.js';
+import { getActiveApp } from '../workspace.js';
 import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework/detector.js';
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
 import { DeployError } from '../../shared/errors.js';
@@ -42,6 +43,10 @@ export class BackendStrategy implements DeploymentStrategy {
     private cwd: string,
   ) {}
 
+  private get app(): ShipnodeApp {
+    return getActiveApp(this.config);
+  }
+
   async stage(ctx: StrategyContext): Promise<void> {
     const excludes = [...RSYNC_DEFAULT_EXCLUDES];
     const ignoreFile = resolve(this.cwd, '.shipnodeignore');
@@ -72,18 +77,18 @@ export class BackendStrategy implements DeploymentStrategy {
       `mise install -y`,
     ];
 
-    if (this.config.sharedDirs || this.config.sharedFiles) {
+    if (this.app.sharedDirs || this.app.sharedFiles) {
       commands.push(this.getLinkSharedResourcesCommand(ctx.workDir));
     }
 
-    if (this.config.envFile) {
+    if (this.app.envFile) {
       // Use the configured env filename in the shared path; the local workDir
       // alias stays `.env` (the well-known name framework loaders look for).
-      commands.push(`ln -sf "${this.config.remotePath}/shared/${this.config.envFile}" .env`);
+      commands.push(`ln -sf "${this.config.remotePath}/shared/${this.app.envFile}" .env`);
       // Source it so install/build see env vars (private-registry tokens in
       // `.npmrc` via `${TOKEN}`, build-time secrets, etc.). Affects this shell
       // chain only; the PM2 wrapper sources independently at process start.
-      const sourceCmd = sourceEnvCommand(this.config.envFile);
+      const sourceCmd = sourceEnvCommand(this.app.envFile);
       if (sourceCmd) commands.push(sourceCmd);
     }
 
@@ -121,7 +126,7 @@ export class BackendStrategy implements DeploymentStrategy {
   }
 
   async startApp(ctx: StrategyContext): Promise<void> {
-    if (!this.config.pm2) return;
+    if (!this.app.pm2) return;
 
     const pkgManager = await this.resolvePkgManager();
     const ecosystemContent = this.generateEcosystemFile(pkgManager);
@@ -145,7 +150,7 @@ export class BackendStrategy implements DeploymentStrategy {
     const relinkInstall = this.config.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
     // Source env before relinking too — same reason as setupEnvironment:
     // private-registry tokens in `.npmrc` use env-var interpolation.
-    const sourceCmd = sourceEnvCommand(this.config.envFile);
+    const sourceCmd = sourceEnvCommand(this.app.envFile);
     const sourceStep = sourceCmd ? `${sourceCmd} && ` : '';
     const installResult = await ctx.executor.exec(
       `cd "${cdPath}" && ${mise} && ${sourceStep}${relinkInstall}`,
@@ -160,8 +165,8 @@ export class BackendStrategy implements DeploymentStrategy {
     // PM2 app by its name, not from an ecosystem file. `pm2 delete <ecosystem>` won't find
     // those, so we also delete by the first app's name. After one deploy this is a no-op
     // forever. See ADR-0002 and the migration note in the design (Q10).
-    const firstAppName = this.config.pm2.apps[0].name;
-    const webApp = this.config.pm2.apps.find((a) => a.port !== undefined);
+    const firstAppName = this.app.pm2.apps[0].name;
+    const webApp = this.app.pm2.apps.find((a) => a.port !== undefined);
     const portGuard = webApp
       ? `{ ss -tlnp | grep -q ":${webApp.port} " && echo "Port ${webApp.port} is already in use by another process" && false || true; } && `
       : '';
@@ -177,11 +182,11 @@ export class BackendStrategy implements DeploymentStrategy {
   }
 
   private generateEcosystemFile(pkgManager: string): string {
-    if (!this.config.pm2) return '';
+    if (!this.app.pm2) return '';
 
-    const namespace = getDeploymentName(this.config) ?? this.config.pm2.apps[0].name;
-    const envFilePath = `${this.config.remotePath}/shared/${this.config.envFile}`;
-    const appBlocks = this.config.pm2.apps.map((app) => this.generateAppBlock(app, pkgManager, namespace, envFilePath));
+    const namespace = getDeploymentName(this.config) ?? this.app.pm2.apps[0].name;
+    const envFilePath = `${this.config.remotePath}/shared/${this.app.envFile}`;
+    const appBlocks = this.app.pm2.apps.map((app) => this.generateAppBlock(app, pkgManager, namespace, envFilePath));
 
     return `module.exports = {
   apps: [
@@ -213,7 +218,7 @@ ${appBlocks.join(',\n')}
 
     const pm2Name = getPm2Name(namespace, app.name);
 
-    const useWrapper = Boolean(this.config.envFile);
+    const useWrapper = Boolean(this.app.envFile);
     let scriptLine: string;
     let argsLine: string;
 
@@ -231,8 +236,8 @@ ${appBlocks.join(',\n')}
     // `pnpm start` reads `<appRoot>/package.json`'s start script and Node
     // resolves require paths against the app, not the workspace root.
     // Install/build still run at the workspace root.
-    const cwdLine = this.config.appRoot
-      ? `\n      cwd: '${escapeSingleQuotes(`${this.config.remotePath}/current/${this.config.appRoot}`)}',`
+    const cwdLine = this.app.appRoot
+      ? `\n      cwd: '${escapeSingleQuotes(`${this.config.remotePath}/current/${this.app.appRoot}`)}',`
       : '';
 
     return `    {
@@ -249,10 +254,10 @@ ${envLines}
   }
 
   private getEnvSymlinkCommand(workDir: string): string {
-    if (!this.config.envFile) return 'true';
+    if (!this.app.envFile) return 'true';
     const targets: string[] = [];
-    if (this.config.appRoot) {
-      targets.push(`${this.config.appRoot}/build`, `${this.config.appRoot}/dist`);
+    if (this.app.appRoot) {
+      targets.push(`${this.app.appRoot}/build`, `${this.app.appRoot}/dist`);
     }
     // Always include the single-app convention.
     targets.push('build', 'dist');
@@ -271,15 +276,15 @@ ${envLines}
   private getLinkSharedResourcesCommand(workDir: string): string {
     const commands: string[] = [];
 
-    if (this.config.sharedDirs) {
-      for (const dir of this.config.sharedDirs) {
+    if (this.app.sharedDirs) {
+      for (const dir of this.app.sharedDirs) {
         commands.push(`mkdir -p "${this.config.remotePath}/shared/${dir}"`);
         commands.push(`ln -sfn "${this.config.remotePath}/shared/${dir}" "${workDir}/${dir}"`);
       }
     }
 
-    if (this.config.sharedFiles) {
-      for (const file of this.config.sharedFiles) {
+    if (this.app.sharedFiles) {
+      for (const file of this.app.sharedFiles) {
         commands.push(`ln -sf "${this.config.remotePath}/shared/${file}" "${workDir}/${file}"`);
       }
     }
