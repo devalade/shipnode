@@ -100,19 +100,53 @@ export interface HooksConfig {
   postDeploy?: HookFn;
 }
 
+/**
+ * A single deployment unit (a "deploy unit" in ADR 0004 terminology). A workspace
+ * declares one or more of these; each has its own release directory, PM2 process
+ * group, Caddy site, and Cloudflare ingress entry.
+ */
+export interface ShipnodeApp {
+  name: string;
+  appType: AppType;
+  appRoot?: string;
+  domain?: string;
+  pm2?: Pm2Config;
+  healthCheck: HealthCheckConfig;
+  envFile: string;
+  keepReleases: number;
+  sharedDirs?: string[];
+  sharedFiles?: string[];
+  buildDir?: string;
+  hooks?: HooksConfig;
+}
+
 export interface ShipnodeConfig {
-  app: AppType;
+  // workspace-level
   ssh: SshConfig;
   remotePath: string;
+  nodeVersion: string;
+  pkgManager?: PkgManager;
+  /** Override the install command run on the server. Defaults to the package manager's standard install (e.g. `npm ci`). Use to add flags like `--legacy-peer-deps`, switch to a frozen-lockfile variant, etc. */
+  installCommand?: string;
+  database?: DatabaseConfig;
+  redis?: RedisConfig;
+  backup?: BackupConfig;
+  cloudflare?: CloudflareConfig;
+  aliases?: Record<string, string>;
+
+  /** Canonical app list. Always populated by assembleConfig (length >= 1). */
+  apps: ShipnodeApp[];
+
+  // Legacy top-level mirrors of apps[0].<field>. Kept during the 3.0 transition so
+  // downstream code reading these fields directly keeps working. New code should
+  // read from apps[]. Sprint 2c will migrate the downstream consumers, after which
+  // these mirrors can be removed.
+  app: AppType;
   pm2?: Pm2Config;
   domain?: string;
   keepReleases: number;
   healthCheck: HealthCheckConfig;
   envFile: string;
-  nodeVersion: string;
-  pkgManager?: PkgManager;
-  /** Override the install command run on the server. Defaults to the package manager's standard install (e.g. `npm ci`). Use to add flags like `--legacy-peer-deps`, switch to a frozen-lockfile variant, etc. */
-  installCommand?: string;
   buildDir?: string;
   /**
    * Path (relative to the repo root) of the app within a monorepo whose
@@ -125,12 +159,7 @@ export interface ShipnodeConfig {
   appRoot?: string;
   sharedDirs?: string[];
   sharedFiles?: string[];
-  database?: DatabaseConfig;
-  redis?: RedisConfig;
-  backup?: BackupConfig;
-  cloudflare?: CloudflareConfig;
   hooks?: HooksConfig;
-  aliases?: Record<string, string>;
 }
 
 export interface ReleaseRecord {

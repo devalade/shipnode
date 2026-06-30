@@ -89,28 +89,75 @@ export const HooksConfigSchema = z.object({
   postDeploy: HookFnSchema.optional(),
 }).optional();
 
-export const ShipnodeConfigSchema = z.object({
-  app: z.enum(['backend', 'frontend']).default('backend'),
-  ssh: SshConfigSchema,
-  remotePath: z.string().min(1, 'Remote path is required').default('/var/www/app'),
-  pm2: Pm2ConfigSchema.optional(),
+// Per-app fields — anything that differs between two apps deployed to the same server.
+// Workspace-level fields (ssh, deployTo, nodeVersion, pkgManager, cloudflare, database,
+// redis, backup, aliases) live on ShipnodeConfigSchema. See docs/adr/0004-workspace-multi-app.md
+// for the rationale of the split.
+export const ShipnodeAppSchema = z.object({
+  name: z.string().refine(isValidPm2Name, 'app name must be alphanumeric, dash, or underscore (max 64 chars)').default('app'),
+  appType: z.enum(['backend', 'frontend']).default('backend'),
+  appRoot: z.string().optional(),
   domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
-  keepReleases: z.number().int().min(1).default(5),
+  pm2: Pm2ConfigSchema.optional(),
   healthCheck: HealthCheckConfigSchema,
   envFile: z.string().default('.env'),
+  keepReleases: z.number().int().min(1).default(5),
+  sharedDirs: z.array(z.string()).optional(),
+  sharedFiles: z.array(z.string()).optional(),
+  buildDir: z.string().optional(),
+  hooks: HooksConfigSchema,
+}).refine(
+  (cfg) => !(cfg.appType === 'frontend' && cfg.pm2),
+  { message: 'frontend apps cannot declare pm2 (frontends are static files served by Caddy)', path: ['pm2'] },
+).refine(
+  (cfg) => {
+    if (!cfg.domain || cfg.appType !== 'backend') return true;
+    const hasWebApp = cfg.pm2?.apps.some((a) => a.port !== undefined);
+    return hasWebApp ?? false;
+  },
+  { message: 'domain requires a web app: one pm2.apps entry must declare a port', path: ['domain'] },
+);
+
+// Dual shape during 3.0 transition: the canonical config carries BOTH `apps[]` (the new
+// workspace shape) AND the legacy top-level per-app fields (app/domain/pm2/healthCheck/
+// envFile/keepReleases/sharedDirs/sharedFiles/buildDir/appRoot/hooks). Downstream code
+// reading the legacy fields keeps working unchanged; new code reads from `apps[]`.
+// Sprint 2c/2d will migrate downstream and drop the legacy fields.
+//
+// A z.preprocess wrapper synthesizes `apps[0]` from the legacy top-level fields when
+// the input doesn't carry `apps`. This lets every 2.x config (including the existing
+// schema.test.ts cases that call ShipnodeConfigSchema.safeParse directly) parse without
+// modification. assembleConfig then post-processes to mirror apps[0] back onto the
+// legacy top-level fields, so the canonical output is internally consistent.
+const ShipnodeConfigBaseSchema = z.object({
+  // workspace-level
+  ssh: SshConfigSchema,
+  remotePath: z.string().min(1, 'Remote path is required').default('/var/www/app'),
   nodeVersion: z.string().default('lts'),
   pkgManager: z.enum(['npm', 'yarn', 'pnpm', 'bun']).optional(),
   installCommand: z.string().min(1).optional(),
-  buildDir: z.string().optional(),
-  appRoot: z.string().optional(),
-  sharedDirs: z.array(z.string()).optional(),
-  sharedFiles: z.array(z.string()).optional(),
   database: DatabaseConfigSchema,
   redis: RedisConfigSchema,
   backup: BackupConfigSchema,
   cloudflare: CloudflareConfigSchema,
-  hooks: HooksConfigSchema,
   aliases: z.record(z.string(), z.string()).optional(),
+
+  // canonical app list (always populated by assembleConfig; .min(1) enforced)
+  apps: z.array(ShipnodeAppSchema).min(1, 'workspace must contain at least one app'),
+
+  // legacy top-level mirrors — kept during 3.0 transition for downstream compat.
+  // Always equal to apps[0].<field> after assembleConfig runs.
+  app: z.enum(['backend', 'frontend']).default('backend'),
+  domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
+  pm2: Pm2ConfigSchema.optional(),
+  healthCheck: HealthCheckConfigSchema,
+  envFile: z.string().default('.env'),
+  keepReleases: z.number().int().min(1).default(5),
+  sharedDirs: z.array(z.string()).optional(),
+  sharedFiles: z.array(z.string()).optional(),
+  buildDir: z.string().optional(),
+  appRoot: z.string().optional(),
+  hooks: HooksConfigSchema,
 }).refine(
   (cfg) => !(cfg.app === 'frontend' && cfg.pm2),
   { message: 'frontend apps cannot declare pm2 (frontends are static files served by Caddy)', path: ['pm2'] },
@@ -121,6 +168,37 @@ export const ShipnodeConfigSchema = z.object({
     return hasWebApp ?? false;
   },
   { message: 'domain requires a web app: one pm2.apps entry must declare a port', path: ['domain'] },
+);
+
+export const ShipnodeConfigSchema = z.preprocess(
+  (input: unknown) => {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return input;
+    const obj = input as Record<string, unknown>;
+    if (obj.apps !== undefined) return obj;
+
+    // Synthesize apps[0] from legacy top-level fields. The name defaults to the first
+    // pm2.apps[].name if there is one (so .pm2('biormin') → app.name === 'biormin').
+    const pm2 = obj.pm2 as { apps?: Array<{ name?: string }> } | undefined;
+    const pm2Name = pm2?.apps?.[0]?.name;
+    return {
+      ...obj,
+      apps: [{
+        name: pm2Name ?? 'app',
+        appType: obj.app,
+        appRoot: obj.appRoot,
+        domain: obj.domain,
+        pm2: obj.pm2,
+        healthCheck: obj.healthCheck,
+        envFile: obj.envFile,
+        keepReleases: obj.keepReleases,
+        sharedDirs: obj.sharedDirs,
+        sharedFiles: obj.sharedFiles,
+        buildDir: obj.buildDir,
+        hooks: obj.hooks,
+      }],
+    };
+  },
+  ShipnodeConfigBaseSchema,
 );
 
 export type ShipnodeConfigSchema = z.infer<typeof ShipnodeConfigSchema>;

@@ -91,6 +91,53 @@ describe('assembleConfig', () => {
     })).toThrow();
   });
 
+  it('synthesizes apps[0] from legacy top-level fields', () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      domain: 'api.example.com',
+      appRoot: 'apps/backend',
+      envFile: '.env.production',
+    });
+    expect(config.apps).toHaveLength(1);
+    expect(config.apps[0]).toMatchObject({
+      name: 'api',
+      appType: 'backend',
+      domain: 'api.example.com',
+      appRoot: 'apps/backend',
+      envFile: '.env.production',
+    });
+    expect(config.apps[0].pm2?.apps[0].name).toBe('api');
+  });
+
+  it('app.name defaults to "app" when no pm2 is declared', () => {
+    const config = assembleConfig({
+      app: 'frontend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/static',
+    });
+    expect(config.apps[0].name).toBe('app');
+    expect(config.apps[0].appType).toBe('frontend');
+  });
+
+  it('legacy top-level mirrors are kept in sync with apps[0]', () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      domain: 'api.example.com',
+      envFile: '.env.production',
+    });
+    expect(config.app).toBe(config.apps[0].appType);
+    expect(config.domain).toBe(config.apps[0].domain);
+    expect(config.envFile).toBe(config.apps[0].envFile);
+    expect(config.pm2).toBe(config.apps[0].pm2);
+    expect(config.healthCheck).toEqual(config.apps[0].healthCheck);
+  });
+
   it('preserves aliases through assembly', () => {
     const config = assembleConfig({
       app: 'backend',
