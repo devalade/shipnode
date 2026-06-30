@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { shipnode, ShipnodeBuilder } from '../../src/config/builder.js';
+import { shipnode, ShipnodeBuilder, ShipnodeAppBuilder, app } from '../../src/config/builder.js';
 
 describe('ShipnodeBuilder', () => {
   // Schema-coverage regression: every setter on the builder must produce a field that
@@ -322,5 +322,92 @@ describe('ShipnodeBuilder', () => {
     expect(config.cloudflare?.zone).toBe('example.com');
     expect(config.cloudflare?.appHostname).toBe('app.example.com');
     expect(config.cloudflare?.lockdownFirewall).toBe(true);
+  });
+});
+
+describe('ShipnodeAppBuilder + workspace .apps([])', () => {
+  it('shipnode.app() and the standalone app() factory both produce a ShipnodeAppBuilder', () => {
+    expect(shipnode.app()).toBeInstanceOf(ShipnodeAppBuilder);
+    expect(app()).toBeInstanceOf(ShipnodeAppBuilder);
+  });
+
+  it('composes a multi-app workspace via .apps([api, web])', () => {
+    const api = app()
+      .backend()
+      .name('api')
+      .appRoot('apps/backend')
+      .domain('api.example.com')
+      .pm2('api')
+      .port(3333)
+      .envFile('.env.production')
+      .postDeploy(vi.fn());
+
+    const web = app()
+      .backend()
+      .name('web')
+      .appRoot('apps/frontend')
+      .domain('example.com')
+      .pm2('web')
+      .port(3000);
+
+    const config = new ShipnodeBuilder()
+      .ssh({ host: '1.2.3.4', user: 'root' })
+      .deployTo('/var/www/example')
+      .nodeVersion('24')
+      .apps([api, web])
+      .build();
+
+    expect(config.apps).toHaveLength(2);
+    expect(config.apps[0]).toMatchObject({
+      name: 'api',
+      appType: 'backend',
+      appRoot: 'apps/backend',
+      domain: 'api.example.com',
+      envFile: '.env.production',
+    });
+    expect(config.apps[0].pm2?.apps[0]).toMatchObject({ name: 'api', port: 3333 });
+    expect(config.apps[1]).toMatchObject({
+      name: 'web',
+      appType: 'backend',
+      appRoot: 'apps/frontend',
+      domain: 'example.com',
+    });
+    expect(config.apps[1].pm2?.apps[0]).toMatchObject({ name: 'web', port: 3000 });
+    // Legacy top-level mirrors point to apps[0]
+    expect(config.domain).toBe('api.example.com');
+    expect(config.appRoot).toBe('apps/backend');
+  });
+
+  it('app builder collects workers alongside the web app', () => {
+    const api = app()
+      .backend()
+      .name('api')
+      .pm2('api')
+      .port(3333)
+      .worker({ name: 'mailer', command: 'node dist/mailer.js' })
+      .worker({ name: 'queue', command: 'node dist/queue.js' });
+
+    const config = new ShipnodeBuilder()
+      .ssh({ host: '1.2.3.4', user: 'root' })
+      .deployTo('/var/www/app')
+      .apps([api])
+      .build();
+
+    expect(config.apps[0].pm2?.apps).toHaveLength(3);
+    expect(config.apps[0].pm2?.apps.map((a) => a.name)).toEqual(['api', 'mailer', 'queue']);
+  });
+
+  it('frontend app cannot declare pm2 (refine on ShipnodeAppSchema)', () => {
+    const bad = app()
+      .frontend()
+      .name('web')
+      .pm2('web')
+      .port(3000);
+
+    expect(() => new ShipnodeBuilder()
+      .ssh({ host: '1.2.3.4', user: 'root' })
+      .deployTo('/var/www/app')
+      .apps([bad])
+      .build()).toThrow();
   });
 });

@@ -1,5 +1,6 @@
 import type {
   ShipnodeConfig,
+  ShipnodeApp,
   SshConfig,
   Pm2App,
   HealthCheckConfig,
@@ -12,7 +13,12 @@ import type {
 } from '../shared/types.js';
 import { assembleConfig } from './assembly.js';
 
-type BuilderState = Omit<Partial<ShipnodeConfig>, 'pm2'> & {
+type BuilderState = Omit<Partial<ShipnodeConfig>, 'pm2' | 'apps'> & {
+  pm2?: { apps: Pm2App[] };
+  apps?: Partial<ShipnodeApp>[];
+};
+
+type AppBuilderState = Omit<Partial<ShipnodeApp>, 'pm2'> & {
   pm2?: { apps: Pm2App[] };
 };
 
@@ -179,12 +185,155 @@ export class ShipnodeBuilder {
     return this;
   }
 
+  /**
+   * Start a new per-app sub-builder. Pair with `.apps([api, web])` on the workspace
+   * builder to declare a multi-app deployment. See docs/adr/0004-workspace-multi-app.md.
+   */
+  app(): ShipnodeAppBuilder {
+    return new ShipnodeAppBuilder();
+  }
+
+  /**
+   * Declare the apps that compose this workspace. Each app gets its own release
+   * directory, PM2 process group, Caddy site, and Cloudflare ingress entry. When
+   * `.apps([])` is called, the per-app methods on this root builder (.pm2/.port/
+   * .worker/.domain/.healthCheck/.preDeploy/.postDeploy/.appRoot/.envFile/etc.) are
+   * ignored — the apps declared here take over. When `.apps([])` is not called, the
+   * per-app methods continue to write to an implicit single default app (legacy 2.x
+   * behavior). Mixing both is supported but `.apps([])` wins.
+   */
+  apps(apps: ShipnodeAppBuilder[]): this {
+    this.config.apps = apps.map((b) => b.toApp());
+    return this;
+  }
+
   build(): ShipnodeConfig {
     return assembleConfig(this.config);
   }
 }
 
+/**
+ * Per-app builder. Created via `shipnode.app()` or the standalone `app()` factory.
+ * Mirrors the per-app subset of the workspace builder. Pass the result to
+ * `shipnode.apps([...])` on the workspace builder to compose a multi-app deployment.
+ */
+export class ShipnodeAppBuilder {
+  private state: AppBuilderState = {};
+
+  private firstPm2App(): Pm2App {
+    if (!this.state.pm2) this.state.pm2 = { apps: [] };
+    if (this.state.pm2.apps.length === 0) this.state.pm2.apps.push({ name: this.state.name ?? 'app' });
+    return this.state.pm2.apps[0];
+  }
+
+  backend(): this {
+    this.state.appType = 'backend';
+    return this;
+  }
+
+  frontend(): this {
+    this.state.appType = 'frontend';
+    return this;
+  }
+
+  name(n: string): this {
+    this.state.name = n;
+    return this;
+  }
+
+  pm2(name: string, opts?: { instances?: number; maxMemory?: string }): this {
+    const app = this.firstPm2App();
+    app.name = name;
+    if (opts?.instances !== undefined) app.instances = opts.instances;
+    if (opts?.maxMemory !== undefined) app.maxMemory = opts.maxMemory;
+    return this;
+  }
+
+  port(n: number): this {
+    this.firstPm2App().port = n;
+    return this;
+  }
+
+  worker(opts: WorkerOptions): this {
+    if (!this.state.pm2) this.state.pm2 = { apps: [] };
+    this.state.pm2.apps.push({ ...opts });
+    return this;
+  }
+
+  domain(d: string): this {
+    this.state.domain = d;
+    return this;
+  }
+
+  appRoot(dir: string): this {
+    this.state.appRoot = dir;
+    return this;
+  }
+
+  envFile(f: string): this {
+    this.state.envFile = f;
+    return this;
+  }
+
+  keepReleases(n: number): this {
+    this.state.keepReleases = n;
+    return this;
+  }
+
+  sharedDirs(dirs: string[]): this {
+    this.state.sharedDirs = dirs;
+    return this;
+  }
+
+  sharedFiles(files: string[]): this {
+    this.state.sharedFiles = files;
+    return this;
+  }
+
+  buildDir(dir: string): this {
+    this.state.buildDir = dir;
+    return this;
+  }
+
+  healthCheck(path: string, opts?: Partial<HealthCheckConfig>): this {
+    this.state.healthCheck = {
+      ...(this.state.healthCheck ?? {}),
+      enabled: true,
+      path,
+      timeout: opts?.timeout ?? 30,
+      retries: opts?.retries ?? 3,
+      startupDelay: opts?.startupDelay ?? 3,
+    };
+    return this;
+  }
+
+  noHealthCheck(): this {
+    this.state.healthCheck = { enabled: false, path: '/health', timeout: 30, retries: 3, startupDelay: 3 };
+    return this;
+  }
+
+  preDeploy(fn: HookFn): this {
+    this.state.hooks = { ...(this.state.hooks ?? {}), preDeploy: fn };
+    return this;
+  }
+
+  postDeploy(fn: HookFn): this {
+    this.state.hooks = { ...(this.state.hooks ?? {}), postDeploy: fn };
+    return this;
+  }
+
+  /** Internal: hand off the accumulated state to the workspace builder. */
+  toApp(): Partial<ShipnodeApp> {
+    return this.state as Partial<ShipnodeApp>;
+  }
+}
+
 export const shipnode = new ShipnodeBuilder();
+
+/** Standalone factory for a per-app sub-builder. Equivalent to `shipnode.app()`. */
+export function app(): ShipnodeAppBuilder {
+  return new ShipnodeAppBuilder();
+}
 
 export function defineConfig(builder: ShipnodeBuilder): ShipnodeBuilder {
   return builder;
