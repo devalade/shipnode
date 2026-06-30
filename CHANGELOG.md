@@ -6,8 +6,8 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ### Added
 - **Multi-app workspaces** — a single `shipnode.config.ts` can now declare multiple applications deployed to the same server, each with its own domain, PM2 process set, health check, env file, build steps, and hooks:
-  - New `.app(name, fn)` builder method to define per-app configuration inside a workspace.
-  - New `.apps([api, web])` builder method to compose multiple apps into one deployment.
+  - New `shipnode.app()` (and the standalone `app()` factory exported from the package) returns a per-app sub-builder with the per-app methods (`.backend()`/`.frontend()`, `.name()`, `.appRoot()`, `.domain()`, `.port()`, `.pm2()`, `.worker()`, `.envFile()`, `.healthCheck()`, `.preDeploy()`/`.postDeploy()`, etc.).
+  - New `.apps([api, web])` builder method on the workspace builder to compose multiple apps into one deployment.
   - Each app gets its own release directory (`<remotePath>/<app-name>/releases/<ts>/`), own Caddy site block, own PM2 ecosystem, and own lock file.
   - Orchestrator iterates over all apps, selecting the right strategy per-app (backend/frontend).
 - **`--app <name>` CLI flag** — target a single app in a multi-app workspace (`shipnode deploy --app api`, `shipnode logs --app web`). Commands without `--app` apply to all apps. `rollback` requires `--app`.
