@@ -13,8 +13,29 @@ import type {
 } from '../shared/types.js';
 import { assembleConfig } from './assembly.js';
 
-type BuilderState = Omit<Partial<ShipnodeConfig>, 'pm2' | 'apps'> & {
+type BuilderState = {
+  ssh?: SshConfig;
+  remotePath?: string;
+  nodeVersion?: string;
+  pkgManager?: PkgManager;
+  installCommand?: string;
+  database?: DatabaseConfig;
+  redis?: RedisConfig;
+  backup?: BackupConfig;
+  cloudflare?: CloudflareConfig;
+  aliases?: Record<string, string>;
+  // Legacy per-app input fields (synthesized to apps[0] by z.preprocess)
+  app?: string;
   pm2?: { apps: Pm2App[] };
+  domain?: string;
+  keepReleases?: number;
+  healthCheck?: Partial<HealthCheckConfig>;
+  envFile?: string;
+  buildDir?: string;
+  sharedDirs?: string[];
+  sharedFiles?: string[];
+  appRoot?: string;
+  hooks?: { preDeploy?: HookFn; postDeploy?: HookFn };
   apps?: Partial<ShipnodeApp>[];
 };
 

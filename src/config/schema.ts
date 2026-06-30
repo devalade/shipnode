@@ -118,17 +118,10 @@ export const ShipnodeAppSchema = z.object({
   { message: 'domain requires a web app: one pm2.apps entry must declare a port', path: ['domain'] },
 );
 
-// Dual shape during 3.0 transition: the canonical config carries BOTH `apps[]` (the new
-// workspace shape) AND the legacy top-level per-app fields (app/domain/pm2/healthCheck/
-// envFile/keepReleases/sharedDirs/sharedFiles/buildDir/appRoot/hooks). Downstream code
-// reading the legacy fields keeps working unchanged; new code reads from `apps[]`.
-// Sprint 2c/2d will migrate downstream and drop the legacy fields.
-//
 // A z.preprocess wrapper synthesizes `apps[0]` from the legacy top-level fields when
 // the input doesn't carry `apps`. This lets every 2.x config (including the existing
 // schema.test.ts cases that call ShipnodeConfigSchema.safeParse directly) parse without
-// modification. assembleConfig then post-processes to mirror apps[0] back onto the
-// legacy top-level fields, so the canonical output is internally consistent.
+// modification.
 const ShipnodeConfigBaseSchema = z.object({
   // workspace-level
   ssh: SshConfigSchema,
@@ -144,31 +137,7 @@ const ShipnodeConfigBaseSchema = z.object({
 
   // canonical app list (always populated by assembleConfig; .min(1) enforced)
   apps: z.array(ShipnodeAppSchema).min(1, 'workspace must contain at least one app'),
-
-  // legacy top-level mirrors — kept during 3.0 transition for downstream compat.
-  // Always equal to apps[0].<field> after assembleConfig runs.
-  app: z.enum(['backend', 'frontend']).default('backend'),
-  domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
-  pm2: Pm2ConfigSchema.optional(),
-  healthCheck: HealthCheckConfigSchema,
-  envFile: z.string().default('.env'),
-  keepReleases: z.number().int().min(1).default(5),
-  sharedDirs: z.array(z.string()).optional(),
-  sharedFiles: z.array(z.string()).optional(),
-  buildDir: z.string().optional(),
-  appRoot: z.string().optional(),
-  hooks: HooksConfigSchema,
-}).refine(
-  (cfg) => !(cfg.app === 'frontend' && cfg.pm2),
-  { message: 'frontend apps cannot declare pm2 (frontends are static files served by Caddy)', path: ['pm2'] },
-).refine(
-  (cfg) => {
-    if (!cfg.domain || cfg.app !== 'backend') return true;
-    const hasWebApp = cfg.pm2?.apps.some((a) => a.port !== undefined);
-    return hasWebApp ?? false;
-  },
-  { message: 'domain requires a web app: one pm2.apps entry must declare a port', path: ['domain'] },
-);
+});
 
 export const ShipnodeConfigSchema = z.preprocess(
   (input: unknown) => {

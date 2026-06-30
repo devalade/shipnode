@@ -31,13 +31,13 @@ describe('loadConfig — --config path resolution', () => {
     // Previously this threw "Cannot find module './shipnode.custom.config.ts'"
     // because jiti's anchor is the loader file inside dist/.
     const config = await loadConfig(dir, './shipnode.custom.config.ts');
-    expect(config.app).toBe('backend');
+    expect(config.apps[0].appType).toBe('backend');
     expect(config.remotePath).toBe('/var/www/app');
   });
 
   it('accepts a bare filename as --config (no ./ prefix)', async () => {
     const config = await loadConfig(dir, 'shipnode.custom.config.ts');
-    expect(config.pm2?.apps[0].name).toBe('myapp');
+    expect(config.apps[0].pm2?.apps[0].name).toBe('myapp');
   });
 
   it('still accepts an absolute --config path', async () => {

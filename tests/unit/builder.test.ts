@@ -35,29 +35,29 @@ describe('ShipnodeBuilder', () => {
       .aliases({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' })
       .build();
 
-    expect(config.app).toBe('backend');
+    expect(config.apps[0].appType).toBe('backend');
     expect(config.ssh).toEqual({ host: '192.168.1.1', user: 'deploy', port: 2222, identityFile: '/k/id' });
     expect(config.remotePath).toBe('/var/www/myapp');
-    expect(config.pm2?.apps).toHaveLength(2);
-    expect(config.pm2?.apps[0]).toMatchObject({ name: 'myapp', port: 3333, instances: 2, maxMemory: '1G' });
-    expect(config.pm2?.apps[1]).toMatchObject({ name: 'mailer', command: 'node dist/mailer.js', instances: 1, maxMemory: '512M', env: { Q: 'mail' } });
-    expect(config.domain).toBe('api.example.com');
-    expect(config.keepReleases).toBe(10);
-    expect(config.sharedDirs).toEqual(['storage', 'uploads']);
-    expect(config.sharedFiles).toEqual(['.htpasswd']);
-    expect(config.healthCheck).toEqual({ enabled: true, path: '/healthz', timeout: 60, retries: 5, startupDelay: 10 });
-    expect(config.envFile).toBe('.env.production');
+    expect(config.apps[0].pm2?.apps).toHaveLength(2);
+    expect(config.apps[0].pm2?.apps[0]).toMatchObject({ name: 'myapp', port: 3333, instances: 2, maxMemory: '1G' });
+    expect(config.apps[0].pm2?.apps[1]).toMatchObject({ name: 'mailer', command: 'node dist/mailer.js', instances: 1, maxMemory: '512M', env: { Q: 'mail' } });
+    expect(config.apps[0].domain).toBe('api.example.com');
+    expect(config.apps[0].keepReleases).toBe(10);
+    expect(config.apps[0].sharedDirs).toEqual(['storage', 'uploads']);
+    expect(config.apps[0].sharedFiles).toEqual(['.htpasswd']);
+    expect(config.apps[0].healthCheck).toEqual({ enabled: true, path: '/healthz', timeout: 60, retries: 5, startupDelay: 10 });
+    expect(config.apps[0].envFile).toBe('.env.production');
     expect(config.nodeVersion).toBe('22');
     expect(config.pkgManager).toBe('pnpm');
     expect(config.installCommand).toBe('pnpm install --frozen-lockfile');
-    expect(config.buildDir).toBe('build');
-    expect(config.appRoot).toBe('apps/backend');
+    expect(config.apps[0].buildDir).toBe('build');
+    expect(config.apps[0].appRoot).toBe('apps/backend');
     expect(config.database).toMatchObject({ type: 'postgres', host: 'localhost', port: 5432, name: 'db', user: 'u', password: 'p' });
     expect(config.redis).toEqual({ host: 'localhost', port: 6379, password: 'rp' });
     expect(config.backup).toMatchObject({ s3Bucket: 'backups', s3Prefix: 'prod', schedule: 'daily', retentionDays: 30 });
     expect(config.cloudflare).toMatchObject({ zone: 'example.com', appHostname: 'api.example.com', tunnelName: 't', lockdownFirewall: true });
-    expect(config.hooks?.preDeploy).toBe(preDeploy);
-    expect(config.hooks?.postDeploy).toBe(postDeploy);
+    expect(config.apps[0].hooks?.preDeploy).toBe(preDeploy);
+    expect(config.apps[0].hooks?.postDeploy).toBe(postDeploy);
     expect(config.aliases).toEqual({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' });
   });
 
@@ -70,15 +70,15 @@ describe('ShipnodeBuilder', () => {
       .pm2('myapp')
       .build();
 
-    expect(config.app).toBe('backend');
+    expect(config.apps[0].appType).toBe('backend');
     expect(config.ssh.host).toBe('192.168.1.1');
     expect(config.ssh.user).toBe('deploy');
     expect(config.ssh.port).toBe(22);
     expect(config.remotePath).toBe('/var/www/myapp');
-    expect(config.pm2?.apps[0].name).toBe('myapp');
-    expect(config.keepReleases).toBe(5);
-    expect(config.healthCheck.enabled).toBe(true);
-    expect(config.envFile).toBe('.env');
+    expect(config.apps[0].pm2?.apps[0].name).toBe('myapp');
+    expect(config.apps[0].keepReleases).toBe(5);
+    expect(config.apps[0].healthCheck.enabled).toBe(true);
+    expect(config.apps[0].envFile).toBe('.env');
     expect(config.nodeVersion).toBe('lts');
   });
 
@@ -89,7 +89,7 @@ describe('ShipnodeBuilder', () => {
       .deployTo('/var/www/frontend')
       .build();
 
-    expect(config.app).toBe('frontend');
+    expect(config.apps[0].appType).toBe('frontend');
     expect(config.ssh.host).toBe('example.com');
   });
 
@@ -110,15 +110,15 @@ describe('ShipnodeBuilder', () => {
 
     expect(config.ssh.port).toBe(2222);
     expect(config.remotePath).toBe('/opt/app');
-    expect(config.pm2?.apps[0].instances).toBe(4);
-    expect(config.pm2?.apps[0].maxMemory).toBe('1G');
-    expect(config.pm2?.apps[0].port).toBe(8080);
-    expect(config.domain).toBe('api.example.com');
-    expect(config.keepReleases).toBe(10);
-    expect(config.healthCheck.path).toBe('/api/health');
-    expect(config.healthCheck.timeout).toBe(60);
-    expect(config.healthCheck.retries).toBe(5);
-    expect(config.envFile).toBe('.env.production');
+    expect(config.apps[0].pm2?.apps[0].instances).toBe(4);
+    expect(config.apps[0].pm2?.apps[0].maxMemory).toBe('1G');
+    expect(config.apps[0].pm2?.apps[0].port).toBe(8080);
+    expect(config.apps[0].domain).toBe('api.example.com');
+    expect(config.apps[0].keepReleases).toBe(10);
+    expect(config.apps[0].healthCheck.path).toBe('/api/health');
+    expect(config.apps[0].healthCheck.timeout).toBe(60);
+    expect(config.apps[0].healthCheck.retries).toBe(5);
+    expect(config.apps[0].envFile).toBe('.env.production');
     expect(config.nodeVersion).toBe('22');
     expect(config.pkgManager).toBe('pnpm');
   });
@@ -131,7 +131,7 @@ describe('ShipnodeBuilder', () => {
       .noHealthCheck()
       .build();
 
-    expect(config.healthCheck.enabled).toBe(false);
+    expect(config.apps[0].healthCheck.enabled).toBe(false);
   });
 
   it('sets shared dirs and files', () => {
@@ -143,8 +143,8 @@ describe('ShipnodeBuilder', () => {
       .sharedFiles(['config.json'])
       .build();
 
-    expect(config.sharedDirs).toEqual(['uploads', 'logs']);
-    expect(config.sharedFiles).toEqual(['config.json']);
+    expect(config.apps[0].sharedDirs).toEqual(['uploads', 'logs']);
+    expect(config.apps[0].sharedFiles).toEqual(['config.json']);
   });
 
   it('sets database config', () => {
@@ -203,8 +203,8 @@ describe('ShipnodeBuilder', () => {
       .postDeploy(postDeploy)
       .build();
 
-    expect(typeof config.hooks?.preDeploy).toBe('function');
-    expect(typeof config.hooks?.postDeploy).toBe('function');
+    expect(typeof config.apps[0].hooks?.preDeploy).toBe('function');
+    expect(typeof config.apps[0].hooks?.postDeploy).toBe('function');
   });
 
   it('order of chaining does not matter', () => {
@@ -295,7 +295,7 @@ describe('ShipnodeBuilder', () => {
       .appRoot('apps/backend')
       .build();
 
-    expect(config.appRoot).toBe('apps/backend');
+    expect(config.apps[0].appRoot).toBe('apps/backend');
   });
 
   it('sets backup config', () => {
@@ -374,8 +374,8 @@ describe('ShipnodeAppBuilder + workspace .apps([])', () => {
     });
     expect(config.apps[1].pm2?.apps[0]).toMatchObject({ name: 'web', port: 3000 });
     // Legacy top-level mirrors point to apps[0]
-    expect(config.domain).toBe('api.example.com');
-    expect(config.appRoot).toBe('apps/backend');
+    expect(config.apps[0].domain).toBe('api.example.com');
+    expect(config.apps[0].appRoot).toBe('apps/backend');
   });
 
   it('app builder collects workers alongside the web app', () => {

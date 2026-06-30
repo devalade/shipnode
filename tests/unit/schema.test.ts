@@ -12,9 +12,9 @@ describe('ShipnodeConfigSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.ssh.port).toBe(22);
-      expect(result.data.keepReleases).toBe(5);
-      expect(result.data.healthCheck.enabled).toBe(true);
-      expect(result.data.envFile).toBe('.env');
+      expect(result.data.apps[0].keepReleases).toBe(5);
+      expect(result.data.apps[0].healthCheck.enabled).toBe(true);
+      expect(result.data.apps[0].envFile).toBe('.env');
       expect(result.data.nodeVersion).toBe('lts');
     }
   });
@@ -112,10 +112,10 @@ describe('ShipnodeConfigSchema', () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.healthCheck.path).toBe('/health');
-      expect(result.data.healthCheck.timeout).toBe(30);
-      expect(result.data.healthCheck.retries).toBe(3);
-      expect(result.data.healthCheck.startupDelay).toBe(3);
+      expect(result.data.apps[0].healthCheck.path).toBe('/health');
+      expect(result.data.apps[0].healthCheck.timeout).toBe(30);
+      expect(result.data.apps[0].healthCheck.retries).toBe(3);
+      expect(result.data.apps[0].healthCheck.startupDelay).toBe(3);
     }
   });
 
@@ -135,10 +135,10 @@ describe('ShipnodeConfigSchema', () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.healthCheck.path).toBe('/api/health');
-      expect(result.data.healthCheck.timeout).toBe(60);
-      expect(result.data.healthCheck.retries).toBe(5);
-      expect(result.data.healthCheck.startupDelay).toBe(10);
+      expect(result.data.apps[0].healthCheck.path).toBe('/api/health');
+      expect(result.data.apps[0].healthCheck.timeout).toBe(60);
+      expect(result.data.apps[0].healthCheck.retries).toBe(5);
+      expect(result.data.apps[0].healthCheck.startupDelay).toBe(10);
     }
   });
 });

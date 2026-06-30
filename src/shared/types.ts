@@ -136,30 +136,6 @@ export interface ShipnodeConfig {
 
   /** Canonical app list. Always populated by assembleConfig (length >= 1). */
   apps: ShipnodeApp[];
-
-  // Legacy top-level mirrors of apps[0].<field>. Kept during the 3.0 transition so
-  // downstream code reading these fields directly keeps working. New code should
-  // read from apps[]. Sprint 2c will migrate the downstream consumers, after which
-  // these mirrors can be removed.
-  app: AppType;
-  pm2?: Pm2Config;
-  domain?: string;
-  keepReleases: number;
-  healthCheck: HealthCheckConfig;
-  envFile: string;
-  buildDir?: string;
-  /**
-   * Path (relative to the repo root) of the app within a monorepo whose
-   * compiled output reads `.env` from its own root (AdonisJS, NestJS, etc.).
-   * Shipnode symlinks the shared `.env` into `<appRoot>/build` and
-   * `<appRoot>/dist`. Unset = single-app layout; shipnode auto-detects
-   * `build` / `dist` at the repo root and any obvious `apps/*` / `packages/*`
-   * build outputs.
-   */
-  appRoot?: string;
-  sharedDirs?: string[];
-  sharedFiles?: string[];
-  hooks?: HooksConfig;
 }
 
 export interface ReleaseRecord {
