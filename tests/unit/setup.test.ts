@@ -8,7 +8,7 @@ import {
   buildRedisConfigureCommand,
   buildRedisProbeCommand,
   buildRedisSetupCommand,
-} from '../../src/cli/commands/setup.js';
+} from '../../src/infrastructure/provisioning/commands.js';
 
 describe('buildDbInstallCommand', () => {
   it('postgres: installs package and starts service', () => {
