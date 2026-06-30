@@ -22,8 +22,8 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
       ui.banner();
       ui.step(`Deploying ${chalk.bold(getDeploymentName(config) ?? getActiveApp(config).appType)} → ${config.ssh.user}@${config.ssh.host}`);
 
-      const deployer = new DeployService(new LoggingExecutor(executor), config, cwd);
-      await deployer.execute(options.skipBuild ?? false);
+      const deployer = new DeployService(new LoggingExecutor(executor), config);
+      await deployer.execute(cwd, options.skipBuild ?? false);
 
       const lines = [
         `host     ${config.ssh.user}@${config.ssh.host}`,

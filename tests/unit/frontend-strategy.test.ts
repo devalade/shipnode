@@ -32,14 +32,23 @@ function makeConfig(overrides: Record<string, unknown> = {}): ReturnType<typeof 
 }
 
 function makeCtx(overrides: Partial<StrategyContext> = {}): StrategyContext {
-  return {
-    config: makeConfig(),
+  const baseConfig = makeConfig();
+  const ctx: Partial<StrategyContext> = {
+    config: baseConfig,
     executor: new FakeRemoteExecutor(),
     workDir: '/var/www/app/releases/20240101',
     cwd: '/local/project',
     skipBuild: false,
     ...overrides,
   };
+  if (!ctx.app && ctx.config) {
+    ctx.app = ctx.config.apps[0];
+  }
+  return ctx as StrategyContext;
+}
+
+function makeStrategy(config: ReturnType<typeof assembleConfig>, cwd: string): FrontendStrategy {
+  return new FrontendStrategy(config, config.apps[0], cwd);
 }
 
 beforeEach(() => {
@@ -51,7 +60,7 @@ beforeEach(() => {
 
 describe('FrontendStrategy.stage', () => {
   it('runs local build then rsync (two execa calls)', async () => {
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: false }));
 
     // First call: local build; second call: rsync
@@ -61,7 +70,7 @@ describe('FrontendStrategy.stage', () => {
   });
 
   it('skips local build when skipBuild is true', async () => {
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: true }));
 
     expect(mockedExeca).toHaveBeenCalledTimes(1);
@@ -70,7 +79,7 @@ describe('FrontendStrategy.stage', () => {
   });
 
   it('passes SSH port to rsync -e flag', async () => {
-    const strategy = new FrontendStrategy(
+    const strategy = makeStrategy(
       makeConfig({ ssh: { host: '1.2.3.4', user: 'deploy', port: 2222 } }),
       '/local/project',
     );
@@ -82,7 +91,7 @@ describe('FrontendStrategy.stage', () => {
   });
 
   it('includes --delete in rsync args', async () => {
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: true }));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -94,7 +103,7 @@ describe('FrontendStrategy.stage', () => {
       p.toString().endsWith('.shipnodeignore'),
     );
 
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: true }));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -104,7 +113,7 @@ describe('FrontendStrategy.stage', () => {
   it('omits --exclude-from when .shipnodeignore is absent', async () => {
     mockedPathExists.mockResolvedValue(false);
 
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: true }));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -112,7 +121,7 @@ describe('FrontendStrategy.stage', () => {
   });
 
   it('uses config.buildDir when set', async () => {
-    const strategy = new FrontendStrategy(
+    const strategy = makeStrategy(
       makeConfig({ buildDir: 'my-custom-build' }),
       '/local/project',
     );
@@ -127,7 +136,7 @@ describe('FrontendStrategy.stage', () => {
       p.toString().endsWith('/build'),
     );
 
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: true }));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -137,7 +146,7 @@ describe('FrontendStrategy.stage', () => {
   it('falls back to "dist" when no build dir found', async () => {
     mockedPathExists.mockResolvedValue(false);
 
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: true }));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -149,7 +158,7 @@ describe('FrontendStrategy.stage', () => {
       p.toString().endsWith('/public'),
     );
 
-    const strategy = new FrontendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx({ skipBuild: true }));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -157,7 +166,7 @@ describe('FrontendStrategy.stage', () => {
   });
 
   it('uses pnpm run build when pkgManager is pnpm', async () => {
-    const strategy = new FrontendStrategy(
+    const strategy = makeStrategy(
       makeConfig({ pkgManager: 'pnpm' }),
       '/local/project',
     );

@@ -2,7 +2,6 @@ import { execa } from 'execa';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
-import { getActiveApp } from '../workspace.js';
 import { getRunCommand, detectPkgManager } from '../framework/detector.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
 
@@ -10,13 +9,10 @@ export class FrontendStrategy implements DeploymentStrategy {
   readonly name = 'frontend';
 
   constructor(
-    private config: ShipnodeConfig,
+    private workspace: ShipnodeConfig,
+    private app: ShipnodeApp,
     private cwd: string,
   ) {}
-
-  private get app(): ShipnodeApp {
-    return getActiveApp(this.config);
-  }
 
   async stage(ctx: StrategyContext): Promise<void> {
     if (!ctx.skipBuild) {
@@ -31,14 +27,14 @@ export class FrontendStrategy implements DeploymentStrategy {
       '-avz',
       '--progress',
       '--delete',
-      '-e', `ssh -p ${this.config.ssh.port}`,
+      '-e', `ssh -p ${this.workspace.ssh.port}`,
       '--exclude', 'shared/',
       '--exclude', '.shipnode/',
       '--exclude', 'releases/',
       '--exclude', 'current',
       ...(hasIgnoreFile ? ['--exclude-from', ignoreFile] : []),
       `${this.cwd}/${buildDir}/`,
-      `${this.config.ssh.user}@${this.config.ssh.host}:${ctx.workDir}/`,
+      `${this.workspace.ssh.user}@${this.workspace.ssh.host}:${ctx.workDir}/`,
     ], { stdio: 'inherit' });
   }
 
@@ -64,7 +60,7 @@ export class FrontendStrategy implements DeploymentStrategy {
   }
 
   private async resolvePkgManager() {
-    if (this.config.pkgManager) return this.config.pkgManager;
+    if (this.workspace.pkgManager) return this.workspace.pkgManager;
     const detected = await detectPkgManager(this.cwd);
     return detected ?? 'npm';
   }

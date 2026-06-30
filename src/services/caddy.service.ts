@@ -1,7 +1,6 @@
 import type { ShipnodeConfig, ShipnodeApp } from '../shared/types.js';
-import { getActiveApp } from '../domain/workspace.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
-import { getDeploymentName, getWebApp } from '../domain/pm2/apps.js';
+import { getWebApp } from '../domain/pm2/apps.js';
 
 export class CaddyService {
   constructor(
@@ -9,52 +8,57 @@ export class CaddyService {
     private config: ShipnodeConfig,
   ) {}
 
-  private get app(): ShipnodeApp {
-    return getActiveApp(this.config);
+  async configureAll(): Promise<void> {
+    for (const app of this.config.apps) {
+      if (!app.domain) continue;
+
+      if (app.appType === 'backend') {
+        await this.configureBackend(app);
+      } else {
+        await this.configureFrontend(app);
+      }
+    }
   }
 
-  async configureBackend(): Promise<void> {
-    if (!this.app.domain || !this.app.pm2) return;
+  async configureBackend(app: ShipnodeApp): Promise<void> {
+    if (!app.domain || !app.pm2) return;
 
-    const webApp = getWebApp(this.config);
-    const appName = getDeploymentName(this.config);
-    // Domain + backend without a web app is rejected by assembleConfig (Q4),
-    // so reaching here without a webApp would be a bug — defensive guard.
-    if (!webApp || !appName) return;
-    const caddyConfig = this.generateBackendCaddyfile(appName, webApp.port!);
+    const webApp = getWebApp({ ...this.config, apps: [app] } as ShipnodeConfig);
+    if (!webApp) return;
+    const caddyConfig = this.generateBackendCaddyfile(app, webApp.port!);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
-    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${appName}.caddy`);
+    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${app.name}.caddy`);
+  }
+
+  async configureFrontend(app: ShipnodeApp): Promise<void> {
+    if (!app.domain) return;
+
+    const servePath = `${this.config.remotePath}/${app.name}/current`;
+    const caddyConfig = this.generateFrontendCaddyfile(app, servePath);
+
+    const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
+    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${app.name}.caddy`);
+  }
+
+  async reload(): Promise<void> {
     await this.executor.execOrThrow('systemctl reload caddy');
   }
 
-  async configureFrontend(): Promise<void> {
-    if (!this.app.domain) return;
-
-    const servePath = `${this.config.remotePath}/current`;
-
-    const appName = this.config.remotePath.split('/').pop() ?? 'app';
-    const caddyConfig = this.generateFrontendCaddyfile(appName, servePath);
-
-    const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
-    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${appName}.caddy`);
-    await this.executor.execOrThrow('systemctl reload caddy');
-  }
-
-  private generateBackendCaddyfile(appName: string, port: number): string {
-    return `${this.app.domain} {
+  private generateBackendCaddyfile(app: ShipnodeApp, port: number): string {
+    return `${app.domain} {
     reverse_proxy localhost:${port}
 
     encode gzip
 
     log {
-        output file /var/log/caddy/${appName}.log
+        output file /var/log/caddy/${app.name}.log
     }
 }`;
   }
 
-  private generateFrontendCaddyfile(appName: string, servePath: string): string {
-    return `${this.app.domain} {
+  private generateFrontendCaddyfile(app: ShipnodeApp, servePath: string): string {
+    return `${app.domain} {
     root * ${servePath}
     file_server
 
@@ -63,7 +67,7 @@ export class CaddyService {
     encode gzip
 
     log {
-        output file /var/log/caddy/${appName}.log
+        output file /var/log/caddy/${app.name}.log
     }
 }`;
   }

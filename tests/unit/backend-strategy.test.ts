@@ -37,14 +37,23 @@ function makeConfig(overrides: Partial<ShipnodeConfig> = {}): ShipnodeConfig {
 }
 
 function makeCtx(executor: FakeRemoteExecutor, overrides: Partial<StrategyContext> = {}): StrategyContext {
-  return {
-    config: makeConfig(),
+  const baseConfig = makeConfig();
+  const ctx: Partial<StrategyContext> = {
+    config: baseConfig,
     executor,
     workDir: '/var/www/app/releases/20240101',
     cwd: '/local/project',
     skipBuild: false,
     ...overrides,
   };
+  if (!ctx.app && ctx.config) {
+    ctx.app = ctx.config.apps[0];
+  }
+  return ctx as StrategyContext;
+}
+
+function makeStrategy(config: ReturnType<typeof assembleConfig>, cwd: string): BackendStrategy {
+  return new BackendStrategy(config, config.apps[0], cwd);
 }
 
 beforeEach(() => {
@@ -56,7 +65,7 @@ beforeEach(() => {
 
 describe('BackendStrategy.stage', () => {
   it('passes SSH port to rsync -e flag', async () => {
-    const strategy = new BackendStrategy(makeConfig({ ssh: { host: '1.2.3.4', user: 'deploy', port: 2222 } }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ ssh: { host: '1.2.3.4', user: 'deploy', port: 2222 } }), '/local/project');
     await strategy.stage(makeCtx(new FakeRemoteExecutor()));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -65,7 +74,7 @@ describe('BackendStrategy.stage', () => {
   });
 
   it('uses port 22 by default', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx(new FakeRemoteExecutor()));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -74,7 +83,7 @@ describe('BackendStrategy.stage', () => {
 
   it('includes --exclude-from when .shipnodeignore exists', async () => {
     mockedPathExists.mockResolvedValue(true);
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx(new FakeRemoteExecutor()));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -83,7 +92,7 @@ describe('BackendStrategy.stage', () => {
 
   it('omits --exclude-from when .shipnodeignore is absent', async () => {
     mockedPathExists.mockResolvedValue(false);
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     await strategy.stage(makeCtx(new FakeRemoteExecutor()));
 
     const [, args] = mockedExeca.mock.calls[0] as [string, string[]];
@@ -91,7 +100,7 @@ describe('BackendStrategy.stage', () => {
   });
 
   it('syncs from local cwd to remote workDir', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     const ctx = makeCtx(new FakeRemoteExecutor(), { workDir: '/var/www/app/releases/abc' });
     await strategy.stage(ctx);
 
@@ -106,7 +115,7 @@ describe('BackendStrategy.stage', () => {
 
 describe('BackendStrategy.setupEnvironment', () => {
   it('runs mise and npm install', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'npm' }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pkgManager: 'npm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor));
 
@@ -117,7 +126,7 @@ describe('BackendStrategy.setupEnvironment', () => {
 
   it('uses the custom installCommand override when set', async () => {
     const config = makeConfig({ pkgManager: 'npm', installCommand: 'npm ci --legacy-peer-deps' });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor, { config }));
 
@@ -127,7 +136,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('uses pnpm install when pkgManager is pnpm', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor));
 
@@ -136,7 +145,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('includes build step when skipBuild is false', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor, { skipBuild: false }));
 
@@ -145,7 +154,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('omits build step when skipBuild is true', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor, { skipBuild: true }));
 
@@ -154,7 +163,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('links shared dirs when configured', async () => {
-    const strategy = new BackendStrategy(
+    const strategy = makeStrategy(
       makeConfig({ sharedDirs: ['uploads', 'logs'] }),
       '/local/project',
     );
@@ -168,7 +177,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('links shared files when configured', async () => {
-    const strategy = new BackendStrategy(
+    const strategy = makeStrategy(
       makeConfig({ sharedFiles: ['config.json'] }),
       '/local/project',
     );
@@ -181,7 +190,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('links shared .env', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor));
 
@@ -191,7 +200,7 @@ describe('BackendStrategy.setupEnvironment', () => {
 
   it('symlinks .env into appRoot/build when appRoot is configured (monorepo)', async () => {
     const config = makeConfig({ appRoot: 'apps/backend' });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor, { config }));
 
@@ -201,7 +210,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('also scans apps/*/build and packages/*/build for monorepos (no appRoot)', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor));
 
@@ -213,7 +222,7 @@ describe('BackendStrategy.setupEnvironment', () => {
   });
 
   it('sources .env before install so private-registry tokens (npmrc ${VAR}) resolve', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor));
 
@@ -226,13 +235,13 @@ describe('BackendStrategy.setupEnvironment', () => {
 
   it('links the shared env using the configured envFile name, not a hardcoded .env', async () => {
     const config = makeConfig({ envFile: '.env.production' });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor, { config }));
 
     const cmd = executor.getLastCommand()!.command;
     expect(cmd).toContain('shared/.env.production');
-    expect(cmd).toContain('ln -sf "/var/www/app/shared/.env.production" .env');
+    expect(cmd).toContain('ln -sf "/var/www/app/myapp/shared/.env.production" .env');
   });
 });
 
@@ -240,7 +249,7 @@ describe('BackendStrategy.setupEnvironment', () => {
 
 describe('BackendStrategy.startApp', () => {
   it('is a no-op when pm2 is not configured', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pm2: undefined }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pm2: undefined }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
@@ -248,7 +257,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('writes ecosystem file and reloads pm2', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pm2: { name: 'myapp' } }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pm2: { name: 'myapp' } }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
@@ -262,7 +271,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('ecosystem file contains app name and port', async () => {
-    const strategy = new BackendStrategy(
+    const strategy = makeStrategy(
       makeConfig({ pm2: { name: 'api-server' }, backend: { port: 8080 } }),
       '/local/project',
     );
@@ -275,7 +284,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('ecosystem file uses custom instances and maxMemory', async () => {
-    const strategy = new BackendStrategy(
+    const strategy = makeStrategy(
       makeConfig({ pm2: { name: 'app', instances: 4, maxMemory: '1G' } }),
       '/local/project',
     );
@@ -288,7 +297,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('ecosystem path is per-release (ADR-0001)', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
@@ -296,7 +305,7 @@ describe('BackendStrategy.startApp', () => {
     // Written into the release dir (workDir); referenced at runtime via /current symlink.
     expect(writeCmd).toContain('/var/www/app/releases/20240101/ecosystem.config.cjs');
     const startCmd = executor.getHistory()[2].command;
-    expect(startCmd).toContain('/var/www/app/current/ecosystem.config.cjs');
+    expect(startCmd).toContain('/var/www/app/myapp/current/ecosystem.config.cjs');
   });
 
   it('generates multiple app blocks for workers', async () => {
@@ -313,7 +322,7 @@ describe('BackendStrategy.startApp', () => {
       },
       pkgManager: 'pnpm',
     });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { config }));
 
@@ -329,7 +338,7 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).toContain('PORT: 3000');
     expect(writeCmd).toContain('JOB');
     expect(writeCmd).toContain('cleanup');
-    expect(writeCmd).toContain('/var/www/app/shared/.env');
+    expect(writeCmd).toContain('/var/www/app/api/shared/.env');
     expect(writeCmd).toContain('namespace');
   });
 
@@ -341,7 +350,7 @@ describe('BackendStrategy.startApp', () => {
       pm2: { apps: [{ name: 'worker', command: 'node dist/worker.js' }] },
       pkgManager: 'npm',
     });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { config }));
 
@@ -357,7 +366,7 @@ describe('BackendStrategy.startApp', () => {
       pm2: { apps: [{ name: 'api', port: 3000 }, { name: 'worker' }] },
       pkgManager: 'npm',
     });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { config }));
 
@@ -371,7 +380,7 @@ describe('BackendStrategy.startApp', () => {
 
   it('uses the custom installCommand on the post-symlink relink (no --prefer-offline appended)', async () => {
     const config = makeConfig({ pkgManager: 'npm', installCommand: 'npm ci --legacy-peer-deps' });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { config }));
 
@@ -381,7 +390,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('emits the silent legacy-name pm2 delete fallback', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pm2: { name: 'myapp' } }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pm2: { name: 'myapp' } }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
@@ -390,7 +399,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('throws DeployError when pnpm reports ERR_PNPM_IGNORED_BUILDS during startApp install', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
 
     executor.when(
@@ -406,7 +415,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('drops the env_file ecosystem entry in favor of a bash -c env wrapper (ADR-0003)', async () => {
-    const strategy = new BackendStrategy(makeConfig({ envFile: '.env.production' }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ envFile: '.env.production' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
@@ -420,19 +429,19 @@ describe('BackendStrategy.startApp', () => {
 
   it('sets PM2 cwd to <remotePath>/current/<appRoot> when appRoot is configured', async () => {
     const config = makeConfig({ appRoot: 'apps/backend' });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { config }));
 
     const writeCmd = executor.getHistory()[0].command;
     // PM2 launches the script from inside the app dir so `pnpm start` reads
     // apps/backend/package.json, not the workspace root.
-    expect(writeCmd).toContain('/var/www/app/current/apps/backend');
+    expect(writeCmd).toContain('/var/www/app/myapp/current/apps/backend');
     expect(writeCmd).toMatch(/cwd:/);
   });
 
   it('omits PM2 cwd when no appRoot — single-app layout stays default', async () => {
-    const strategy = new BackendStrategy(makeConfig(), '/local/project');
+    const strategy = makeStrategy(makeConfig(), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
 
@@ -452,7 +461,7 @@ describe('BackendStrategy.startApp', () => {
       envFile: '.env.production',
       pkgManager: 'npm',
     });
-    const strategy = new BackendStrategy(config, '/local/project');
+    const strategy = makeStrategy(config, '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { config }));
 
@@ -461,7 +470,7 @@ describe('BackendStrategy.startApp', () => {
   });
 
   it('throws DeployError when pnpm reports ERR_PNPM_IGNORED_BUILDS during setupEnvironment', async () => {
-    const strategy = new BackendStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
 
     executor.when(

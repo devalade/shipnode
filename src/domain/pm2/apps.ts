@@ -24,8 +24,9 @@ export function getWebApp(config: ShipnodeConfig): Pm2App | undefined {
  * Absolute path to the active ecosystem file, stable across rollbacks because
  * `current` is a symlink. Per ADR-0001 the file lives inside each release.
  */
-export function getEcosystemPath(config: ShipnodeConfig): string {
-  return `${config.remotePath}/current/ecosystem.config.cjs`;
+export function getEcosystemPath(config: ShipnodeConfig, appName?: string): string {
+  const root = appName ? `${config.remotePath}/${appName}` : config.remotePath;
+  return `${root}/current/ecosystem.config.cjs`;
 }
 
 /**

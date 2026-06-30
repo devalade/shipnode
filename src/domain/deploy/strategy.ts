@@ -5,6 +5,7 @@ import type { RemoteExecutor } from '../remote/executor.js';
  */
 export interface StrategyContext {
   config: import('../../shared/types.js').ShipnodeConfig;
+  app: import('../../shared/types.js').ShipnodeApp;
   executor: RemoteExecutor;
   workDir: string;
   cwd: string;

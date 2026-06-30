@@ -2,8 +2,7 @@ import { execa } from 'execa';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../../shared/types.js';
-import { getDeploymentName, getPm2Name } from '../pm2/apps.js';
-import { getActiveApp } from '../workspace.js';
+import { getPm2Name } from '../pm2/apps.js';
 import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework/detector.js';
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
 import { DeployError } from '../../shared/errors.js';
@@ -39,12 +38,13 @@ export class BackendStrategy implements DeploymentStrategy {
   readonly name = 'backend';
 
   constructor(
-    private config: ShipnodeConfig,
+    private workspace: ShipnodeConfig,
+    private app: ShipnodeApp,
     private cwd: string,
   ) {}
 
-  private get app(): ShipnodeApp {
-    return getActiveApp(this.config);
+  private get appPath(): string {
+    return `${this.workspace.remotePath}/${this.app.name}`;
   }
 
   async stage(ctx: StrategyContext): Promise<void> {
@@ -55,11 +55,11 @@ export class BackendStrategy implements DeploymentStrategy {
     const args = [
       '-avz',
       '--progress',
-      '-e', `ssh -p ${this.config.ssh.port}`,
+      '-e', `ssh -p ${this.workspace.ssh.port}`,
       ...excludes.flatMap((e) => ['--exclude', e]),
       ...(hasIgnoreFile ? ['--exclude-from', ignoreFile] : []),
       `${this.cwd}/`,
-      `${this.config.ssh.user}@${this.config.ssh.host}:${ctx.workDir}/`,
+      `${this.workspace.ssh.user}@${this.workspace.ssh.host}:${ctx.workDir}/`,
     ];
 
     await execa('rsync', args, { stdio: 'inherit' });
@@ -67,13 +67,13 @@ export class BackendStrategy implements DeploymentStrategy {
 
   async setupEnvironment(ctx: StrategyContext): Promise<void> {
     const pkgManager = await this.resolvePkgManager();
-    const installCmd = this.config.installCommand ?? getInstallCommand(pkgManager);
+    const installCmd = this.workspace.installCommand ?? getInstallCommand(pkgManager);
     const runCmd = getRunCommand(pkgManager);
 
     const commands = [
       `cd "${ctx.workDir}"`,
       `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`,
-      `mise use -y "node@${this.config.nodeVersion}"`,
+      `mise use -y "node@${this.workspace.nodeVersion}"`,
       `mise install -y`,
     ];
 
@@ -84,7 +84,7 @@ export class BackendStrategy implements DeploymentStrategy {
     if (this.app.envFile) {
       // Use the configured env filename in the shared path; the local workDir
       // alias stays `.env` (the well-known name framework loaders look for).
-      commands.push(`ln -sf "${this.config.remotePath}/shared/${this.app.envFile}" .env`);
+      commands.push(`ln -sf "${this.appPath}/shared/${this.app.envFile}" .env`);
       // Source it so install/build see env vars (private-registry tokens in
       // `.npmrc` via `${TOKEN}`, build-time secrets, etc.). Affects this shell
       // chain only; the PM2 wrapper sources independently at process start.
@@ -133,12 +133,12 @@ export class BackendStrategy implements DeploymentStrategy {
     // Ecosystem lives inside the release directory (per-release snapshot, ADR-0001).
     // PM2 references it via the `current` symlink so it always resolves to the active release.
     const ecosystemWritePath = `${ctx.workDir}/ecosystem.config.cjs`;
-    const ecosystemRuntimePath = `${this.config.remotePath}/current/ecosystem.config.cjs`;
+    const ecosystemRuntimePath = `${this.appPath}/current/ecosystem.config.cjs`;
 
     const escaped = ecosystemContent.replace(/'/g, "'\"'\"'");
     await ctx.executor.execOrThrow(`echo '${escaped}' > "${ecosystemWritePath}"`);
 
-    const cdPath = `${this.config.remotePath}/current`;
+    const cdPath = `${this.appPath}/current`;
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 
     // Re-run install from the final directory so the pkg manager's module
@@ -146,8 +146,8 @@ export class BackendStrategy implements DeploymentStrategy {
     // in the local store so this is a fast offline relink, not a download.
     // If the user supplied a custom installCommand we use it verbatim — they've
     // chosen their flags and appending --prefer-offline would compose poorly.
-    const baseInstall = this.config.installCommand ?? getInstallCommand(pkgManager);
-    const relinkInstall = this.config.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
+    const baseInstall = this.workspace.installCommand ?? getInstallCommand(pkgManager);
+    const relinkInstall = this.workspace.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
     // Source env before relinking too — same reason as setupEnvironment:
     // private-registry tokens in `.npmrc` use env-var interpolation.
     const sourceCmd = sourceEnvCommand(this.app.envFile);
@@ -184,8 +184,8 @@ export class BackendStrategy implements DeploymentStrategy {
   private generateEcosystemFile(pkgManager: string): string {
     if (!this.app.pm2) return '';
 
-    const namespace = getDeploymentName(this.config) ?? this.app.pm2.apps[0].name;
-    const envFilePath = `${this.config.remotePath}/shared/${this.app.envFile}`;
+    const namespace = this.app.pm2.apps[0].name;
+    const envFilePath = `${this.appPath}/shared/${this.app.envFile}`;
     const appBlocks = this.app.pm2.apps.map((app) => this.generateAppBlock(app, pkgManager, namespace, envFilePath));
 
     return `module.exports = {
@@ -237,7 +237,7 @@ ${appBlocks.join(',\n')}
     // resolves require paths against the app, not the workspace root.
     // Install/build still run at the workspace root.
     const cwdLine = this.app.appRoot
-      ? `\n      cwd: '${escapeSingleQuotes(`${this.config.remotePath}/current/${this.app.appRoot}`)}',`
+      ? `\n      cwd: '${escapeSingleQuotes(`${this.appPath}/current/${this.app.appRoot}`)}',`
       : '';
 
     return `    {
@@ -278,14 +278,14 @@ ${envLines}
 
     if (this.app.sharedDirs) {
       for (const dir of this.app.sharedDirs) {
-        commands.push(`mkdir -p "${this.config.remotePath}/shared/${dir}"`);
-        commands.push(`ln -sfn "${this.config.remotePath}/shared/${dir}" "${workDir}/${dir}"`);
+        commands.push(`mkdir -p "${this.appPath}/shared/${dir}"`);
+        commands.push(`ln -sfn "${this.appPath}/shared/${dir}" "${workDir}/${dir}"`);
       }
     }
 
     if (this.app.sharedFiles) {
       for (const file of this.app.sharedFiles) {
-        commands.push(`ln -sf "${this.config.remotePath}/shared/${file}" "${workDir}/${file}"`);
+        commands.push(`ln -sf "${this.appPath}/shared/${file}" "${workDir}/${file}"`);
       }
     }
 
@@ -307,7 +307,7 @@ ${envLines}
   }
 
   private async resolvePkgManager() {
-    if (this.config.pkgManager) return this.config.pkgManager;
+    if (this.workspace.pkgManager) return this.workspace.pkgManager;
     const detected = await detectPkgManager(this.cwd);
     return detected ?? 'npm';
   }

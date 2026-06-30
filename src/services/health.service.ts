@@ -1,5 +1,4 @@
 import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../shared/types.js';
-import { getActiveApp } from '../domain/workspace.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { HealthCheckError } from '../shared/errors.js';
 import { getDeploymentName, getPm2Name } from '../domain/pm2/apps.js';
@@ -18,41 +17,34 @@ export class HealthCheckService {
     private config: ShipnodeConfig,
   ) {}
 
-  private get app(): ShipnodeApp {
-    return getActiveApp(this.config);
-  }
-
-  async perform(): Promise<{ attempts: number; responseMs: number }> {
-    if (!this.app.healthCheck.enabled) {
+  async perform(app: ShipnodeApp): Promise<{ attempts: number; responseMs: number }> {
+    if (!app.healthCheck.enabled) {
       return { attempts: 0, responseMs: 0 };
     }
 
-    const { startupDelay } = this.app.healthCheck;
+    const { startupDelay } = app.healthCheck;
     await this.sleep(startupDelay * 1000);
 
-    const webApp = this.app.pm2?.apps.find((a) => a.port !== undefined);
+    const webApp = app.pm2?.apps.find((a) => a.port !== undefined);
 
     let attempts = 0;
     let responseMs = 0;
 
     if (webApp) {
-      const result = await this.performHttpCheck(webApp);
+      const result = await this.performHttpCheck(webApp, app.healthCheck);
       attempts = result.attempts;
       responseMs = result.responseMs;
     }
 
-    // PM2 status check (Q8): every supervised process must be online and not crash-looping.
-    // Runs for both web and worker-only deployments — it's how we catch a worker that
-    // boots and dies before the web app's HTTP check would notice anything.
-    if (this.app.pm2?.apps.length) {
-      await this.performPm2StatusCheck(this.app.pm2.apps);
+    if (app.pm2?.apps.length) {
+      await this.performPm2StatusCheck(app.pm2.apps);
     }
 
     return { attempts, responseMs };
   }
 
-  private async performHttpCheck(webApp: Pm2App): Promise<{ attempts: number; responseMs: number }> {
-    const { path, timeout, retries } = this.app.healthCheck;
+  private async performHttpCheck(webApp: Pm2App, healthCheck: ShipnodeApp['healthCheck']): Promise<{ attempts: number; responseMs: number }> {
+    const { path, timeout, retries } = healthCheck;
     const url = `http://localhost:${webApp.port}${path}`;
 
     let lastStatus = 0;
@@ -107,8 +99,6 @@ export class HealthCheckService {
     const failures: string[] = [];
 
     for (const app of apps) {
-      // Look up by the PM2-level name (worker names are prefixed with the namespace
-      // for global uniqueness); report by the user-visible name to keep errors readable.
       const pm2Name = getPm2Name(namespace, app.name);
       const entry = byName.get(pm2Name);
       if (!entry) {
@@ -121,9 +111,6 @@ export class HealthCheckService {
         failures.push(`${app.name}: status=${status ?? 'unknown'}`);
         continue;
       }
-      // Freshly-started apps should have restart_time === 0. Any restart during the
-      // startup window means the process crashed and was bounced — a worker that
-      // boots and dies before the HTTP check has time to notice anything else.
       if (restarts > 0) {
         failures.push(`${app.name}: crashed during startup (restart_time=${restarts})`);
       }

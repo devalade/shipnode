@@ -14,7 +14,8 @@ export async function cmdRollback(
     cwd,
     async ({ config, executor }) => {
       const app = getActiveApp(config);
-      const releases = new ReleaseManager(executor, config.remotePath, app.keepReleases);
+      const appPath = `${config.remotePath}/${app.name}`;
+      const releases = new ReleaseManager(executor, appPath, app.keepReleases);
       const stepsBack = options.steps ?? 1;
 
       ui.info('Fetching release history...');
@@ -43,7 +44,7 @@ export async function cmdRollback(
         return;
       }
 
-      const targetPath = `${config.remotePath}/releases/${target.timestamp}`;
+      const targetPath = `${appPath}/releases/${target.timestamp}`;
       await releases.switchSymlink(targetPath);
       ui.success('Symlink switched');
 
@@ -54,7 +55,7 @@ export async function cmdRollback(
         // Prefer reloading from the rolled-back release's ecosystem file (ADR-0001 — it
         // restores the exact process set that was active for that release). Fall back to
         // namespace reload if the target release predates per-release ecosystem files.
-        const ecosystem = getEcosystemPath(config);
+        const ecosystem = getEcosystemPath(config, app.name);
         await executor.execOrThrow(
           `${mise}; mise exec node@${nodeVersion} -- ` +
           `(pm2 reload "${ecosystem}" --update-env 2>/dev/null || pm2 reload ${namespace} --update-env)`,
@@ -65,7 +66,7 @@ export async function cmdRollback(
       if (app.appType === 'backend' && app.healthCheck.enabled) {
         ui.info('Running health check...');
         const health = new HealthCheckService(executor, config);
-        await health.perform();
+        await health.perform(app);
         ui.success('Health check passed');
       }
 

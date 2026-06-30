@@ -33,7 +33,7 @@ describe('HealthCheckService.perform — PM2 status check', () => {
     // Worker name is namespace-prefixed in PM2 (api-worker), web app stays unprefixed.
     executor.when((c) => c.includes('pm2 jlist'), { stdout: pm2JlistOnline(['api', 'api-worker']), stderr: '', exitCode: 0 });
 
-    const result = await new HealthCheckService(executor, config).perform();
+    const result = await new HealthCheckService(executor, config).perform(config.apps[0]);
     expect(result.attempts).toBe(1);
   });
 
@@ -42,7 +42,7 @@ describe('HealthCheckService.perform — PM2 status check', () => {
     const executor = new FakeRemoteExecutor();
     executor.when((c) => c.includes('pm2 jlist'), { stdout: pm2JlistOnline(['worker']), stderr: '', exitCode: 0 });
 
-    const result = await new HealthCheckService(executor, config).perform();
+    const result = await new HealthCheckService(executor, config).perform(config.apps[0]);
     expect(result).toEqual({ attempts: 0, responseMs: 0 });
     expect(executor.getHistory().some((e) => e.command.includes('curl'))).toBe(false);
     expect(executor.getHistory().some((e) => e.command.includes('pm2 jlist'))).toBe(true);
@@ -61,8 +61,8 @@ describe('HealthCheckService.perform — PM2 status check', () => {
       exitCode: 0,
     });
 
-    await expect(new HealthCheckService(executor, config).perform()).rejects.toThrow(HealthCheckError);
-    await expect(new HealthCheckService(executor, config).perform()).rejects.toThrow(/worker: status=errored/);
+    await expect(new HealthCheckService(executor, config).perform(config.apps[0])).rejects.toThrow(HealthCheckError);
+    await expect(new HealthCheckService(executor, config).perform(config.apps[0])).rejects.toThrow(/worker: status=errored/);
   });
 
   it('fails when an app crash-looped during startup (restart_time > 0)', async () => {
@@ -75,7 +75,7 @@ describe('HealthCheckService.perform — PM2 status check', () => {
       exitCode: 0,
     });
 
-    await expect(new HealthCheckService(executor, config).perform()).rejects.toThrow(/crashed during startup/);
+    await expect(new HealthCheckService(executor, config).perform(config.apps[0])).rejects.toThrow(/crashed during startup/);
   });
 
   it('fails when an expected app is missing from pm2 jlist', async () => {
@@ -84,7 +84,7 @@ describe('HealthCheckService.perform — PM2 status check', () => {
     executor.when((c) => c.includes('curl'), { stdout: '200 5', stderr: '', exitCode: 0 });
     executor.when((c) => c.includes('pm2 jlist'), { stdout: pm2JlistOnline(['api']), stderr: '', exitCode: 0 });
 
-    await expect(new HealthCheckService(executor, config).perform()).rejects.toThrow(/worker: not running/);
+    await expect(new HealthCheckService(executor, config).perform(config.apps[0])).rejects.toThrow(/worker: not running/);
   });
 
   it('still fails HTTP-first when the web app does not respond, without reaching PM2 check', async () => {
@@ -93,7 +93,7 @@ describe('HealthCheckService.perform — PM2 status check', () => {
     executor.when((c) => c.includes('curl'), { stdout: '500 5', stderr: '', exitCode: 0 });
     executor.when((c) => c.includes('pm2 jlist'), { stdout: pm2JlistOnline(['api']), stderr: '', exitCode: 0 });
 
-    await expect(new HealthCheckService(executor, config).perform()).rejects.toThrow(/Health check failed/);
+    await expect(new HealthCheckService(executor, config).perform(config.apps[0])).rejects.toThrow(/Health check failed/);
     expect(executor.getHistory().some((e) => e.command.includes('pm2 jlist'))).toBe(false);
   });
 
@@ -101,7 +101,7 @@ describe('HealthCheckService.perform — PM2 status check', () => {
     const config = makeConfig({ apps: [{ name: 'api', port: 3000 }], healthCheckEnabled: false });
     const executor = new FakeRemoteExecutor();
 
-    const result = await new HealthCheckService(executor, config).perform();
+    const result = await new HealthCheckService(executor, config).perform(config.apps[0]);
     expect(result).toEqual({ attempts: 0, responseMs: 0 });
     expect(executor.getHistory()).toHaveLength(0);
   });
