@@ -8,63 +8,64 @@ import { getDeploymentName } from '../../domain/pm2/apps.js';
 
 export async function cmdEnv(
   cwd: string,
-  options: { file?: string; config?: string },
+  options: { file?: string; config?: string; app?: string },
 ): Promise<void> {
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      const app = getActiveApp(config);
-      const envFile = options.file ?? app.envFile;
-      const localEnvPath = resolve(cwd, envFile);
+      const apps = options.app
+        ? [getActiveApp(config, options.app)]
+        : config.apps;
 
-      if (!(await pathExists(localEnvPath))) {
-        throw new Error(`Environment file not found: ${envFile}`);
-      }
+      for (const app of apps) {
+        const envFile = options.file ?? app.envFile;
+        const localEnvPath = resolve(cwd, envFile);
 
-      ui.info(`Uploading ${envFile} to server...`);
+        if (!(await pathExists(localEnvPath))) {
+          throw new Error(`Environment file not found: ${envFile}`);
+        }
 
-      const content = await readFile(localEnvPath);
-      const b64 = content.toString('base64');
+        ui.info(`Uploading ${envFile} for app '${app.name}'...`);
 
-      // Store with the configured envFile name so the PM2 ecosystem reference
-      // (`shared/${envFile}`) and the workDir symlink target stay consistent.
-      // Maintain a `.env` alias too — older configs and any external scripts
-      // that read `shared/.env` keep working.
-      const sharedEnv = `${config.remotePath}/shared/${app.envFile}`;
-      const sharedEnvAlias = `${config.remotePath}/shared/.env`;
-      await executor.exec(`mkdir -p "${config.remotePath}/shared"`);
-      await executor.exec(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
-      await executor.exec(`chmod 600 "${sharedEnv}"`);
-      if (app.envFile !== '.env') {
-        await executor.exec(`ln -sf "${sharedEnv}" "${sharedEnvAlias}"`);
-      }
-      ui.success(`Uploaded to ${sharedEnv}`);
+        const content = await readFile(localEnvPath);
+        const b64 = content.toString('base64');
+        const appPath = `${config.remotePath}/${app.name}`;
+        const sharedEnv = `${appPath}/shared/${app.envFile}`;
+        const sharedEnvAlias = `${appPath}/shared/.env`;
+        await executor.exec(`mkdir -p "${appPath}/shared"`);
+        await executor.exec(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
+        await executor.exec(`chmod 600 "${sharedEnv}"`);
+        if (app.envFile !== '.env') {
+          await executor.exec(`ln -sf "${sharedEnv}" "${sharedEnvAlias}"`);
+        }
+        ui.success(`Uploaded to ${sharedEnv}`);
 
-      const linkResult = await executor.exec(
-        `if [ -d "${config.remotePath}/current" ]; then ` +
-          `ln -sfn "${sharedEnv}" "${config.remotePath}/current/.env" && echo "linked"; ` +
-          `fi`,
-      );
-      if (linkResult.stdout === 'linked') {
-        ui.success('Linked shared .env to current release');
-      }
-
-      const namespace = getDeploymentName(config);
-      if (app.appType === 'backend' && namespace) {
-        const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
-        const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-        const checkResult = await executor.exec(
-          `${mise}; mise exec node@${nodeVersion} -- pm2 describe ${namespace} 2>/dev/null && echo "running" || echo "stopped"`,
+        const linkResult = await executor.exec(
+          `if [ -d "${appPath}/current" ]; then ` +
+            `ln -sfn "${sharedEnv}" "${appPath}/current/.env" && echo "linked"; ` +
+            `fi`,
         );
+        if (linkResult.stdout === 'linked') {
+          ui.success('Linked shared .env to current release');
+        }
 
-        if (checkResult.stdout.includes('running')) {
-          ui.info('Reloading deployment to pick up environment variables...');
-          await executor.exec(
-            `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${namespace} --update-env`,
+        const namespace = getDeploymentName({ ...config, apps: [app] } as any);
+        if (app.appType === 'backend' && namespace) {
+          const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
+          const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+          const checkResult = await executor.exec(
+            `${mise}; mise exec node@${nodeVersion} -- pm2 describe ${namespace} 2>/dev/null && echo "running" || echo "stopped"`,
           );
-          ui.success('Deployment reloaded with new environment variables');
-        } else {
-          ui.warn('Deployment not running. Variables will be loaded on next deploy.');
+
+          if (checkResult.stdout.includes('running')) {
+            ui.info('Reloading deployment to pick up environment variables...');
+            await executor.exec(
+              `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${namespace} --update-env`,
+            );
+            ui.success('Deployment reloaded with new environment variables');
+          } else {
+            ui.warn('Deployment not running. Variables will be loaded on next deploy.');
+          }
         }
       }
     },

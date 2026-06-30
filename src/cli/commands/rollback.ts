@@ -3,17 +3,23 @@ import { ReleaseManager } from '../../domain/release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
 import { ui } from '../ui.js';
 import { confirm } from '../prompt.js';
+import { loadConfig } from '../../config/loader.js';
 import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, getEcosystemPath } from '../../domain/pm2/apps.js';
 
 export async function cmdRollback(
   cwd: string,
-  options: { steps?: number; config?: string },
+  options: { steps?: number; app?: string; config?: string },
 ): Promise<void> {
+  if (!options.app) {
+    throw new Error(
+      `rollback requires --app <name>. Available apps: ${(await loadConfig(cwd, options.config)).apps.map((a) => a.name).join(', ')}`,
+    );
+  }
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      const app = getActiveApp(config);
+      const app = getActiveApp(config, options.app);
       const appPath = `${config.remotePath}/${app.name}`;
       const releases = new ReleaseManager(executor, appPath, app.keepReleases);
       const stepsBack = options.steps ?? 1;

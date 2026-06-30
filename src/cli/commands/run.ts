@@ -1,6 +1,7 @@
 import { basename } from 'path';
 import { execa } from 'execa';
 import { loadConfig } from '../../config/loader.js';
+import { getActiveApp } from '../../domain/workspace.js';
 import { SshConnection } from '../../infrastructure/ssh/connection.js';
 import { ui } from '../ui.js';
 
@@ -12,11 +13,11 @@ function shellQuote(cmd: string): string {
 
 export async function cmdRun(
   cwd: string,
-  options: { tty?: boolean; config?: string },
+  options: { tty?: boolean; config?: string; app?: string },
   cmdArgs: string[],
 ): Promise<void> {
   if (cmdArgs.length === 0) {
-    console.error('Usage: shipnode run [--tty] <command> [args...]');
+    console.error('Usage: shipnode run [--tty] [--app <name>] <command> [args...]');
     console.error('');
     console.error('Examples:');
     console.error('  shipnode run node -e "console.log(process.version)"');
@@ -26,6 +27,7 @@ export async function cmdRun(
   }
 
   const config = await loadConfig(cwd, options.config);
+  const app = options.app ? getActiveApp(config, options.app) : config.apps[0];
 
   const aliasExpansion = config.aliases?.[cmdArgs[0]];
   const resolvedArgs = aliasExpansion
@@ -34,17 +36,17 @@ export async function cmdRun(
 
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
   const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-  const remotePath = config.remotePath;
+  const appPath = `${config.remotePath}/${app.name}`;
   const cmd = resolvedArgs.join(' ');
   const cmdBase = basename(resolvedArgs[0]);
 
   const isInteractive = options.tty === true || INTERACTIVE_SHELLS.has(cmdBase);
 
-  const sourceEnv = `if [ -f "${remotePath}/shared/.env" ]; then source "${remotePath}/shared/.env"; else echo "Warning: shared/.env not found" >&2; fi`;
+  const sourceEnv = `if [ -f "${appPath}/shared/.env" ]; then source "${appPath}/shared/.env"; else echo "Warning: shared/.env not found" >&2; fi`;
 
   const remoteCmd = [
     mise,
-    `cd "${remotePath}/current"`,
+    `cd "${appPath}/current"`,
     sourceEnv,
     `mise exec node@${nodeVersion} -- bash -lc ${shellQuote(cmd)}`,
   ].join(' && ');

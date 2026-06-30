@@ -52,6 +52,7 @@ program
   .description('Deploy your application')
   .option('--dry-run', 'Show what would be deployed without making changes')
   .option('--skip-build', 'Skip the build step')
+  .option('--app <name>', 'Deploy a specific app (default: all apps)')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdDeploy(process.cwd(), opts));
 
@@ -65,6 +66,7 @@ program
 program
   .command('status')
   .description('Check application status')
+  .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdStatus(process.cwd(), opts));
 
@@ -74,8 +76,9 @@ program
   .command('rollback')
   .description('Roll back to a previous release')
   .option('--steps <n>', 'Number of releases to go back', '1')
+  .option('--app <name>', 'App to roll back (required)')
   .option('--config <path>', 'Use a specific config file')
-  .action((opts) => cmdRollback(process.cwd(), { steps: parseInt(opts.steps, 10), config: opts.config }));
+  .action((opts) => cmdRollback(process.cwd(), { steps: parseInt(opts.steps, 10), app: opts.app, config: opts.config }));
 
 program
   .command('migrate')
@@ -89,6 +92,7 @@ program
   .command('env')
   .description('Upload local .env file to the server')
   .option('--file <path>', 'Path to .env file to upload (default: .env from config)')
+  .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdEnv(process.cwd(), opts));
 
@@ -96,6 +100,7 @@ program
   .command('run [cmd...]')
   .description('Run a one-off command on the production server')
   .option('--tty', 'Force interactive TTY mode')
+  .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((cmdArgs: string[], opts) => cmdRun(process.cwd(), opts, cmdArgs));
 
@@ -105,24 +110,31 @@ program
   .command('logs')
   .description('Show application logs')
   .option('--lines <n>', 'Number of log lines to show', '100')
+  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
-  .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), config: opts.config }));
+  .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), process: opts.process, app: opts.app, config: opts.config }));
 
 program
   .command('restart')
   .description('Restart the application')
+  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdRestart(process.cwd(), opts));
 
 program
   .command('stop')
   .description('Stop the application')
+  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdStop(process.cwd(), opts));
 
 program
   .command('metrics')
   .description('Open PM2 monitoring dashboard')
+  .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdMetrics(process.cwd(), opts));
 

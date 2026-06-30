@@ -8,26 +8,34 @@ import type { ShipnodeConfig } from '../../shared/types.js';
 import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, getWebApp } from '../../domain/pm2/apps.js';
 
-export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; config?: string }): Promise<void> {
+export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string }): Promise<void> {
   const config = await loadConfig(cwd, options.config);
+  const targetConfig = options.app
+    ? { ...config, apps: [getActiveApp(config, options.app)] }
+    : config;
 
   if (options.dryRun) {
-    printDryRun(config, options.skipBuild ?? false);
+    printDryRun(targetConfig, options.skipBuild ?? false);
     return;
   }
 
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
-      ui.banner();
-      ui.step(`Deploying ${chalk.bold(getDeploymentName(config) ?? getActiveApp(config).appType)} → ${config.ssh.user}@${config.ssh.host}`);
+      const deployConfig = options.app
+        ? { ...config, apps: [getActiveApp(config, options.app!)] }
+        : config;
 
-      const deployer = new DeployService(new LoggingExecutor(executor), config);
+      ui.banner();
+      const names = deployConfig.apps.map((a) => a.name).join(', ');
+      ui.step(`Deploying ${chalk.bold(names)} → ${config.ssh.user}@${config.ssh.host}`);
+
+      const deployer = new DeployService(new LoggingExecutor(executor), deployConfig);
       await deployer.execute(cwd, options.skipBuild ?? false);
 
       const lines = [
         `host     ${config.ssh.user}@${config.ssh.host}`,
-        getActiveApp(config).domain ? `url      https://${getActiveApp(config).domain}` : '',
+        ...deployConfig.apps.filter((a) => a.domain).map((a) => `url      https://${a.domain}`),
       ].filter(Boolean).join('\n');
 
       ui.note(lines, 'Done');
