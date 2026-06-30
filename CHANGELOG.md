@@ -4,6 +4,11 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Changed (internal, towards 3.0)
+- **Schema is now the single source of truth for the config shape.** `assembleConfig` no longer enumerates every field into a `withDefaults` object — that pattern was how `.aliases()` got dropped in 2.5.1. The function is now a thin transformer: normalize the legacy `pm2 { name }` input onto canonical `pm2.apps`, then hand the whole partial to `ShipnodeConfigSchema.parse`. New fields added to the schema (and their builder methods) are preserved automatically. Schema defaults moved to the schema itself (`app: 'backend'`, `remotePath: '/var/www/app'`) so they are reachable without going through the assembler.
+- **`HooksConfigSchema` uses `z.custom<HookFn>` instead of `z.function()`.** `z.function()` wraps the user's function in a validator, breaking reference equality — `config.hooks.postDeploy === userFn` was false after parse. The custom-with-refine variant validates "is callable" while preserving the reference, which is what the deploy orchestrator needs to invoke the original hook. Aligned with zod 4's deprecation of `z.function()` for value validation.
+- **Schema-coverage test (`tests/unit/builder.test.ts`).** Every builder setter is exercised in a single round-trip; the resulting config is asserted to contain each field written by the builder. Prevents future drift between builder, schema, and assembly.
+
 ## [2.5.2] - 2026-06-30
 
 ### Fixed

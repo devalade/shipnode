@@ -2,6 +2,66 @@ import { describe, it, expect, vi } from 'vitest';
 import { shipnode, ShipnodeBuilder } from '../../src/config/builder.js';
 
 describe('ShipnodeBuilder', () => {
+  // Schema-coverage regression: every setter on the builder must produce a field that
+  // survives the round-trip through assembleConfig + zod parse. This is what would
+  // have caught the .aliases() drop (and would catch any future field that gets added
+  // to the builder but forgotten in the schema or vice-versa).
+  it('every setter writes a field that survives the parse round-trip', () => {
+    const preDeploy = vi.fn();
+    const postDeploy = vi.fn();
+    const config = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '192.168.1.1', user: 'deploy', port: 2222, identityFile: '/k/id' })
+      .deployTo('/var/www/myapp')
+      .pm2('myapp', { instances: 2, maxMemory: '1G' })
+      .port(3333)
+      .worker({ name: 'mailer', command: 'node dist/mailer.js', instances: 1, maxMemory: '512M', env: { Q: 'mail' } })
+      .domain('api.example.com')
+      .keepReleases(10)
+      .sharedDirs(['storage', 'uploads'])
+      .sharedFiles(['.htpasswd'])
+      .healthCheck('/healthz', { timeout: 60, retries: 5, startupDelay: 10 })
+      .envFile('.env.production')
+      .nodeVersion('22')
+      .pkgManager('pnpm', { installCommand: 'pnpm install --frozen-lockfile' })
+      .buildDir('build')
+      .appRoot('apps/backend')
+      .database({ type: 'postgres', host: 'localhost', port: 5432, name: 'db', user: 'u', password: 'p' })
+      .redis({ host: 'localhost', port: 6379, password: 'rp' })
+      .backup({ s3Bucket: 'backups', s3Prefix: 'prod', schedule: 'daily', retentionDays: 30 })
+      .cloudflare({ zone: 'example.com', appHostname: 'api.example.com', tunnelName: 't', lockdownFirewall: true })
+      .preDeploy(preDeploy)
+      .postDeploy(postDeploy)
+      .aliases({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' })
+      .build();
+
+    expect(config.app).toBe('backend');
+    expect(config.ssh).toEqual({ host: '192.168.1.1', user: 'deploy', port: 2222, identityFile: '/k/id' });
+    expect(config.remotePath).toBe('/var/www/myapp');
+    expect(config.pm2?.apps).toHaveLength(2);
+    expect(config.pm2?.apps[0]).toMatchObject({ name: 'myapp', port: 3333, instances: 2, maxMemory: '1G' });
+    expect(config.pm2?.apps[1]).toMatchObject({ name: 'mailer', command: 'node dist/mailer.js', instances: 1, maxMemory: '512M', env: { Q: 'mail' } });
+    expect(config.domain).toBe('api.example.com');
+    expect(config.keepReleases).toBe(10);
+    expect(config.sharedDirs).toEqual(['storage', 'uploads']);
+    expect(config.sharedFiles).toEqual(['.htpasswd']);
+    expect(config.healthCheck).toEqual({ enabled: true, path: '/healthz', timeout: 60, retries: 5, startupDelay: 10 });
+    expect(config.envFile).toBe('.env.production');
+    expect(config.nodeVersion).toBe('22');
+    expect(config.pkgManager).toBe('pnpm');
+    expect(config.installCommand).toBe('pnpm install --frozen-lockfile');
+    expect(config.buildDir).toBe('build');
+    expect(config.appRoot).toBe('apps/backend');
+    expect(config.database).toMatchObject({ type: 'postgres', host: 'localhost', port: 5432, name: 'db', user: 'u', password: 'p' });
+    expect(config.redis).toEqual({ host: 'localhost', port: 6379, password: 'rp' });
+    expect(config.backup).toMatchObject({ s3Bucket: 'backups', s3Prefix: 'prod', schedule: 'daily', retentionDays: 30 });
+    expect(config.cloudflare).toMatchObject({ zone: 'example.com', appHostname: 'api.example.com', tunnelName: 't', lockdownFirewall: true });
+    expect(config.hooks?.preDeploy).toBe(preDeploy);
+    expect(config.hooks?.postDeploy).toBe(postDeploy);
+    expect(config.aliases).toEqual({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' });
+  });
+
+
   it('builds a minimal backend config', () => {
     const config = new ShipnodeBuilder()
       .backend()

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isValidIpOrHostname, isValidDomain, isValidPm2Name } from '../domain/validation/ip.js';
+import type { HookFn } from '../shared/types.js';
 
 export const SshConfigSchema = z.object({
   host: z.string().refine(isValidIpOrHostname, 'Must be a valid IP address or hostname'),
@@ -76,15 +77,22 @@ export const CloudflareConfigSchema = z.object({
   bootstrapSshHost: z.string().optional(),
 }).optional();
 
+// z.custom<HookFn> rather than z.function(): we only need a runtime "is it callable" check;
+// z.function() wraps the user's function in a validator-wrapper, breaking reference equality
+// and making `hooks.postDeploy === userFn` false after parse. The wrap is deprecated in zod 4
+// anyway. We validate callable-ness with a refine.
+const HookFnSchema = z
+  .custom<HookFn>((fn) => typeof fn === 'function', { message: 'hook must be a function' });
+
 export const HooksConfigSchema = z.object({
-  preDeploy: z.function().args(z.any()).returns(z.promise(z.void()).or(z.void())).optional(),
-  postDeploy: z.function().args(z.any()).returns(z.promise(z.void()).or(z.void())).optional(),
+  preDeploy: HookFnSchema.optional(),
+  postDeploy: HookFnSchema.optional(),
 }).optional();
 
 export const ShipnodeConfigSchema = z.object({
-  app: z.enum(['backend', 'frontend']),
+  app: z.enum(['backend', 'frontend']).default('backend'),
   ssh: SshConfigSchema,
-  remotePath: z.string().min(1, 'Remote path is required'),
+  remotePath: z.string().min(1, 'Remote path is required').default('/var/www/app'),
   pm2: Pm2ConfigSchema.optional(),
   domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
   keepReleases: z.number().int().min(1).default(5),
