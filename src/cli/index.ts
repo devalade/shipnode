@@ -180,6 +180,7 @@ const config = program.command('config').description('Manage configuration');
 
 config.command('show')
   .description('Show resolved configuration')
+  .option('--app <name>', 'Show only a specific app (default: all)')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdConfigShow(process.cwd(), opts));
 

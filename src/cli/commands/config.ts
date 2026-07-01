@@ -4,63 +4,69 @@ import { runLocalCommand } from '../runner.js';
 import { ui } from '../ui.js';
 import { loadConfig } from '../../config/loader.js';
 import { getActiveApp } from '../../domain/workspace.js';
+import type { ShipnodeApp } from '../../shared/types.js';
 
-export async function cmdConfigShow(cwd: string, options: { config?: string }): Promise<void> {
+function showApp(app: ShipnodeApp, nodeVersion: string): void {
+  ui.section(`App: ${app.name}`, [
+    ['type', app.appType],
+    ['nodeVersion', nodeVersion],
+    ['appRoot', app.appRoot ?? '(repo root)'],
+    ['envFile', app.envFile],
+    ['keepReleases', String(app.keepReleases)],
+  ]);
+
+  if (app.pm2) {
+    for (const pm2App of app.pm2.apps) {
+      const rows: [string, string][] = [['name', pm2App.name]];
+      if (pm2App.command) rows.push(['command', pm2App.command]);
+      if (pm2App.port !== undefined) rows.push(['port', String(pm2App.port)]);
+      if (pm2App.instances !== undefined) rows.push(['instances', String(pm2App.instances)]);
+      if (pm2App.maxMemory !== undefined) rows.push(['maxMemory', pm2App.maxMemory]);
+      if (pm2App.env) {
+        for (const [k, v] of Object.entries(pm2App.env)) rows.push([`env.${k}`, v]);
+      }
+      ui.section(pm2App.port !== undefined ? `PM2 process: ${pm2App.name} (web)` : `PM2 process: ${pm2App.name}`, rows);
+    }
+  }
+
+  if (app.domain) {
+    ui.section('Domain', [['domain', app.domain]]);
+  }
+
+  if (app.appType === 'backend') {
+    ui.section('Health Check', [
+      ['enabled', String(app.healthCheck.enabled)],
+      ['path', app.healthCheck.path],
+      ['timeout', String(app.healthCheck.timeout)],
+      ['retries', String(app.healthCheck.retries)],
+      ['startupDelay', String(app.healthCheck.startupDelay)],
+    ]);
+  }
+
+  if (app.sharedDirs && app.sharedDirs.length > 0) {
+    ui.section('Shared Dirs', app.sharedDirs.map((d, i) => [`[${i}]`, d]));
+  }
+
+  if (app.sharedFiles && app.sharedFiles.length > 0) {
+    ui.section('Shared Files', app.sharedFiles.map((f, i) => [`[${i}]`, f]));
+  }
+}
+
+export async function cmdConfigShow(
+  cwd: string,
+  options: { config?: string; app?: string },
+): Promise<void> {
   await runLocalCommand(
     cwd,
     async (config) => {
-      const app = getActiveApp(config);
       ui.heading('Shipnode Configuration');
 
-      ui.section('App', [
-        ['app', app.appType],
-        ['nodeVersion', config.nodeVersion],
-        ['envFile', app.envFile],
-        ['keepReleases', String(app.keepReleases)],
-      ]);
-
-      ui.section('SSH', [
+      ui.section('Workspace', [
         ['ssh', `${config.ssh.user}@${config.ssh.host}:${config.ssh.port}`],
         ['remotePath', config.remotePath],
+        ['nodeVersion', config.nodeVersion],
+        ['apps', config.apps.map((a) => a.name).join(', ')],
       ]);
-
-      if (app.pm2) {
-        for (const pm2App of app.pm2.apps) {
-          const rows: [string, string][] = [['name', pm2App.name]];
-          if (pm2App.command) rows.push(['command', pm2App.command]);
-          if (pm2App.port !== undefined) rows.push(['port', String(pm2App.port)]);
-          if (pm2App.instances !== undefined) rows.push(['instances', String(pm2App.instances)]);
-          if (pm2App.maxMemory !== undefined) rows.push(['maxMemory', pm2App.maxMemory]);
-          if (pm2App.env) {
-            for (const [k, v] of Object.entries(pm2App.env)) rows.push([`env.${k}`, v]);
-          }
-          ui.section(pm2App.port !== undefined ? `PM2 app: ${pm2App.name} (web)` : `PM2 app: ${pm2App.name}`, rows);
-        }
-      }
-
-      if (app.domain) {
-        ui.section('Domain', [
-          ['domain', app.domain],
-        ]);
-      }
-
-      if (app.appType === 'backend') {
-        ui.section('Health Check', [
-          ['enabled', String(app.healthCheck.enabled)],
-          ['path', app.healthCheck.path],
-          ['timeout', String(app.healthCheck.timeout)],
-          ['retries', String(app.healthCheck.retries)],
-          ['startupDelay', String(app.healthCheck.startupDelay)],
-        ]);
-      }
-
-      if (app.sharedDirs && app.sharedDirs.length > 0) {
-        ui.section('Shared Dirs', app.sharedDirs.map((d, i) => [`[${i}]`, d]));
-      }
-
-      if (app.sharedFiles && app.sharedFiles.length > 0) {
-        ui.section('Shared Files', app.sharedFiles.map((f, i) => [`[${i}]`, f]));
-      }
 
       if (config.database) {
         const db = config.database;
@@ -69,6 +75,29 @@ export async function cmdConfigShow(cwd: string, options: { config?: string }): 
           rows.push(['host', db.host], ['port', String(db.port)], ['user', db.user]);
         }
         ui.section('Database', rows);
+      }
+
+      if (config.redis) {
+        ui.section('Redis', [
+          ['host', config.redis.host],
+          ['port', String(config.redis.port)],
+        ]);
+      }
+
+      if (config.cloudflare) {
+        ui.section('Cloudflare', [
+          ['zone', config.cloudflare.zone],
+          ['tunnelName', config.cloudflare.tunnelName ?? '(default)'],
+          ['lockdownFirewall', String(config.cloudflare.lockdownFirewall ?? false)],
+        ]);
+      }
+
+      const apps = options.app
+        ? [getActiveApp(config, options.app)]
+        : config.apps;
+
+      for (const app of apps) {
+        showApp(app, config.nodeVersion);
       }
     },
     { configPath: options.config },
