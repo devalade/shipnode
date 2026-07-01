@@ -65,6 +65,16 @@ export const BackupConfigSchema = z.object({
   s3Endpoint: z.string().optional(),
   schedule: z.enum(['hourly', 'daily', 'weekly']).default('daily'),
   retentionDays: z.number().int().min(1).default(14),
+  // 'snapshot' (default) does full pg_dump + tar.gz snapshots each run — cheap
+  // to reason about, no client-side state, but full-size every backup.
+  // 'restic' uses block-level dedup + encryption via a client-side repository,
+  // so daily deltas are typically 1-5% of full size. Works with Cloudflare R2
+  // by setting s3Endpoint to https://<account-id>.r2.cloudflarestorage.com.
+  strategy: z.enum(['snapshot', 'restic']).default('snapshot'),
+  // Restic retention (ignored by snapshot strategy).
+  keepDaily: z.number().int().min(1).default(7),
+  keepWeekly: z.number().int().min(1).default(4),
+  keepMonthly: z.number().int().min(1).default(6),
 }).optional();
 
 export const CloudflareConfigSchema = z.object({

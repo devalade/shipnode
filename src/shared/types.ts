@@ -62,6 +62,10 @@ export interface BackupConfig {
   s3Endpoint?: string;
   schedule?: 'hourly' | 'daily' | 'weekly';
   retentionDays?: number;
+  strategy?: 'snapshot' | 'restic';
+  keepDaily?: number;
+  keepWeekly?: number;
+  keepMonthly?: number;
 }
 
 export interface CloudflareConfig {
