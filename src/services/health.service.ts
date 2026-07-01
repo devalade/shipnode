@@ -1,7 +1,7 @@
 import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { HealthCheckError } from '../shared/errors.js';
-import { getDeploymentName, getPm2Name } from '../domain/pm2/apps.js';
+import { getPm2Name } from '../domain/pm2/apps.js';
 
 interface Pm2JlistEntry {
   name: string;
@@ -14,7 +14,7 @@ interface Pm2JlistEntry {
 export class HealthCheckService {
   constructor(
     private executor: RemoteExecutor,
-    private config: ShipnodeConfig,
+    _config: ShipnodeConfig,
   ) {}
 
   async perform(app: ShipnodeApp): Promise<{ attempts: number; responseMs: number }> {
@@ -37,7 +37,7 @@ export class HealthCheckService {
     }
 
     if (app.pm2?.apps.length) {
-      await this.performPm2StatusCheck(app.pm2.apps);
+      await this.performPm2StatusCheck(app);
     }
 
     return { attempts, responseMs };
@@ -79,7 +79,7 @@ export class HealthCheckService {
     );
   }
 
-  private async performPm2StatusCheck(apps: Pm2App[]): Promise<void> {
+  private async performPm2StatusCheck(app: ShipnodeApp): Promise<void> {
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
     const result = await this.executor.exec(`${mise} && mise exec -- pm2 jlist`);
 
@@ -94,33 +94,36 @@ export class HealthCheckService {
       );
     }
 
-    const namespace = getDeploymentName(this.config) ?? '';
+    // The PM2 namespace is per-app (equal to that app's first pm2 entry),
+    // not workspace-wide. Using the workspace's deploymentName would build the
+    // wrong prefix for every non-first app in a multi-app workspace.
+    const namespace = app.pm2?.apps[0]?.name ?? '';
     const byName = new Map(parsed.map((e) => [e.name, e]));
     const failures: string[] = [];
 
-    for (const app of apps) {
-      const pm2Name = getPm2Name(namespace, app.name);
+    for (const pm2App of app.pm2?.apps ?? []) {
+      const pm2Name = getPm2Name(namespace, pm2App.name);
       const entry = byName.get(pm2Name);
       if (!entry) {
-        failures.push(`${app.name}: not running (no PM2 entry found)`);
+        failures.push(`${pm2Name}: not running (no PM2 entry found)`);
         continue;
       }
       const status = entry.pm2_env?.status;
       const restarts = entry.pm2_env?.restart_time ?? 0;
       if (status !== 'online') {
-        failures.push(`${app.name}: status=${status ?? 'unknown'}`);
+        failures.push(`${pm2Name}: status=${status ?? 'unknown'}`);
         continue;
       }
       if (restarts > 0) {
-        failures.push(`${app.name}: crashed during startup (restart_time=${restarts})`);
+        failures.push(`${pm2Name}: crashed during startup (restart_time=${restarts})`);
       }
     }
 
     if (failures.length === 0) return;
 
     let diagnostics = '';
-    for (const app of apps) {
-      const pm2Name = getPm2Name(namespace, app.name);
+    for (const pm2App of app.pm2?.apps ?? []) {
+      const pm2Name = getPm2Name(namespace, pm2App.name);
       const entry = byName.get(pm2Name);
       if (entry && entry.pm2_env?.status === 'online' && (entry.pm2_env?.restart_time ?? 0) === 0) continue;
       diagnostics += await this.collectPm2Logs(pm2Name);

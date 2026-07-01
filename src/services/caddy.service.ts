@@ -28,7 +28,10 @@ export class CaddyService {
     const caddyConfig = this.generateBackendCaddyfile(app, webApp.port!);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
-    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${app.name}.caddy`);
+    await this.executor.execOrThrow(
+      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+      `echo '${escaped}' | $SUDO tee /etc/caddy/conf.d/${app.name}.caddy > /dev/null`,
+    );
   }
 
   async configureFrontend(app: ShipnodeApp): Promise<void> {
@@ -38,11 +41,16 @@ export class CaddyService {
     const caddyConfig = this.generateFrontendCaddyfile(app, servePath);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
-    await this.executor.execOrThrow(`echo '${escaped}' > /etc/caddy/conf.d/${app.name}.caddy`);
+    await this.executor.execOrThrow(
+      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+      `echo '${escaped}' | $SUDO tee /etc/caddy/conf.d/${app.name}.caddy > /dev/null`,
+    );
   }
 
   async reload(): Promise<void> {
-    await this.executor.execOrThrow('systemctl reload caddy');
+    await this.executor.execOrThrow(
+      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO systemctl reload caddy`,
+    );
   }
 
   private generateBackendCaddyfile(app: ShipnodeApp, port: number): string {
