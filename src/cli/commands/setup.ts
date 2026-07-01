@@ -74,11 +74,14 @@ async function bootstrapDeployUser(
 /**
  * Wrap a command so it runs as `user` when set, otherwise as the current SSH user.
  * `bash -lc` gives the target user a login shell so $HOME/$PATH resolve to theirs.
+ * Uses `sudo -u` unconditionally — sudo is transparent (no password) when the SSH
+ * user is already root, and the conditional `$SUDO` fallback breaks on `sudo -u`
+ * because it leaves `-u` as the leading token when SUDO="".
  */
 function asUser(user: string | null, cmd: string): string {
   if (!user) return cmd;
   const escaped = cmd.replace(/'/g, "'\\''");
-  return `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO -u "${user}" bash -lc '${escaped}'`;
+  return `sudo -u "${user}" bash -lc '${escaped}'`;
 }
 
 function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {
@@ -151,12 +154,15 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
             // pm2 startup writes /etc/systemd/system/pm2-<user>.service — needs root
             // to write the unit + enable it, but the unit targets the deploy user.
             // pm2 save writes ~/.pm2/dump.pm2 for that user and must run as them.
+            //
+            // npm-installed globals like pm2 don't get valid mise shims (mise only
+            // shims tools it manages itself), so we resolve pm2's real path via
+            // `mise exec node@X -- which pm2` and pass that to `env PATH=... pm2`.
             title: `Configure systemd startup (${ownerUser ?? '$USER'})`,
             task: () => executor.execOrThrow(
               (ownerUser
-                ? `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
-                  `PM2_BIN="${targetHome}/.local/share/mise/shims/pm2"; ` +
-                  `$SUDO env PATH="${targetHome}/.local/share/mise/shims:$PATH" "$PM2_BIN" startup systemd -u "${ownerUser}" --hp "${targetHome}" || true`
+                ? `PM2_BIN=$(sudo -u "${ownerUser}" bash -lc '${mise}; mise exec "node@${nodeVersion}" -- which pm2'); ` +
+                  `[ -n "$PM2_BIN" ] && env PATH="$(dirname "$PM2_BIN"):$PATH" "$PM2_BIN" startup systemd -u "${ownerUser}" --hp "${targetHome}" || true`
                 : `${mise}; mise exec "node@${nodeVersion}" -- pm2 startup systemd -u $USER --hp $HOME || true`) +
               ` && ` +
               asUser(
@@ -228,8 +234,10 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
             task: () => executor.execOrThrow(
               'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
               `$SUDO mkdir -p "${config.remotePath}" && ` +
-              (ownerUser ? `$SUDO chown "${ownerUser}:${ownerUser}" "${config.remotePath}" && ` : '') +
-              `$SUDO -u "${ownerUser ?? '$USER'}" mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`,
+              (ownerUser
+                ? `$SUDO chown "${ownerUser}:${ownerUser}" "${config.remotePath}" && ` +
+                  `sudo -u "${ownerUser}" mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`
+                : `mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`),
             ),
           },
           {
