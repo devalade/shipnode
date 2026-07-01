@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'fs';
 import { Listr } from 'listr2';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
@@ -11,21 +12,66 @@ import {
   buildRedisConfigureCommand,
   buildRedisProbeCommand,
 } from '../../infrastructure/provisioning/commands.js';
+import { loadUsersYml, saveUsersYml, syncUsers, upsertUser } from './user.js';
 
-export async function cmdSetup(cwd: string, options: { config?: string }): Promise<void> {
+const DEPLOY_USER = 'deploy';
+
+interface SetupOptions {
+  config?: string;
+  noDeployUser?: boolean;
+}
+
+export async function cmdSetup(cwd: string, options: SetupOptions): Promise<void> {
   await runRemoteCommand(
     cwd,
     async ({ config, executor }) => {
       ui.banner();
       ui.step(`Setting up ${config.ssh.user}@${config.ssh.host}`);
-      await buildTasks(executor, config).run();
-      ui.outro('Server ready — run: shipnode deploy');
+      const created = !options.noDeployUser && (await bootstrapDeployUser(cwd, config, executor));
+      await buildTasks(executor, config, created ? DEPLOY_USER : null).run();
+      if (created) {
+        ui.note(
+          [
+            `A '${DEPLOY_USER}' user was created and owns ${config.remotePath}.`,
+            `Switch ssh.user in shipnode.config.ts to '${DEPLOY_USER}', then:`,
+            `  shipnode harden   # disable root SSH`,
+            `  shipnode deploy`,
+          ].join('\n'),
+          'Next steps',
+        );
+      } else {
+        ui.outro('Server ready — run: shipnode deploy');
+      }
     },
     { configPath: options.config },
   );
 }
 
-function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
+async function bootstrapDeployUser(
+  cwd: string,
+  config: ShipnodeConfig,
+  executor: RemoteExecutor,
+): Promise<boolean> {
+  const pubPath = `${config.ssh.identityFile}.pub`;
+  if (!existsSync(pubPath)) {
+    ui.warn(`Skipping ${DEPLOY_USER} user: no public key at ${pubPath}. Pass --no-deploy-user to silence or generate one with 'ssh-keygen'.`);
+    return false;
+  }
+  const publicKey = readFileSync(pubPath, 'utf8').trim();
+  const existing = loadUsersYml(cwd);
+  const entry = { username: DEPLOY_USER, publicKey, sudo: true };
+  const already = existing.find((u) => u.username === DEPLOY_USER && u.publicKey === publicKey);
+  if (!already) {
+    const next = upsertUser(existing, entry);
+    const path = saveUsersYml(cwd, next);
+    ui.info(`Registered '${DEPLOY_USER}' in ${path}`);
+  }
+  ui.info(`Creating '${DEPLOY_USER}' on ${config.ssh.host}...`);
+  await syncUsers(executor, [entry]);
+  return true;
+}
+
+function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
   const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 
@@ -150,7 +196,10 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig) {
           {
             title: `Create release structure at ${config.remotePath}`,
             task: () => executor.execOrThrow(
-              `mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`,
+              'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
+              `$SUDO mkdir -p "${config.remotePath}" && ` +
+              (ownerUser ? `$SUDO chown "${ownerUser}:${ownerUser}" "${config.remotePath}" && ` : '') +
+              `$SUDO -u "${ownerUser ?? '$USER'}" mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`,
             ),
           },
           {

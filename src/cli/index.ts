@@ -23,7 +23,7 @@ import { cmdStop } from './commands/stop.js';
 import { cmdMetrics } from './commands/metrics.js';
 import { cmdEject } from './commands/eject.js';
 import { cmdHelp } from './commands/help.js';
-import { cmdUserSync, cmdUserList, cmdUserRemove } from './commands/user.js';
+import { cmdUserAdd, cmdUserSync, cmdUserList, cmdUserRemove } from './commands/user.js';
 import { cmdUpgrade } from './commands/upgrade.js';
 import { cmdBackupSetup, cmdBackupRun, cmdBackupStatus, cmdBackupList } from './commands/backup.js';
 import { cmdCloudflareInit, cmdCloudflareAudit, cmdCloudflareStatus } from './commands/cloudflare.js';
@@ -53,6 +53,7 @@ program
 program
   .command('setup')
   .description('Setup a new server with required dependencies')
+  .option('--no-deploy-user', 'Skip creating the deploy user (advanced)')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdSetup(process.cwd(), opts));
 
@@ -197,6 +198,14 @@ config.command('path')
 // ── Users ─────────────────────────────────────────────────────────
 
 const user = program.command('user').description('Manage server users');
+
+user.command('add <username>')
+  .description('Add a user to .shipnode/users.yml and sync to server')
+  .option('--key <path>', 'Public key file (default: ssh.identityFile + .pub)')
+  .option('--sudo', 'Grant sudo privileges')
+  .option('--no-sync', 'Only write to users.yml, do not sync to server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((username: string, opts) => cmdUserAdd(process.cwd(), username, opts));
 
 user.command('sync')
   .description('Sync users from .shipnode/users.yml to server')
