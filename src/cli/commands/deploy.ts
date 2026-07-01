@@ -4,9 +4,9 @@ import { DeployService } from '../../services/deploy.service.js';
 import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
 import { runRemoteCommand } from '../runner.js';
 import { ui } from '../ui.js';
-import type { ShipnodeConfig } from '../../shared/types.js';
+import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
 import { getActiveApp } from '../../domain/workspace.js';
-import { getDeploymentName, getWebApp } from '../../domain/pm2/apps.js';
+import { getPm2Name } from '../../domain/pm2/apps.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string }): Promise<void> {
   const config = await loadConfig(cwd, options.config);
@@ -45,25 +45,31 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
   );
 }
 
-function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
-  ui.banner();
-
-  const app = getActiveApp(config);
+function renderAppPlan(app: ShipnodeApp, skipBuild: boolean): string {
+  const namespace = app.pm2?.apps[0]?.name;
+  const web = app.pm2?.apps.find((a) => a.port !== undefined);
 
   const serverRows: [string, string][] = [
     ['App type', app.appType],
-    ['Host', `${config.ssh.user}@${config.ssh.host}:${config.ssh.port}`],
-    ['Remote path', config.remotePath],
+    ['App root', app.appRoot ?? '(repo root)'],
     ['Keep releases', String(app.keepReleases)],
   ];
 
   if (app.appType === 'backend') {
-    const apps = app.pm2?.apps ?? [];
-    if (apps.length) {
-      serverRows.push(['PM2 deployment', getDeploymentName(config) ?? '']);
-      serverRows.push(['PM2 apps', apps.map((a) => a.port !== undefined ? `${a.name}(web:${a.port})` : a.name).join(', ')]);
+    const pm2Apps = app.pm2?.apps ?? [];
+    if (pm2Apps.length && namespace) {
+      serverRows.push(['PM2 deployment', namespace]);
+      serverRows.push([
+        'PM2 apps',
+        pm2Apps
+          .map((a) =>
+            a.port !== undefined
+              ? `${getPm2Name(namespace, a.name)}(web:${a.port})`
+              : getPm2Name(namespace, a.name),
+          )
+          .join(', '),
+      ]);
     }
-    const web = getWebApp(config);
     if (web) serverRows.push(['Port', String(web.port)]);
   }
 
@@ -96,17 +102,30 @@ function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
 
   const flowRows: [string, string][] = steps.map((s, i) => [`${i + 1}.`, s as string]);
 
-  ui.note(
-    [
-      chalk.bold('Server'),
-      ...serverRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(12))} ${v}`),
-      '',
-      chalk.bold('Build'),
-      ...buildRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(12))} ${v}`),
-      '',
-      chalk.bold('Deploy flow'),
-      ...flowRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(4))} ${v}`),
-    ].join('\n'),
-    'Dry run — no changes will be made',
-  );
+  return [
+    chalk.bold(`App: ${app.name}`),
+    ...serverRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(14))} ${v}`),
+    '',
+    chalk.bold('  Build'),
+    ...buildRows.map(([k, v]) => `  ${chalk.dim(k.padEnd(14))} ${v}`),
+    '',
+    chalk.bold('  Deploy flow'),
+    ...flowRows.map(([k, v]) => `    ${chalk.dim(k.padEnd(4))} ${v}`),
+  ].join('\n');
+}
+
+function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
+  ui.banner();
+
+  const header = [
+    chalk.bold('Workspace'),
+    `  ${chalk.dim('Host'.padEnd(14))} ${config.ssh.user}@${config.ssh.host}:${config.ssh.port}`,
+    `  ${chalk.dim('Remote path'.padEnd(14))} ${config.remotePath}`,
+    `  ${chalk.dim('Node'.padEnd(14))} ${config.nodeVersion}`,
+    `  ${chalk.dim('Apps'.padEnd(14))} ${config.apps.map((a) => a.name).join(', ')}`,
+  ].join('\n');
+
+  const perApp = config.apps.map((app) => renderAppPlan(app, skipBuild)).join('\n\n');
+
+  ui.note([header, '', perApp].join('\n'), 'Dry run — no changes will be made');
 }
