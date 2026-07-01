@@ -6,8 +6,9 @@ import * as sec from '../../infrastructure/provisioning/security.js';
 export async function cmdHarden(cwd: string, options: { config?: string }): Promise<void> {
   await runRemoteCommand(
     cwd,
-    async ({ executor }) => {
+    async ({ config, executor }) => {
       const changes: string[] = [];
+      const currentUser = config.ssh.user;
 
       ui.heading('SSH Hardening');
       const sshActive = (await executor.exec(sec.sshCheckActiveCommand())).stdout.includes('active');
@@ -55,6 +56,43 @@ export async function cmdHarden(cwd: string, options: { config?: string }): Prom
         }
         ui.success('UFW configured and enabled');
         changes.push('UFW: configured (SSH, 80, 443 allowed)');
+      }
+
+      ui.heading('PM2 boot resurrection');
+      // List installed pm2 systemd units so we can spot stale ones from a previous
+      // root-scoped setup after switching to a deploy user.
+      const unitsResult = await executor.exec(
+        `systemctl list-unit-files 'pm2-*.service' --no-legend 2>/dev/null | awk '{print $1}' || true`,
+      );
+      const units = unitsResult.stdout.trim().split('\n').filter(Boolean);
+      const wanted = `pm2-${currentUser}.service`;
+      const stale = units.filter((u) => u !== wanted);
+
+      if (units.includes(wanted)) {
+        ui.success(`${wanted} is installed`);
+        // Refresh the resurrection dump so the current process list is what boots.
+        if (await confirm(`Refresh ${wanted}'s saved process list (pm2 save)?`)) {
+          await executor.exec(
+            `bash -lc 'export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH" && pm2 save --force' || true`,
+          );
+          ui.success('pm2 save done');
+          changes.push(`PM2: refreshed dump for ${currentUser}`);
+        }
+      } else {
+        ui.warn(`No ${wanted} found. If you switched ssh.user recently, re-run 'shipnode setup' as the new user or install pm2 startup manually.`);
+      }
+
+      if (stale.length > 0) {
+        ui.warn(`Stale PM2 units detected: ${stale.join(', ')}`);
+        if (await confirm(`Disable stale unit(s) so only ${wanted} resurrects at boot?`)) {
+          for (const unit of stale) {
+            await executor.exec(
+              `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO systemctl disable --now "${unit}" 2>/dev/null || true`,
+            );
+            changes.push(`PM2: disabled ${unit}`);
+          }
+          ui.success('Stale units disabled');
+        }
       }
 
       ui.heading('Fail2ban');

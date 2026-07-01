@@ -71,9 +71,23 @@ async function bootstrapDeployUser(
   return true;
 }
 
+/**
+ * Wrap a command so it runs as `user` when set, otherwise as the current SSH user.
+ * `bash -lc` gives the target user a login shell so $HOME/$PATH resolve to theirs.
+ */
+function asUser(user: string | null, cmd: string): string {
+  if (!user) return cmd;
+  const escaped = cmd.replace(/'/g, "'\\''");
+  return `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO -u "${user}" bash -lc '${escaped}'`;
+}
+
 function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
   const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+  // When a deploy user was bootstrapped, install mise/node/pm2 into their home
+  // so PM2 processes run as that user and `pm2-<user>.service` matches. Without
+  // this, everything lands in root's home and deploy has no pm2 on their PATH.
+  const targetHome = ownerUser ? `/home/${ownerUser}` : '$HOME';
 
   return new Listr(
     [
@@ -96,10 +110,13 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
         ], { concurrent: false }),
       },
       {
-        title: 'Mise (version manager)',
+        title: `Mise (version manager)${ownerUser ? ` for ${ownerUser}` : ''}`,
         task: () =>
           executor.execOrThrow(
-            `if ! command -v mise &>/dev/null; then curl -fsSL https://mise.run | sh; fi`,
+            asUser(
+              ownerUser,
+              `if ! command -v mise &>/dev/null && [ ! -x "$HOME/.local/bin/mise" ]; then curl -fsSL https://mise.run | sh; fi`,
+            ),
           ),
       },
       {
@@ -107,11 +124,11 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
         task: (_ctx: object, task: any) => task.newListr([
           {
             title: `Install node@${nodeVersion}`,
-            task: () => executor.execOrThrow(`${mise}; mise install -y "node@${nodeVersion}"`),
+            task: () => executor.execOrThrow(asUser(ownerUser, `${mise}; mise install -y "node@${nodeVersion}"`)),
           },
           {
             title: `Set node@${nodeVersion} as global default`,
-            task: () => executor.execOrThrow(`${mise}; mise use -g -y "node@${nodeVersion}"`),
+            task: () => executor.execOrThrow(asUser(ownerUser, `${mise}; mise use -g -y "node@${nodeVersion}"`)),
           },
         ], { concurrent: false }),
       },
@@ -121,18 +138,31 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
           {
             title: 'Install pm2',
             task: () => executor.execOrThrow(
-              `${mise}; ` +
-              `if ! mise exec "node@${nodeVersion}" -- pm2 --version &>/dev/null; then ` +
-              `  mise exec "node@${nodeVersion}" -- npm install -g pm2; ` +
-              `fi`,
+              asUser(
+                ownerUser,
+                `${mise}; ` +
+                `if ! mise exec "node@${nodeVersion}" -- pm2 --version &>/dev/null; then ` +
+                `  mise exec "node@${nodeVersion}" -- npm install -g pm2; ` +
+                `fi`,
+              ),
             ),
           },
           {
-            title: 'Configure systemd startup',
+            // pm2 startup writes /etc/systemd/system/pm2-<user>.service — needs root
+            // to write the unit + enable it, but the unit targets the deploy user.
+            // pm2 save writes ~/.pm2/dump.pm2 for that user and must run as them.
+            title: `Configure systemd startup (${ownerUser ?? '$USER'})`,
             task: () => executor.execOrThrow(
-              `${mise}; ` +
-              `mise exec "node@${nodeVersion}" -- pm2 startup systemd -u $USER --hp $HOME || true; ` +
-              `mise exec "node@${nodeVersion}" -- pm2 save --force || true`,
+              (ownerUser
+                ? `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+                  `PM2_BIN="${targetHome}/.local/share/mise/shims/pm2"; ` +
+                  `$SUDO env PATH="${targetHome}/.local/share/mise/shims:$PATH" "$PM2_BIN" startup systemd -u "${ownerUser}" --hp "${targetHome}" || true`
+                : `${mise}; mise exec "node@${nodeVersion}" -- pm2 startup systemd -u $USER --hp $HOME || true`) +
+              ` && ` +
+              asUser(
+                ownerUser,
+                `${mise}; mise exec "node@${nodeVersion}" -- pm2 save --force || true`,
+              ),
             ),
           },
         ], { concurrent: false }),
