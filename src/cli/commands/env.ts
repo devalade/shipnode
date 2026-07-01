@@ -32,11 +32,14 @@ export async function cmdEnv(
         const appPath = `${config.remotePath}/${app.name}`;
         const sharedEnv = `${appPath}/shared/${app.envFile}`;
         const sharedEnvAlias = `${appPath}/shared/.env`;
-        await executor.exec(`mkdir -p "${appPath}/shared"`);
-        await executor.exec(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
-        await executor.exec(`chmod 600 "${sharedEnv}"`);
+        // Ensure the parent dir of sharedEnv exists — when envFile is nested
+        // (e.g. apps/backend/.env.production) `mkdir -p shared` isn't enough
+        // and the base64 redirect below fails silently.
+        await executor.execOrThrow(`mkdir -p "$(dirname "${sharedEnv}")"`);
+        await executor.execOrThrow(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
+        await executor.execOrThrow(`chmod 600 "${sharedEnv}"`);
         if (app.envFile !== '.env') {
-          await executor.exec(`ln -sf "${sharedEnv}" "${sharedEnvAlias}"`);
+          await executor.execOrThrow(`ln -sf "${sharedEnv}" "${sharedEnvAlias}"`);
         }
         ui.success(`Uploaded to ${sharedEnv}`);
 
