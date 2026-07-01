@@ -1,7 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import type { ShipnodeConfig } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
-import { CloudflareApi } from '../infrastructure/cloudflare/api.js';
+import { CloudflareApi, type CfTunnel } from '../infrastructure/cloudflare/api.js';
 import { Tunnel } from '../domain/cloudflare/tunnel.js';
+
+const CFD_INGRESS_TARGET = '.cfargotunnel.com';
 
 export class CloudflareOrchestrator {
   private api: CloudflareApi;
@@ -19,24 +22,60 @@ export class CloudflareOrchestrator {
     if (!cf) throw new Error('No cloudflare config found.');
 
     await this.ensureCloudflaredInstalled();
+
+    const accountId = await this.api.getAccountId();
+    const zoneId = await this.api.getZoneId(cf.zone);
     const tunnelName = cf.tunnelName ?? `shipnode-${this.config.ssh.host.replace(/\./g, '-')}`;
 
-    await this.executor.exec(`cloudflared tunnel create "${tunnelName}" 2>&1`);
-    const tunnelId = await this.resolveTunnelId();
+    // Reuse an existing tunnel by name if present. We can only mint credentials
+    // when we create the tunnel (Cloudflare doesn't echo the secret again), so
+    // if it already exists we assume credentials are already on the host and
+    // just refresh config + DNS. A brand-new host reusing an old tunnel name
+    // will need `cloudflared tunnel delete` first — flagged loudly.
+    const existing = await this.api.findTunnel(accountId, tunnelName);
+    let tunnelId: string;
+    if (existing) {
+      tunnelId = existing.id;
+      const credsExists = await this.executor.exec(
+        `test -f "/etc/cloudflared/${tunnelId}.json" && echo YES || echo NO`,
+      );
+      if (credsExists.stdout.trim() !== 'YES') {
+        throw new Error(
+          `Tunnel "${tunnelName}" already exists (id ${tunnelId}) but its credentials file is not on this host. ` +
+          `Delete the tunnel in the Cloudflare dashboard (or via API) and re-run \`shipnode cloudflare init\`, ` +
+          `or copy /etc/cloudflared/${tunnelId}.json from the host that owns it.`,
+        );
+      }
+    } else {
+      const secret = randomBytes(32).toString('base64');
+      const created: CfTunnel = await this.api.createTunnel(accountId, tunnelName, secret);
+      tunnelId = created.id;
+      await this.writeCredentials(tunnelId, tunnelName, accountId, secret);
+    }
 
-    const tunnel = new Tunnel(tunnelName, tunnelId, `/root/.cloudflared/${tunnelId}.json`);
+    const tunnel = new Tunnel(tunnelName, tunnelId, `/etc/cloudflared/${tunnelId}.json`);
 
     for (const app of this.config.apps) {
       const webApp = app.pm2?.apps.find((a) => a.port !== undefined);
       if (app.domain && webApp) {
         tunnel.addIngress(app.domain, `http://localhost:${webApp.port}`);
-        await this.executor.exec(`cloudflared tunnel route dns "${tunnelName}" "${app.domain}"`);
+        await this.api.upsertDnsRecord(zoneId, {
+          type: 'CNAME',
+          name: app.domain,
+          content: `${tunnelId}${CFD_INGRESS_TARGET}`,
+          proxied: true,
+        });
       }
     }
 
     if (cf.sshHostname) {
       tunnel.addIngress(cf.sshHostname, 'ssh://localhost:22');
-      await this.executor.exec(`cloudflared tunnel route dns "${tunnelName}" "${cf.sshHostname}"`);
+      await this.api.upsertDnsRecord(zoneId, {
+        type: 'CNAME',
+        name: cf.sshHostname,
+        content: `${tunnelId}${CFD_INGRESS_TARGET}`,
+        proxied: true,
+      });
     }
 
     await this.writeConfig(tunnel);
@@ -80,47 +119,94 @@ export class CloudflareOrchestrator {
 
   async status(): Promise<string> {
     const result = await this.executor.exec(
-      `systemctl status cloudflared 2>&1; echo "---"; cloudflared tunnel info 2>&1 || true`,
+      `systemctl status cloudflared 2>&1; echo "---"; cat /etc/cloudflared/config.yml 2>&1 || true`,
     );
     return result.stdout;
   }
 
+  /**
+   * Install cloudflared from Cloudflare's apt repo, falling back to the
+   * upstream .deb from GitHub when the repo has no package for this codename
+   * (fresh Ubuntu releases like 26.04/resolute lag behind pkg.cloudflare.com).
+   */
   private async ensureCloudflaredInstalled(): Promise<void> {
     const check = await this.executor.exec('command -v cloudflared 2>/dev/null || echo MISSING');
     if (check.stdout.trim() !== 'MISSING') return;
 
-    await this.executor.exec(
+    const repoResult = await this.executor.exec(
       `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
       `curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | $SUDO tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null && ` +
       `echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | ` +
-      `$SUDO tee /etc/apt/sources.list.d/cloudflared.list && ` +
-      `$SUDO apt-get update -qq && $SUDO apt-get install -y -qq cloudflared`,
+      `$SUDO tee /etc/apt/sources.list.d/cloudflared.list > /dev/null && ` +
+      `$SUDO apt-get update -qq 2>&1 && $SUDO apt-get install -y -qq cloudflared`,
+    );
+    if (repoResult.exitCode === 0) return;
+
+    // apt failed (usually because the codename isn't published yet). Remove the
+    // stale sources entry so future `apt update` doesn't keep erroring, then
+    // fall back to the upstream .deb.
+    await this.executor.exec(
+      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO rm -f /etc/apt/sources.list.d/cloudflared.list && $SUDO apt-get update -qq >/dev/null 2>&1 || true`,
+    );
+    await this.executor.execOrThrow(
+      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+      `ARCH=$(dpkg --print-architecture) && ` +
+      `TMP=$(mktemp --suffix=.deb) && ` +
+      `curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$ARCH.deb" -o "$TMP" && ` +
+      `$SUDO dpkg -i "$TMP" && rm -f "$TMP"`,
     );
   }
 
-  private async resolveTunnelId(): Promise<string> {
-    const result = await this.executor.exec(
-      `cloudflared tunnel list --output json 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4`,
+  /**
+   * Write the credentials JSON cloudflared expects when tunnel_secret was
+   * supplied at creation time. Format is stable and undocumented but widely
+   * used; see https://github.com/cloudflare/cloudflared/blob/master/tunnel/token.go
+   */
+  private async writeCredentials(
+    tunnelId: string,
+    tunnelName: string,
+    accountId: string,
+    secretBase64: string,
+  ): Promise<void> {
+    const payload = JSON.stringify({
+      AccountTag: accountId,
+      TunnelSecret: secretBase64,
+      TunnelID: tunnelId,
+      TunnelName: tunnelName,
+    });
+    const b64 = Buffer.from(payload).toString('base64');
+    await this.executor.execOrThrow(
+      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+      `$SUDO mkdir -p /etc/cloudflared && ` +
+      `printf '%s' '${b64}' | base64 -d | $SUDO tee "/etc/cloudflared/${tunnelId}.json" > /dev/null && ` +
+      `$SUDO chmod 600 "/etc/cloudflared/${tunnelId}.json"`,
     );
-    const tunnelId = result.stdout.trim();
-    if (!tunnelId) throw new Error('Could not determine tunnel ID. Check: cloudflared tunnel list');
-    return tunnelId;
   }
 
   private async writeConfig(tunnel: Tunnel): Promise<void> {
     const yaml = tunnel.toYaml();
     const b64 = Buffer.from(yaml).toString('base64');
-    await this.executor.exec(
+    await this.executor.execOrThrow(
       `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
-      `mkdir -p /etc/cloudflared && ` +
+      `$SUDO mkdir -p /etc/cloudflared && ` +
       `printf '%s' '${b64}' | base64 -d | $SUDO tee /etc/cloudflared/config.yml > /dev/null`,
     );
   }
 
+  /**
+   * `cloudflared service install` writes the systemd unit that reads
+   * /etc/cloudflared/config.yml. Idempotent: re-installing an existing unit
+   * updates it; a running service is restarted to pick up config changes.
+   */
   private async installAndStartService(): Promise<void> {
     await this.executor.exec(
       `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
-      `$SUDO cloudflared service install && $SUDO systemctl start cloudflared`,
+      `$SUDO cloudflared service install 2>/dev/null || true`,
+    );
+    await this.executor.execOrThrow(
+      `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+      `$SUDO systemctl enable cloudflared 2>/dev/null; ` +
+      `$SUDO systemctl restart cloudflared`,
     );
   }
 
