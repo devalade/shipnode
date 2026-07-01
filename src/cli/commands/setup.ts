@@ -68,6 +68,14 @@ async function bootstrapDeployUser(
   }
   ui.info(`Creating '${DEPLOY_USER}' on ${config.ssh.host}...`);
   await syncUsers(executor, [entry]);
+  // Grant NOPASSWD sudo — shipnode's non-interactive setup/harden/deploy all
+  // assume sudo doesn't prompt. Industry-standard for CI/deploy accounts; the
+  // tradeoff is that a compromise of the deploy user's SSH key gets root.
+  await executor.execOrThrow(
+    `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+    `echo "${DEPLOY_USER} ALL=(ALL) NOPASSWD:ALL" | $SUDO tee "/etc/sudoers.d/shipnode-${DEPLOY_USER}" > /dev/null && ` +
+    `$SUDO chmod 440 "/etc/sudoers.d/shipnode-${DEPLOY_USER}"`,
+  );
   return true;
 }
 
