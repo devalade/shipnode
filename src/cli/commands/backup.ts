@@ -364,6 +364,60 @@ export async function cmdBackupStatus(
   );
 }
 
+/**
+ * Restore a restic snapshot to a target directory on the remote host.
+ *
+ * We intentionally don't apply DB dumps automatically — a bad restore would
+ * silently trash production data. The user gets the files under `--target`
+ * (default: /tmp/shipnode-restore-<ts>) and runs whatever recovery command
+ * fits their situation (e.g. `psql -f db.sql`, `rsync -a shared/ /var/…`).
+ */
+export async function cmdBackupRestore(
+  cwd: string,
+  snapshot: string | undefined,
+  options: { config?: string; target?: string; tag?: string; host?: string },
+): Promise<void> {
+  await runRemoteCommand(
+    cwd,
+    async ({ config, executor }) => {
+      if (!config.backup || (config.backup.strategy ?? 'snapshot') !== 'restic') {
+        ui.error('backup restore only supports the restic strategy today.');
+        process.exit(1);
+      }
+
+      const target = options.target ?? `/tmp/shipnode-restore-${Date.now()}`;
+      const snap = snapshot ?? 'latest';
+      const flags = [
+        options.tag ? `--tag '${options.tag}'` : '',
+        options.host ? `--host '${options.host}'` : '',
+      ].filter(Boolean).join(' ');
+
+      ui.info(`Restoring snapshot ${snap} → ${target}`);
+      const cmd =
+        `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
+        `$SUDO bash -c '. ${BACKUP_ENV_PATH} && ` +
+        `export RESTIC_REPOSITORY RESTIC_PASSWORD AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY HOME && ` +
+        `mkdir -p "${target}" && ` +
+        `restic restore ${snap} --target "${target}" ${flags}'`;
+
+      const result = await executor.exec(cmd, { timeout: 600_000 });
+      console.log(result.stdout);
+      if (result.exitCode !== 0) {
+        ui.error(result.stderr || 'Restore failed');
+        process.exit(1);
+      }
+      ui.success(`Restored to ${target} on ${config.ssh.host}.`);
+      ui.info(
+        'Nothing has been applied — restored files are under the target dir. ' +
+        'Apply manually, e.g.:\n' +
+        '  psql -U <user> -d <db> < db.sql\n' +
+        '  rsync -a shared/ /var/www/<app>/shared/',
+      );
+    },
+    { configPath: options.config },
+  );
+}
+
 export async function cmdBackupList(
   cwd: string,
   options: { config?: string },

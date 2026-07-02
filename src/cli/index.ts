@@ -25,7 +25,7 @@ import { cmdEject } from './commands/eject.js';
 import { cmdHelp } from './commands/help.js';
 import { cmdUserAdd, cmdUserSync, cmdUserList, cmdUserRemove } from './commands/user.js';
 import { cmdUpgrade } from './commands/upgrade.js';
-import { cmdBackupSetup, cmdBackupRun, cmdBackupStatus, cmdBackupList } from './commands/backup.js';
+import { cmdBackupSetup, cmdBackupRun, cmdBackupStatus, cmdBackupList, cmdBackupRestore } from './commands/backup.js';
 import { cmdCloudflareInit, cmdCloudflareAudit, cmdCloudflareStatus } from './commands/cloudflare.js';
 
 // Read version from package.json so `shipnode --version` stays in sync with the published
@@ -245,6 +245,14 @@ backup.command('list')
   .description('List recent backups in S3')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdBackupList(process.cwd(), opts));
+
+backup.command('restore [snapshot]')
+  .description('Restore a restic snapshot to a target directory (default: latest)')
+  .option('--target <path>', 'Where to restore files (default: /tmp/shipnode-restore-<ts>)')
+  .option('--tag <tag>', 'Filter by tag (db | files)')
+  .option('--host <host>', 'Filter by hostname')
+  .option('--config <path>', 'Use a specific config file')
+  .action((snapshot: string | undefined, opts) => cmdBackupRestore(process.cwd(), snapshot, opts));
 
 // ── Cloudflare ────────────────────────────────────────────────────
 
