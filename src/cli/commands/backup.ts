@@ -127,6 +127,11 @@ function buildBackupEnv(
   if (strategy === 'restic') {
     if (creds.resticPassword) lines.push(`RESTIC_PASSWORD='${creds.resticPassword}'`);
     if (creds.resticRepository) lines.push(`RESTIC_REPOSITORY='${creds.resticRepository}'`);
+    // systemd services boot with a minimal env — restic warns "neither
+    // $XDG_CACHE_HOME nor $HOME are defined" and re-fetches R2 indexes every
+    // run without a persistent cache. Pinning HOME lets restic cache under
+    // /root/.cache/restic across runs.
+    lines.push(`HOME='/root'`);
   }
   if (db && db.type !== 'sqlite') {
     lines.push(`DB_TYPE='${db.type}'`);
