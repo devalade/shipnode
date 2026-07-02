@@ -2,6 +2,40 @@
 
 All notable changes to `@devalade/shipnode` will be documented here.
 
+## [3.1.0] - 2026-07-02
+
+First real production run of 3.0 surfaced a batch of bugs — all fixed — plus one new feature (incremental restic backups to Cloudflare R2 / any S3-compatible store).
+
+### Added
+- **Incremental backup strategy via restic** — new `BackupConfig.strategy: 'snapshot' | 'restic'` (default `'snapshot'` for back-compat). The restic path streams `pg_dump` straight into a restic repository on S3-compatible storage (Cloudflare R2 in practice — set `s3Endpoint` to `https://<account-id>.r2.cloudflarestorage.com`), giving block-level dedup, client-side encryption, and 1–5% incremental daily deltas.
+  - `setup` reads `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from the local env, generates a `RESTIC_PASSWORD` if absent (and prints it — save it), installs restic via apt, writes `/etc/shipnode/backup.env` (root:root 600) + script + systemd unit+timer.
+  - `backup run` goes through `systemctl start --wait` so the `EnvironmentFile` is honored (a bare script exec wouldn't source it under a non-root deploy user).
+  - `backup list` uses `restic snapshots --compact` for the restic strategy.
+  - New `backup restore [snapshot]` command — extracts a snapshot (or `latest`) to `--target <path>` with `--tag`/`--host` filters. Files are extracted, never applied — the actual recovery (`psql -f db.sql`, `rsync -a shared/`) stays a manual step so a bad restore can't silently trash production.
+  - Retention knobs: `keepDaily` (default 7), `keepWeekly` (4), `keepMonthly` (6), enforced by `restic forget --prune`.
+- **`shipnode user add <name> [--key <path>] [--sudo] [--no-sync]`** — write/update `.shipnode/users.yml` and sync the user to the server in one step, removing the manual YAML editing that `user sync` previously required.
+- **`setup` bootstraps a `deploy` user** — first-run setup creates a `deploy` user (sudo, keyed off `${ssh.identityFile}.pub`) with `NOPASSWD:ALL` sudo, registers it in `.shipnode/users.yml`, and chowns `remotePath` to it. Opt out with `--no-deploy-user`. Downstream `harden` and `deploy` runs land on a non-root account instead of root. Installs mise/node/pm2 into the deploy user's home so `pm2-<user>.service` matches. `pm2 startup` runs as root but targets the deploy user; `pm2 save` runs as deploy so `dump.pm2` is the one systemd resurrects at boot.
+- **PM2 boot-resurrection section in `harden`** — verifies `pm2-${ssh.user}.service` is installed, offers to refresh its dump (`pm2 save`), and offers to disable stale `pm2-*.service` units left over from a prior root-scoped setup after switching `ssh.user`.
+- **`config show --app <name>`** — filter the resolved config to a single app in a multi-app workspace.
+
+### Changed
+- **`cloudflare init` uses the Cloudflare REST API for tunnel creation.** Previously relied on `cloudflared tunnel create` and `cloudflared tunnel route dns`, both of which require the browser-based `cloudflared tunnel login` flow (writes `~/.cloudflared/cert.pem`) — not scriptable. `CloudflareApi` gains `getAccountId`, `findTunnel`, `createTunnel`, and `upsertDnsRecord`; the orchestrator finds-or-creates the tunnel via API with a caller-generated secret, writes the credentials JSON at `/etc/cloudflared/<id>.json`, upserts CNAME records pointing at `<id>.cfargotunnel.com`, and enables/restarts the systemd unit. Reusing a tunnel by name now requires its credentials file to already be on the host (Cloudflare doesn't echo the secret back on GET) — error message points at the fix.
+- **`cloudflared` install falls back to the upstream `.deb` from GitHub** when `pkg.cloudflare.com` has no package for the current codename (fresh Ubuntu releases like 26.04/`resolute` lag behind). Stale apt sources entry is cleaned up on fallback so `apt update` stops erroring.
+- **`config show` / `deploy --dry-run` render every app in the workspace** instead of just `apps[0]`. `config show` gained `--app <name>` to narrow. Dry-run splits output into a workspace header + per-app plan block with namespace-prefixed PM2 names so the preview matches what actually ships.
+- **`shipnode --version`** now reads from `package.json` at runtime instead of a hardcoded `'2.0.0'` string.
+
+### Fixed
+- **`asUser` produced broken `-u deploy bash …` under root SSH.** The `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO -u …` idiom reduced to a bare `-u` command when EUID was 0. Switched to unconditional `sudo -u` (transparent under root, no password prompt).
+- **`pm2 startup` targeted an invalid shim.** `~/.local/share/mise/shims/pm2` fails with "not a valid shim" because mise only shims tools it manages itself, not npm-installed globals. Resolve pm2's real path via `mise exec node@X -- which pm2` under the deploy user, then invoke it with `env PATH=<node-bin-dir>:$PATH`.
+- **Bootstrapped `deploy` user needed NOPASSWD sudo.** `syncUsers` put the user in the `sudo` group but sudo still prompted for a password, so `harden` / `deploy` runs as deploy would hang. Setup now drops a `/etc/sudoers.d/shipnode-deploy` NOPASSWD file right after user creation.
+- **`env` command silently uploaded nothing for nested `envFile` paths.** For `apps/backend/.env.production` in a monorepo, `mkdir -p ${appPath}/shared` didn't create `shared/apps/backend/`, so the `echo | base64 -d > ${sharedEnv}` redirect failed silently. The CLI still printed "Uploaded to …" (executor.exec doesn't check exit codes), and the symlink was created pointing at a non-existent file — the next deploy broke with an obscure `./.env` sourcing error. Now uses `execOrThrow` on each step and mkdirs the actual parent of `sharedEnv` via `dirname`.
+- **`CaddyService` wrote `/etc/caddy/conf.d/<app>.caddy` and reloaded Caddy without sudo.** Worked when SSH user was root, broke as the deploy user with `Permission denied`. Both the write (via `| sudo tee`) and the reload (via `sudo systemctl`) go through sudo now.
+- **`HealthCheckService` built PM2 names from the workspace-level `deploymentName`** (always `apps[0]`'s namespace), so in a multi-app workspace it looked up e.g. `biormin-biormin-frontend` when PM2 actually runs `biormin-frontend` under its own namespace. Every app's check now derives the namespace from that app.
+- **Restic env cache missed across runs.** Restic warned `neither $XDG_CACHE_HOME nor $HOME are defined` under systemd's minimal env and re-fetched the R2 index each daily run. `HOME='/root'` is now injected via the backup env file so `/root/.cache/restic` persists.
+
+### Notes
+- The restic strategy is opt-in — existing snapshot backups keep working unchanged. Migrate by setting `strategy: 'restic'` in the `.backup(...)` block, exporting AWS credentials, and re-running `shipnode backup setup`.
+
 ## [3.0.0] - 2026-07-01
 
 ### Added
