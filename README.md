@@ -14,12 +14,19 @@ npm install -g @devalade/shipnode
 # 1. Generate config
 shipnode init
 
-# 2. Provision the server (Node, PM2, Caddy, mise)
+# 2. Provision the server. Installs Node, PM2, Caddy, mise, DB/Redis if
+#    configured, and bootstraps a `deploy` user (sudo, NOPASSWD) keyed off
+#    ${ssh.identityFile}.pub so subsequent runs don't need root SSH.
 shipnode setup
 
-# 3. Deploy
+# 3. Switch ssh.user in shipnode.config.ts to 'deploy', then lock down SSH:
+shipnode harden
+
+# 4. Deploy
 shipnode deploy
 ```
+
+Pass `--no-deploy-user` to `setup` if you want to manage users yourself.
 
 ## Configuration
 
@@ -230,7 +237,7 @@ export default shipnode
 | `.sharedDirs(dirs)` | — | Dirs persisted across releases |
 | `.sharedFiles(files)` | — | Files persisted across releases |
 | `.database(opts)` | — | Database connection config |
-| `.backup(opts)` | — | S3 backup config |
+| `.backup(opts)` | — | S3 / R2 backup config (snapshot or incremental restic) |
 | `.cloudflare(opts)` | — | Cloudflare Tunnel config |
 | `.preDeploy(fn)` | — | Hook: runs before symlink switch |
 | `.postDeploy(fn)` | — | Hook: runs after deploy |
@@ -288,7 +295,16 @@ shipnode unlock                # Clear a stuck deployment lock
 
 ### Users
 
-Manage SSH users via `.shipnode/users.yml`:
+`shipnode setup` bootstraps a `deploy` user by default (using `${ssh.identityFile}.pub`) and grants it passwordless sudo — this is the account subsequent `harden` and `deploy` runs authenticate as. Add teammates via:
+
+```bash
+shipnode user add alice --key ~/keys/alice.pub --sudo
+shipnode user add ci    --key ~/keys/ci.pub                 # no sudo
+```
+
+This writes `.shipnode/users.yml` and syncs the entry to the server in one step. Add `--no-sync` to only write locally.
+
+You can also edit `.shipnode/users.yml` by hand and run `shipnode user sync`:
 
 ```yaml
 - username: alice
@@ -306,7 +322,12 @@ shipnode user remove alice     # Remove a user
 
 ### Backups
 
-Requires `backup` config and `aws` CLI on the server.
+Two strategies are supported:
+
+- **`snapshot`** (default) — full `pg_dump` + `tar.gz` uploaded via `aws s3` each run. Simple, no client-side state, back-compat with pre-3.1 configs.
+- **`restic`** — streams `pg_dump` straight into a [restic](https://restic.net/) repository on any S3-compatible store. Block-level dedup + client-side encryption + retention → daily incrementals are typically 1–5% of full size. Recommended for anything past a toy deployment.
+
+#### Snapshot strategy
 
 ```ts
 export default shipnode
@@ -320,34 +341,86 @@ export default shipnode
   .build();
 ```
 
+Requires `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in your local env and the `aws` CLI on the server (setup installs it).
+
+#### Restic strategy (recommended)
+
+Cloudflare R2 pairs well with restic — S3-compatible API, zero egress fees, so full-repo restores stay cheap.
+
+```ts
+export default shipnode
+  // ...
+  .backup({
+    strategy: 'restic',
+    s3Bucket: 'my-backups',
+    s3Endpoint: 'https://<account-id>.r2.cloudflarestorage.com',
+    schedule: 'daily',
+    keepDaily: 7,
+    keepWeekly: 4,
+    keepMonthly: 6,
+  })
+  .build();
+```
+
+Requires three env vars locally at `setup` time:
+
+- `AWS_ACCESS_KEY_ID` — R2 API token access key (create at Cloudflare dashboard → R2 → Manage R2 API Tokens with Object Read & Write)
+- `AWS_SECRET_ACCESS_KEY` — the matching secret
+- `RESTIC_PASSWORD` — encryption passphrase. **Save this outside the server.** If you lose it the repository is unrecoverable. Omit and shipnode generates one and prints it.
+
+Setup installs restic, writes `/etc/shipnode/backup.env` (root-owned 600), the backup script, and a systemd unit + timer. On the first run restic initializes the R2 repository; subsequent runs stream `pg_dump` via `--stdin`, back up `shared/` files, and prune with the configured retention.
+
+#### Commands
+
 ```bash
-shipnode backup setup          # Install backup script + systemd timer
-shipnode backup run            # Run a backup immediately
-shipnode backup status         # Show timer and last run log
-shipnode backup list           # List recent backups in S3
+shipnode backup setup                              # Install/refresh script + timer + env
+shipnode backup run                                # Run a backup immediately
+shipnode backup status                             # Show timer and last run log
+shipnode backup list                               # Snapshots (restic) or S3 objects (snapshot)
+shipnode backup restore --tag db --target /tmp/r   # Restore latest DB snapshot (restic only)
+shipnode backup restore <id> --tag files           # Restore a specific snapshot
+```
+
+`backup restore` extracts files to the target directory but never applies them — a bad restore should not silently trash production. Run the actual recovery step by hand:
+
+```bash
+# On the server, once restore extracted the snapshot:
+psql -U <user> -d <db> -f /tmp/restore/db.sql
+rsync -a /tmp/restore/var/www/<app>/shared/ /var/www/<app>/shared/
 ```
 
 ### Cloudflare Tunnel
 
-Expose your app and SSH through Cloudflare without opening ports. Requires `CLOUDFLARE_API_TOKEN` env var.
+Expose your apps (and optionally SSH) through Cloudflare without opening ports. Ingress entries are derived automatically from each app's `.domain()` + web port, so there is no `appHostname` to configure — the tunnel routes `app.domain → localhost:<port>` for every app in the workspace.
+
+Requires a `CLOUDFLARE_API_TOKEN` env var with:
+
+- `Zone:Zone:Read` + `Zone:DNS:Read` + `Zone:DNS:Edit` on the target zone
+- `Account:Cloudflare Tunnel:Edit` on the account
+
+Create it at https://dash.cloudflare.com/profile/api-tokens.
 
 ```ts
 export default shipnode
   // ...
   .cloudflare({
     zone: 'example.com',
-    appHostname: 'app.example.com',
-    sshHostname: 'ssh.example.com',
+    tunnelName: 'myapp',       // optional, defaults to a slug of ssh.host
+    sshHostname: 'ssh.example.com', // optional — adds an ssh://localhost:22 ingress
     lockdownFirewall: true,    // Restrict inbound to CF IPs only
   })
   .build();
 ```
 
 ```bash
-shipnode cloudflare init       # Install cloudflared, create tunnel, configure DNS
+shipnode cloudflare init       # Install cloudflared, create tunnel via API, wire DNS
 shipnode cloudflare audit      # Verify DNS records and tunnel
-shipnode cloudflare status     # Show cloudflared service status
+shipnode cloudflare status     # Show cloudflared service + config
 ```
+
+`cloudflare init` finds-or-creates the tunnel via the Cloudflare REST API (no browser-based `cloudflared tunnel login` step), writes the credentials JSON to `/etc/cloudflared/<id>.json`, upserts CNAME records pointing at `<id>.cfargotunnel.com`, and enables the systemd unit. Reusing a tunnel by name across hosts is not supported — Cloudflare doesn't echo the secret back on GET, so credentials from another host would need to be copied over manually.
+
+Falls back to installing `cloudflared` from the upstream GitHub `.deb` if `pkg.cloudflare.com` has no package for your Ubuntu codename (a common issue on very fresh releases like 26.04/`resolute`).
 
 ### CI/CD
 
@@ -359,9 +432,10 @@ shipnode ci env-sync           # Push .env vars to GitHub repository secrets
 ### Configuration
 
 ```bash
-shipnode config show           # Print resolved config
-shipnode config validate       # Validate config file
-shipnode config path           # Print path to config file
+shipnode config show                  # Print resolved workspace + every app
+shipnode config show --app api        # Narrow to a single app in a multi-app workspace
+shipnode config validate              # Validate config file
+shipnode config path                  # Print path to config file
 ```
 
 ### Customization
