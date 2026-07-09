@@ -21,6 +21,7 @@ import { cmdLogs } from './commands/logs.js';
 import { cmdRestart } from './commands/restart.js';
 import { cmdStop } from './commands/stop.js';
 import { cmdMetrics } from './commands/metrics.js';
+import { cmdMonitor } from './commands/monitor.js';
 import { cmdEject } from './commands/eject.js';
 import { cmdHelp } from './commands/help.js';
 import { cmdUserAdd, cmdUserSync, cmdUserList, cmdUserRemove } from './commands/user.js';
@@ -147,6 +148,14 @@ program
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdMetrics(process.cwd(), opts));
+
+program
+  .command('monitor')
+  .description('Live TUI dashboard with PM2 stats, system metrics, and logs')
+  .option('--interval <seconds>', 'Polling interval in seconds (default: 2)', '2')
+  .option('--app <name>', 'Target a specific app')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdMonitor(process.cwd(), opts));
 
 // ── Security & maintenance ────────────────────────────────────────
 
