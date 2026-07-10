@@ -28,6 +28,7 @@ ${chalk.bold('PROCESS MANAGEMENT')}
   ${chalk.green('restart')}           Restart the application
   ${chalk.green('stop')}              Stop the application
   ${chalk.green('metrics')}           Open PM2 monitoring dashboard
+  ${chalk.green('monitor')}           Live TUI dashboard with stats and logs
 
 ${chalk.bold('SECURITY & MAINTENANCE')}
   ${chalk.green('harden')}            Apply server security hardening
