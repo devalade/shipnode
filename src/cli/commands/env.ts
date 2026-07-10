@@ -53,22 +53,28 @@ export async function cmdEnv(
         }
 
         const namespace = getDeploymentName({ ...config, apps: [app] } as any);
-        if (app.appType === 'backend' && namespace) {
-          const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
-          const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-          const checkResult = await executor.exec(
-            `${mise}; mise exec node@${nodeVersion} -- pm2 describe ${namespace} 2>/dev/null && echo "running" || echo "stopped"`,
-          );
+        if (!namespace) {
+          ui.info(`No PM2 namespace configured for '${app.name}' — nothing to reload.`);
+          continue;
+        }
 
-          if (checkResult.stdout.includes('running')) {
-            ui.info('Reloading deployment to pick up environment variables...');
-            await executor.exec(
-              `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${namespace} --update-env`,
-            );
-            ui.success('Deployment reloaded with new environment variables');
-          } else {
-            ui.warn('Deployment not running. Variables will be loaded on next deploy.');
-          }
+        const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
+        const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+        const checkResult = await executor.exec(
+          `${mise}; mise exec node@${nodeVersion} -- pm2 describe ${namespace} 2>/dev/null && echo "running" || echo "stopped"`,
+        );
+
+        if (checkResult.stdout.includes('running')) {
+          ui.info(`Reloading '${app.name}' (${namespace}) to pick up environment variables...`);
+          await executor.exec(
+            `${mise}; mise exec node@${nodeVersion} -- pm2 reload ${namespace} --update-env`,
+          );
+          ui.success(`'${app.name}' reloaded with new environment variables`);
+        } else {
+          ui.warn(
+            `'${app.name}' (${namespace}) is not running on the server. ` +
+              `Run 'shipnode deploy --app ${app.name}' to start it — new env will be picked up automatically.`,
+          );
         }
       }
     },
