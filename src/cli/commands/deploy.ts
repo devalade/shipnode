@@ -10,9 +10,18 @@ import { getPm2Name } from '../../domain/pm2/apps.js';
 import { configForServer, getServerTargets, resolveServerName } from '../../domain/servers.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string }): Promise<void> {
-  const config = await loadConfig(cwd, options.config);
-  const selectedApp = options.app ? getActiveApp(config, options.app) : undefined;
-  const targetConfig = selectedApp ? { ...config, apps: [selectedApp] } : config;
+  let config: ShipnodeConfig;
+  let targetConfig: ShipnodeConfig;
+  try {
+    config = await loadConfig(cwd, options.config);
+    const selectedApp = options.app ? getActiveApp(config, options.app) : undefined;
+    targetConfig = selectedApp ? { ...config, apps: [selectedApp] } : config;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ui.error(message);
+    process.exit(1);
+    return;
+  }
 
   if (options.dryRun) {
     printDryRun(targetConfig, options.skipBuild ?? false);
