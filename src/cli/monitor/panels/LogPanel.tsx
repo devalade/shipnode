@@ -7,7 +7,7 @@ interface LogPanelProps {
 }
 
 export function LogPanel({ logBuffer }: LogPanelProps) {
-  const lines = logBuffer.split('\n').slice(-30);
+  const lines = logBuffer ? logBuffer.split('\n').slice(-30) : [];
   return (
     <Box borderStyle="round" borderColor="#30363d" padding={1} flexDirection="column" flexGrow={1} backgroundColor={BG}>
       <Text bold color="#d6a85d">Live Logs</Text>

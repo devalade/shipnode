@@ -1,10 +1,13 @@
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
 import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
-import { getDeploymentName } from '../../domain/pm2/apps.js';
 import type { MetricsSnapshot } from './state.js';
 import { parsePm2Jlist, parseSystemStats, parseReleaseRecords } from './state.js';
 
 const MISE = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
 
 function buildSystemInfoCommand(): string {
   return [
@@ -25,7 +28,6 @@ export async function collectMetrics(
 
   const mise = app.appType === 'backend' ? MISE : '';
   const namespace = app.pm2?.apps[0]?.name ?? '';
-  const deployName = getDeploymentName({ ...config, apps: [app] } as ShipnodeConfig) ?? namespace;
 
   const pm2Result = await executor.exec(
     app.appType === 'backend' && app.pm2 ? `${mise} && pm2 jlist` : 'echo "[]"',
@@ -37,7 +39,7 @@ export async function collectMetrics(
 
   const releasesResult = await executor.exec(`cat "${appPath}/.shipnode/releases.json" 2>/dev/null || echo '[]'`);
 
-  const processes = parsePm2Jlist(pm2Result.stdout, deployName);
+  const processes = parsePm2Jlist(pm2Result.stdout, namespace);
   const system = parseSystemStats(sysResult.stdout);
   const releases = parseReleaseRecords(releasesResult.stdout);
   const currentRelease = currentResult.stdout === 'none' ? null : currentResult.stdout.trim();
@@ -63,7 +65,7 @@ export async function collectLogs(
   lines: number = 20,
 ): Promise<string> {
   const result = await executor.exec(
-    `${MISE} && pm2 logs ${namespace} --lines ${lines} --nostream 2>&1 || echo "(no logs)"`,
+    `${MISE} && pm2 logs ${shellQuote(namespace)} --lines ${lines} --nostream 2>&1 || echo "(no logs)"`,
   );
   return result.stdout;
 }

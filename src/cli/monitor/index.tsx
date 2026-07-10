@@ -7,6 +7,9 @@ interface MonitorOptions {
   executor: RemoteExecutor;
   config: ShipnodeConfig;
   app: ShipnodeApp;
+  apps: ShipnodeApp[];
+  targetName: string;
+  host: string;
   interval: number;
 }
 

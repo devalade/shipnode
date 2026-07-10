@@ -8,11 +8,12 @@ const BG_SELECTED = '#1f2937';
 
 interface AppSelectorProps {
   apps: ShipnodeApp[];
+  targetName: string;
   onSelect: (app: ShipnodeApp) => void;
   onCancel: () => void;
 }
 
-export function AppSelector({ apps, onSelect, onCancel }: AppSelectorProps) {
+export function AppSelector({ apps, targetName, onSelect, onCancel }: AppSelectorProps) {
   const [selected, setSelected] = useState(0);
 
   useInput((input, key) => {
@@ -37,7 +38,7 @@ export function AppSelector({ apps, onSelect, onCancel }: AppSelectorProps) {
       alignItems="center"
     >
       <Text bold color="#d6a85d">
-        Select App ({apps.length} configured)
+        Select App ({apps.length} on {targetName})
       </Text>
       {apps.map((app, i) => {
         const typeLabel = app.appType === 'backend' ? 'backend' : 'frontend';

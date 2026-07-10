@@ -59,40 +59,60 @@ export class MetricsHistory {
   }
 }
 
-interface Pm2JlistEntry {
-  name: string;
-  pid?: number;
-  pm2_env?: {
-    status?: string;
-    pm_uptime?: number;
-    restart_time?: number;
-  };
-  monit?: {
-    memory: number;
-    cpu: number;
-  };
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  // SAFETY: Runtime checks above establish a non-null plain object shape for indexed boundary parsing.
+  return value as Record<string, unknown>;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }
 
 export function parsePm2Jlist(stdout: string, namespace: string): ProcessInfo[] {
   try {
-    const entries: Pm2JlistEntry[] = JSON.parse(stdout.trim());
-    return entries.map((e) => ({
-      name: resolveShortName(e.name, namespace),
-      pm2Name: e.name,
-      pid: e.pid ?? null,
-      status: e.pm2_env?.status ?? 'unknown',
-      cpu: e.monit?.cpu ?? 0,
-      memory: e.monit?.memory != null ? Math.round(e.monit.memory / (1024 * 1024)) : 0,
-      uptime: e.pm2_env?.pm_uptime ?? 0,
-      restarts: e.pm2_env?.restart_time ?? 0,
-    }));
+    const raw: unknown = JSON.parse(stdout.trim());
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry) => parsePm2Entry(entry, namespace));
   } catch {
     return [];
   }
 }
 
+function parsePm2Entry(entry: unknown, namespace: string): ProcessInfo[] {
+  const item = readRecord(entry);
+  if (item === null) return [];
+  const name = readString(item.name);
+  if (name === undefined) return [];
+  if (!belongsToNamespace(name, namespace)) return [];
+
+  const pm2Env = readRecord(item.pm2_env);
+  const monit = readRecord(item.monit);
+  const memory = readNumber(monit?.memory);
+
+  return [{
+    name: resolveShortName(name, namespace),
+    pm2Name: name,
+    pid: readNumber(item.pid) ?? null,
+    status: readString(pm2Env?.status) ?? 'unknown',
+    cpu: readNumber(monit?.cpu) ?? 0,
+    memory: memory === undefined ? 0 : Math.round(memory / (1024 * 1024)),
+    uptime: readNumber(pm2Env?.pm_uptime) ?? 0,
+    restarts: readNumber(pm2Env?.restart_time) ?? 0,
+  }];
+}
+
+function belongsToNamespace(pm2Name: string, namespace: string): boolean {
+  if (namespace === '') return true;
+  return pm2Name === namespace || pm2Name.startsWith(`${namespace}-`);
+}
+
 export function parseSystemStats(stdout: string): SystemInfo {
-  const lines = stdout.trim().split('\n').filter(Boolean);
+  const lines = stdout.trim().split('\n').flatMap((line) => line ? [line] : []);
   const result: SystemInfo = {
     cpuLoad: 0,
     totalMem: 0,

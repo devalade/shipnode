@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
 import { sparkline, gauge, formatUptime, formatBytes, statusDot } from '../../src/cli/monitor/charts.js';
 import { parsePm2Jlist, parseSystemStats, parseReleaseRecords, MetricsHistory } from '../../src/cli/monitor/state.js';
-import { collectMetrics } from '../../src/cli/monitor/poller.js';
+import { collectMetrics, collectLogs } from '../../src/cli/monitor/poller.js';
 import { assembleConfig } from '../../src/config/assembly.js';
+import { getAppsForMonitorTarget, resolveMonitorSession } from '../../src/cli/monitor/monitor-session.js';
 
 // ── Charts ────────────────────────────────────────────────────────
 
@@ -135,6 +136,7 @@ describe('parsePm2Jlist', () => {
     const stdout = JSON.stringify([
       makePm2Entry('api'),
       makePm2Entry('api-worker'),
+      makePm2Entry('admin'),
     ]);
     const result = parsePm2Jlist(stdout, 'api');
     expect(result).toHaveLength(2);
@@ -153,6 +155,19 @@ describe('parsePm2Jlist', () => {
 
   it('returns empty array on invalid JSON', () => {
     expect(parsePm2Jlist('not json', 'api')).toEqual([]);
+  });
+
+  it('filters unrelated PM2 processes from the same host', () => {
+    const stdout = JSON.stringify([
+      makePm2Entry('api'),
+      makePm2Entry('api-worker'),
+      makePm2Entry('admin'),
+      makePm2Entry('admin-worker'),
+    ]);
+
+    const result = parsePm2Jlist(stdout, 'api');
+
+    expect(result.map((process) => process.pm2Name)).toEqual(['api', 'api-worker']);
   });
 
   it('handles missing monit data', () => {
@@ -324,6 +339,64 @@ describe('collectMetrics', () => {
 
     const result = await collectMetrics(executor, frontendConfig.apps[0], frontendConfig);
     expect(result.processes).toEqual([]);
+  });
+});
+
+describe('collectLogs', () => {
+  it('shell-quotes the PM2 namespace', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(
+      (c) => true,
+      { stdout: 'ok', stderr: '', exitCode: 0 },
+    );
+
+    await collectLogs(executor, "api'worker", 20);
+
+    expect(executor.getHistory()[0].command).toContain("pm2 logs 'api'\"'\"'worker'");
+  });
+});
+
+describe('monitor session', () => {
+  it('resolves the selected app server target', () => {
+    const config = assembleConfig({
+      servers: {
+        app: { host: '1.1.1.1', user: 'deploy', port: 22 },
+        data: { host: '2.2.2.2', user: 'deploy', port: 22 },
+      },
+      remotePath: '/var/www/app',
+      apps: [
+        { name: 'api', appType: 'backend', on: 'app', healthCheck: { enabled: true } },
+        { name: 'worker', appType: 'backend', on: 'data', healthCheck: { enabled: true } },
+      ],
+    });
+
+    const session = resolveMonitorSession(config, 'worker');
+
+    expect(session.isOk()).toBe(true);
+    if (session.isOk()) {
+      expect(session.value.target.name).toBe('data');
+      expect(session.value.target.ssh.host).toBe('2.2.2.2');
+    }
+  });
+
+  it('limits selectable apps to the connected server target', () => {
+    const config = assembleConfig({
+      servers: {
+        app: { host: '1.1.1.1', user: 'deploy', port: 22 },
+        data: { host: '2.2.2.2', user: 'deploy', port: 22 },
+      },
+      remotePath: '/var/www/app',
+      apps: [
+        { name: 'api', appType: 'backend', on: 'app', healthCheck: { enabled: true } },
+        { name: 'web', appType: 'frontend', on: 'app', healthCheck: { enabled: false } },
+        { name: 'worker', appType: 'backend', on: 'data', healthCheck: { enabled: true } },
+      ],
+    });
+
+    const apps = getAppsForMonitorTarget(config, 'app');
+
+    expect(apps.isOk()).toBe(true);
+    if (apps.isOk()) expect(apps.value.map((app) => app.name)).toEqual(['api', 'web']);
   });
 });
 
