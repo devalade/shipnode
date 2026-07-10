@@ -22,6 +22,16 @@ export const AccessoryConfigSchema = z.object({
   on: z.string().min(1).optional(),
   port: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   directories: z.array(z.string().min(1)).optional(),
+  networks: z.array(z.string().min(1)).optional(),
+  command: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+  labels: z.record(z.string().min(1), z.string()).optional(),
+  restart: z.enum(['no', 'always', 'unless-stopped', 'on-failure']).optional(),
+  resources: z.object({
+    memory: z.string().min(1).optional(),
+    memoryReservation: z.string().min(1).optional(),
+    cpus: z.string().min(1).optional(),
+  }).optional(),
+  stopTimeout: z.number().int().min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   registry: RegistryConfigSchema.optional(),
   healthCheck: z.object({
@@ -137,6 +147,7 @@ export const ShipnodeAppSchema = z.object({
   sharedFiles: z.array(z.string()).optional(),
   buildDir: z.string().optional(),
   hooks: HooksConfigSchema,
+  dependsOn: z.array(z.string().min(1)).optional(),
 }).refine(
   (cfg) => !(cfg.appType === 'frontend' && cfg.pm2),
   { message: 'frontend apps cannot declare pm2 (frontends are static files served by Caddy)', path: ['pm2'] },
@@ -216,9 +227,26 @@ const ShipnodeConfigBaseSchema = z.object({
   Object.entries(cfg.accessories ?? {}).forEach(([name, accessory]) => {
     validateTarget(accessory.on, ['accessories', name, 'on']);
   });
+  const accessoryNames = new Set(Object.keys(cfg.accessories ?? {}));
+  cfg.apps.forEach((app, index) => {
+    for (const name of app.dependsOn ?? []) {
+      if (!accessoryNames.has(name)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Unknown accessory dependency '${name}'`,
+          path: ['apps', index, 'dependsOn'],
+        });
+      }
+    }
+  });
 }).transform((cfg) => {
-  const servers = cfg.servers ?? { default: cfg.ssh! };
-  const ssh = cfg.ssh ?? servers.default ?? Object.values(servers)[0]!;
+  const servers = cfg.servers ?? (cfg.ssh === undefined ? undefined : { default: cfg.ssh });
+  if (servers === undefined) throw new Error('Either ssh or servers must be configured');
+
+  const firstServer = Object.values(servers)[0];
+  if (firstServer === undefined) throw new Error('At least one server target must be configured');
+
+  const ssh = cfg.ssh ?? servers.default ?? firstServer;
   return { ...cfg, ssh, servers };
 });
 
@@ -249,6 +277,7 @@ export const ShipnodeConfigSchema = z.preprocess(
         sharedFiles: obj.sharedFiles,
         buildDir: obj.buildDir,
         hooks: obj.hooks,
+        dependsOn: obj.dependsOn,
       }],
     };
   },

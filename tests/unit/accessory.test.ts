@@ -26,6 +26,33 @@ describe('buildAccessoryRunCommand', () => {
     expect(cmd).toContain("-e 'REDIS_MODE=primary'");
   });
 
+  it('adds hardened docker options and prepares named volumes and networks', () => {
+    const cmd = buildAccessoryRunCommand('redis', {
+      image: 'redis:7',
+      directories: ['redis-data:/data', '/srv/redis:/srv/redis'],
+      networks: ['shipnode-private'],
+      command: ['redis-server', '--appendonly', 'yes'],
+      labels: { 'com.shipnode.role': 'cache' },
+      restart: 'always',
+      resources: { memory: '512m', memoryReservation: '256m', cpus: '0.5' },
+      stopTimeout: 20,
+    });
+
+    expect(cmd).toContain("sudo docker volume inspect 'redis-data'");
+    expect(cmd).toContain("sudo docker volume create 'redis-data'");
+    expect(cmd).not.toContain("sudo docker volume inspect '/srv/redis'");
+    expect(cmd).toContain("sudo docker network inspect 'shipnode-private'");
+    expect(cmd).toContain("sudo docker network create 'shipnode-private'");
+    expect(cmd).toContain("--restart 'always'");
+    expect(cmd).toContain("--network 'shipnode-private'");
+    expect(cmd).toContain("--label 'com.shipnode.role=cache'");
+    expect(cmd).toContain("--memory '512m'");
+    expect(cmd).toContain("--memory-reservation '256m'");
+    expect(cmd).toContain("--cpus '0.5'");
+    expect(cmd).toContain('--stop-timeout 20');
+    expect(cmd).toContain("'redis:7' 'redis-server' '--appendonly' 'yes'");
+  });
+
   it('fails with a clear message when registry password env is missing remotely', () => {
     const cmd = buildAccessoryRunCommand('redis', {
       image: 'ghcr.io/acme/redis:7',

@@ -39,6 +39,20 @@ describe('ShipnodeConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects unknown accessory dependencies', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      apps: [{ name: 'api', appType: 'backend', dependsOn: ['redis'] }],
+      accessories: {},
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message.includes("Unknown accessory dependency 'redis'"))).toBe(true);
+    }
+  });
+
   it('rejects invalid SSH host', () => {
     const result = ShipnodeConfigSchema.safeParse({
       app: 'backend',

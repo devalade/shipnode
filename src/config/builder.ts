@@ -42,6 +42,7 @@ type BuilderState = {
   sharedFiles?: string[];
   appRoot?: string;
   hooks?: { preDeploy?: HookFn; postDeploy?: HookFn };
+  dependsOn?: string[];
   apps?: Partial<ShipnodeApp>[];
 };
 
@@ -222,6 +223,11 @@ export class ShipnodeBuilder {
     return this;
   }
 
+  dependsOn(accessories: string[]): this {
+    this.config.dependsOn = accessories;
+    return this;
+  }
+
   registry(opts: RegistryConfig): this {
     this.config.registry = opts;
     return this;
@@ -376,6 +382,11 @@ export class ShipnodeAppBuilder {
 
   postDeploy(fn: HookFn): this {
     this.state.hooks = { ...(this.state.hooks ?? {}), postDeploy: fn };
+    return this;
+  }
+
+  dependsOn(accessories: string[]): this {
+    this.state.dependsOn = accessories;
     return this;
   }
 

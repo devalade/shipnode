@@ -35,6 +35,7 @@ import {
   cmdAccessoryStatus,
   cmdAccessoryStop,
 } from './commands/accessory.js';
+import { cmdRegistryLogin, cmdSecretSet } from './commands/secrets.js';
 
 // Read version from package.json so `shipnode --version` stays in sync with the published
 // version automatically. The dist layout puts this file at dist/cli/index.js, so the
@@ -299,6 +300,24 @@ accessory.command('health <name>')
   .description('Run an accessory health check')
   .option('--config <path>', 'Use a specific config file')
   .action((name: string, opts) => cmdAccessoryHealth(process.cwd(), name, opts));
+
+// ── Secrets / Registry ───────────────────────────────────────────
+
+const secret = program.command('secret').description('Manage remote secrets');
+
+secret.command('set <name> [value]')
+  .description('Set a remote secret from an explicit value or local environment variable')
+  .option('--on <target>', 'Server target name')
+  .option('--config <path>', 'Use a specific config file')
+  .action((name: string, value: string | undefined, opts) => cmdSecretSet(process.cwd(), name, value, opts));
+
+const registry = program.command('registry').description('Manage Docker registry auth');
+
+registry.command('login')
+  .description('Store configured registry token on the target and run docker login')
+  .option('--on <target>', 'Server target name')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdRegistryLogin(process.cwd(), opts));
 
 // ── Cloudflare ────────────────────────────────────────────────────
 

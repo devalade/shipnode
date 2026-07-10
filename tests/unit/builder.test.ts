@@ -389,7 +389,8 @@ describe('ShipnodeAppBuilder + workspace .apps([])', () => {
       .domain('api.example.com')
       .pm2('api')
       .port(3333)
-      .caddy({ append: 'header X-Content-Type-Options "nosniff"' });
+      .caddy({ append: 'header X-Content-Type-Options "nosniff"' })
+      .dependsOn(['redis']);
 
     const config = new ShipnodeBuilder()
       .servers({
@@ -403,6 +404,7 @@ describe('ShipnodeAppBuilder + workspace .apps([])', () => {
 
     expect(config.servers.app.host).toBe('1.1.1.1');
     expect(config.apps[0].on).toBe('app');
+    expect(config.apps[0].dependsOn).toEqual(['redis']);
     expect(config.apps[0].caddy?.append).toContain('nosniff');
     expect(config.accessories?.redis?.on).toBe('data');
   });

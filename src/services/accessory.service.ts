@@ -8,7 +8,8 @@ function shellQuote(value: string): string {
 }
 
 function registryLoginCommand(registry: RegistryConfig): string {
-  return `if [ -z "$${registry.passwordEnv}" ]; then echo "Registry password env ${registry.passwordEnv} is not set on the remote host" >&2; exit 1; fi; ` +
+  return `. ~/.shipnode/secrets.env 2>/dev/null || true; ` +
+    `if [ -z "$${registry.passwordEnv}" ]; then echo "Registry password env ${registry.passwordEnv} is not set on the remote host" >&2; exit 1; fi; ` +
     `printf '%s' "$${registry.passwordEnv}" | sudo docker login ${shellQuote(registry.server)} ` +
     `--username ${shellQuote(registry.username)} --password-stdin`;
 }
@@ -18,6 +19,13 @@ function arrayOf(value: string | string[] | undefined): string[] {
   return Array.isArray(value) ? value : [value];
 }
 
+function namedVolumeFromMount(mount: string): string | undefined {
+  const [source] = mount.split(':');
+  if (!source) return undefined;
+  if (source.startsWith('/') || source.startsWith('.') || source.startsWith('~')) return undefined;
+  return source;
+}
+
 export function buildAccessoryRunCommand(
   name: string,
   accessory: AccessoryConfig,
@@ -25,19 +33,49 @@ export function buildAccessoryRunCommand(
 ): string {
   const ports = arrayOf(accessory.port).map((port) => `-p ${shellQuote(port)}`);
   const volumes = (accessory.directories ?? []).map((dir) => `-v ${shellQuote(dir)}`);
+  const networks = (accessory.networks ?? []).map((network) => `--network ${shellQuote(network)}`);
   const env = Object.entries(accessory.env ?? {}).map(([key, value]) => `-e ${shellQuote(`${key}=${value}`)}`);
-  const args = [...ports, ...volumes, ...env].join(' ');
+  const labels = Object.entries(accessory.labels ?? {}).map(([key, value]) => `--label ${shellQuote(`${key}=${value}`)}`);
+  const resources = [
+    accessory.resources?.memory ? `--memory ${shellQuote(accessory.resources.memory)}` : undefined,
+    accessory.resources?.memoryReservation ? `--memory-reservation ${shellQuote(accessory.resources.memoryReservation)}` : undefined,
+    accessory.resources?.cpus ? `--cpus ${shellQuote(accessory.resources.cpus)}` : undefined,
+  ].flatMap((arg) => arg === undefined ? [] : [arg]);
+  const stopTimeout = accessory.stopTimeout === undefined ? [] : [`--stop-timeout ${accessory.stopTimeout}`];
+  const args = [
+    ...ports,
+    ...volumes,
+    ...networks,
+    ...env,
+    ...labels,
+    ...resources,
+    ...stopTimeout,
+  ].join(' ');
   const containerName = `shipnode-${name}`;
   const registry = accessory.registry ?? workspaceRegistry;
   const login = registry ? `${registryLoginCommand(registry)} && ` : '';
+  const namedVolumes = (accessory.directories ?? []).flatMap((mount) => {
+    const volume = namedVolumeFromMount(mount);
+    return volume === undefined ? [] : [volume];
+  });
+  const volumeSetup = namedVolumes.map((volume) =>
+    `sudo docker volume inspect ${shellQuote(volume)} >/dev/null 2>&1 || sudo docker volume create ${shellQuote(volume)} >/dev/null; `,
+  );
+  const networkSetup = (accessory.networks ?? []).map((network) =>
+    `sudo docker network inspect ${shellQuote(network)} >/dev/null 2>&1 || sudo docker network create ${shellQuote(network)} >/dev/null; `,
+  );
+  const command = arrayOf(accessory.command).map(shellQuote).join(' ');
 
   return [
     login,
+    ...volumeSetup,
+    ...networkSetup,
     `sudo docker pull ${shellQuote(accessory.image)} && `,
     `sudo docker rm -f ${shellQuote(containerName)} >/dev/null 2>&1 || true; `,
-    `sudo docker run -d --restart unless-stopped --name ${shellQuote(containerName)} `,
+    `sudo docker run -d --restart ${shellQuote(accessory.restart ?? 'unless-stopped')} --name ${shellQuote(containerName)} `,
     args ? `${args} ` : '',
     shellQuote(accessory.image),
+    command ? ` ${command}` : '',
   ].join('');
 }
 

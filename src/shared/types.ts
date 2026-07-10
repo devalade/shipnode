@@ -61,6 +61,16 @@ export interface AccessoryConfig {
   on?: string;
   port?: string | string[];
   directories?: string[];
+  networks?: string[];
+  command?: string | string[];
+  labels?: Record<string, string>;
+  restart?: 'no' | 'always' | 'unless-stopped' | 'on-failure';
+  resources?: {
+    memory?: string;
+    memoryReservation?: string;
+    cpus?: string;
+  };
+  stopTimeout?: number;
   env?: Record<string, string>;
   registry?: RegistryConfig;
   healthCheck?: {
@@ -154,6 +164,7 @@ export interface ShipnodeApp {
   sharedFiles?: string[];
   buildDir?: string;
   hooks?: HooksConfig;
+  dependsOn?: string[];
 }
 
 export interface ShipnodeConfig {

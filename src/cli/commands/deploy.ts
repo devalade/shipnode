@@ -1,13 +1,15 @@
 import chalk from 'chalk';
+import { Result, type Result as ResultType } from 'better-result';
 import { loadConfig } from '../../config/loader.js';
 import { DeployService } from '../../services/deploy.service.js';
 import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
-import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
+import type { AccessoryConfig, ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
-import { configForAppResult, configForServer, getServerTargets, resolveServerName } from '../../domain/servers.js';
+import { configForAppResult, configForServer, getServerTargets, resolveServerName, resolveServerNameResult } from '../../domain/servers.js';
 import { generateBackendCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
+import { type ServerTargetError } from '../../shared/result-errors.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string }): Promise<void> {
   let config: ShipnodeConfig;
@@ -54,12 +56,14 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
       const deployer = new DeployService(new LoggingExecutor(executor), deployConfig);
       await deployer.execute(cwd, options.skipBuild ?? false);
 
-      const lines = [
+      const lines: string[] = [
         `host     ${config.ssh.user}@${config.ssh.host}`,
-        ...deployConfig.apps.filter((a) => a.domain).map((a) => `url      https://${a.domain}`),
-      ].filter(Boolean).join('\n');
+      ];
+      for (const deployedApp of deployConfig.apps) {
+        if (deployedApp.domain) lines.push(`url      https://${deployedApp.domain}`);
+      }
 
-      ui.note(lines, 'Done');
+      ui.note(lines.join('\n'), 'Done');
       ui.outro('Run shipnode status to check your app.');
     },
     { configPath: options.config },
@@ -96,6 +100,9 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
   }
 
   if (app.domain) serverRows.push(['Domain', app.domain]);
+  if (app.dependsOn?.length) serverRows.push(['Depends on', app.dependsOn.join(', ')]);
+
+  const dependencyWarnings = renderDependencyWarnings(config, app);
 
   const caddyPreview = renderCaddyPreview(config, app);
 
@@ -109,22 +116,21 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
     buildRows.push(['', chalk.dim('runs on remote server')]);
   }
 
-  const steps = [
+  const steps: string[] = [
     'Acquire deploy lock',
     'Create release directory',
     'Rsync files',
     'Install dependencies',
-    app.hooks?.preDeploy ? 'Run preDeploy hook' : '',
-    'Switch symlink (atomic)',
-    app.appType === 'backend' ? 'Reload PM2' : '',
-    app.healthCheck.enabled ? `Health check ${app.healthCheck.path}` : '',
-    'Record release',
-    'Clean old releases',
-    app.hooks?.postDeploy ? 'Run postDeploy hook' : '',
-    'Release lock',
-  ].filter(Boolean);
+  ];
+  if (app.hooks?.preDeploy) steps.push('Run preDeploy hook');
+  steps.push('Switch symlink (atomic)');
+  if (app.appType === 'backend') steps.push('Reload PM2');
+  if (app.healthCheck.enabled) steps.push(`Health check ${app.healthCheck.path}`);
+  steps.push('Record release', 'Clean old releases');
+  if (app.hooks?.postDeploy) steps.push('Run postDeploy hook');
+  steps.push('Release lock');
 
-  const flowRows: [string, string][] = steps.map((s, i) => [`${i + 1}.`, s as string]);
+  const flowRows: [string, string][] = steps.map((step, i) => [`${i + 1}.`, step]);
 
   return [
     chalk.bold(`App: ${app.name}`),
@@ -135,8 +141,26 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
     '',
     chalk.bold('  Deploy flow'),
     ...flowRows.map(([k, v]) => `    ${chalk.dim(k.padEnd(4))} ${v}`),
+    ...(dependencyWarnings.length ? ['', chalk.bold('  Dependency hints'), ...dependencyWarnings.map((line) => `    ${line}`)] : []),
     ...(caddyPreview ? ['', chalk.bold('  Caddy'), caddyPreview.split('\n').map((line) => `    ${line}`).join('\n')] : []),
   ].join('\n');
+}
+
+function renderDependencyWarnings(config: ShipnodeConfig, app: ShipnodeApp): string[] {
+  const dependencies = app.dependsOn ?? [];
+  if (dependencies.length === 0) return [];
+
+  const appServer = resolveServerName(config, app.on);
+  const warnings: string[] = [];
+  for (const name of dependencies) {
+    const accessory = config.accessories?.[name];
+    if (!accessory) continue;
+    const accessoryServer = resolveServerName(config, accessory.on);
+    if (appServer !== accessoryServer) {
+      warnings.push(`${name} runs on ${accessoryServer}; ${app.name} runs on ${appServer}. Confirm reachable networking.`);
+    }
+  }
+  return warnings;
 }
 
 function renderCaddyPreview(config: ShipnodeConfig, app: ShipnodeApp): string | null {
@@ -166,5 +190,95 @@ export function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
     .flatMap((targetConfig) => targetConfig.apps.map((app) => renderAppPlan(config, app, skipBuild)))
     .join('\n\n');
 
-  ui.note([header, '', perApp].join('\n'), 'Dry run — no changes will be made');
+  const accessories = renderAccessoriesPlan(config);
+  if (accessories.isErr()) {
+    ui.error(accessories.error.message);
+    process.exit(1);
+    return;
+  }
+
+  const output = [header, ''];
+  if (perApp) output.push(perApp);
+  if (accessories.value) output.push(accessories.value);
+  ui.note(output.join('\n'), 'Dry run — no changes will be made');
+}
+
+function renderAccessoriesPlan(config: ShipnodeConfig): ResultType<string, ServerTargetError> {
+  const accessories = Object.entries(config.accessories ?? {});
+  if (accessories.length === 0) return Result.ok('');
+
+  const rendered: string[] = [chalk.bold('Accessories')];
+  for (const [name, accessory] of accessories) {
+    const server = resolveAccessoryServer(config, accessory);
+    if (server.isErr()) return Result.err(server.error);
+
+    rendered.push(renderAccessoryPlan(name, accessory, server.value, config));
+  }
+
+  return Result.ok(rendered.join('\n\n'));
+}
+
+function resolveAccessoryServer(
+  config: ShipnodeConfig,
+  accessory: AccessoryConfig,
+): ResultType<string, ServerTargetError> {
+  return resolveServerNameResult(config, accessory.on);
+}
+
+function renderAccessoryPlan(
+  name: string,
+  accessory: AccessoryConfig,
+  serverName: string,
+  config: ShipnodeConfig,
+): string {
+  const registry = accessory.registry ?? config.registry;
+  const ports = Array.isArray(accessory.port) ? accessory.port : accessory.port ? [accessory.port] : [];
+  const rows: [string, string][] = [
+    ['Server', serverName],
+    ['Image', accessory.image],
+  ];
+
+  if (ports.length > 0) rows.push(['Ports', ports.join(', ')]);
+  if (accessory.directories?.length) rows.push(['Volumes', accessory.directories.join(', ')]);
+  if (accessory.networks?.length) rows.push(['Networks', accessory.networks.join(', ')]);
+  if (accessory.command) rows.push(['Command', Array.isArray(accessory.command) ? accessory.command.join(' ') : accessory.command]);
+  if (accessory.labels && Object.keys(accessory.labels).length > 0) rows.push(['Labels', Object.entries(accessory.labels).map(([key, value]) => `${key}=${value}`).join(', ')]);
+  if (accessory.restart) rows.push(['Restart', accessory.restart]);
+  if (accessory.resources) rows.push(['Resources', renderAccessoryResources(accessory.resources)]);
+  if (accessory.stopTimeout !== undefined) rows.push(['Stop timeout', `${accessory.stopTimeout}s`]);
+  if (registry) rows.push(['Registry', `${registry.server} (${registry.passwordEnv})`]);
+  if (accessory.healthCheck) rows.push(['Health check', accessory.healthCheck.command]);
+
+  const hasVolumeSetup = (accessory.directories ?? []).some((mount) => {
+    const [source] = mount.split(':');
+    return source !== undefined && source !== '' && !source.startsWith('/') && !source.startsWith('.') && !source.startsWith('~');
+  });
+  const hasNetworkSetup = (accessory.networks ?? []).length > 0;
+  const setupSteps = [
+    ...(hasVolumeSetup ? ['Inspect/create named Docker volumes'] : []),
+    ...(hasNetworkSetup ? ['Inspect/create Docker networks'] : []),
+  ];
+  const dockerSteps = [
+    registry ? `Login to ${registry.server} using $${registry.passwordEnv}` : 'Skip registry login',
+    ...setupSteps,
+    `Pull ${accessory.image}`,
+    `Recreate container shipnode-${name}`,
+    ...(accessory.healthCheck ? ['Run health check'] : []),
+  ];
+
+  return [
+    chalk.bold(`Accessory: ${name}`),
+    ...rows.map(([key, value]) => `  ${chalk.dim(key.padEnd(14))} ${value}`),
+    '',
+    chalk.bold('  Docker flow'),
+    ...dockerSteps.map((step, index) => `    ${chalk.dim(`${index + 1}.`.padEnd(4))} ${step}`),
+  ].join('\n');
+}
+
+function renderAccessoryResources(resources: NonNullable<AccessoryConfig['resources']>): string {
+  const parts: string[] = [];
+  if (resources.memory) parts.push(`memory=${resources.memory}`);
+  if (resources.memoryReservation) parts.push(`memoryReservation=${resources.memoryReservation}`);
+  if (resources.cpus) parts.push(`cpus=${resources.cpus}`);
+  return parts.join(', ');
 }
