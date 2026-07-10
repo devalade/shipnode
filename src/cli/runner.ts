@@ -3,6 +3,7 @@ import { SshConnection } from '../infrastructure/ssh/connection.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { loadConfig } from '../config/loader.js';
 import { ui } from './ui.js';
+import { configForServer, getServerTargets } from '../domain/servers.js';
 
 /**
  * A command that operates against a remote host through an executor.
@@ -38,6 +39,35 @@ export async function runRemoteCommand(
     process.exit(1);
   } finally {
     ssh.disconnect();
+  }
+}
+
+export async function runRemoteCommandForTargets(
+  cwd: string,
+  command: (ctx: { config: ShipnodeConfig; executor: RemoteExecutor; serverName: string }) => Promise<void>,
+  options: { configPath?: string; includeEmpty?: boolean } = {},
+): Promise<void> {
+  const config = await loadConfig(cwd, options.configPath);
+
+  try {
+    for (const target of getServerTargets(config)) {
+      const targetConfig = configForServer(config, target.name);
+      if (!options.includeEmpty && targetConfig.apps.length === 0 && Object.keys(targetConfig.accessories ?? {}).length === 0) {
+        continue;
+      }
+
+      const ssh = new SshConnection();
+      try {
+        await ssh.connect(target.ssh);
+        await command({ config: targetConfig, executor: ssh, serverName: target.name });
+      } finally {
+        ssh.disconnect();
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ui.error(message);
+    process.exit(1);
   }
 }
 

@@ -2,6 +2,8 @@ import type {
   ShipnodeConfig,
   ShipnodeApp,
   SshConfig,
+  AccessoryConfig,
+  RegistryConfig,
   Pm2App,
   HealthCheckConfig,
   DatabaseConfig,
@@ -15,6 +17,7 @@ import { assembleConfig } from './assembly.js';
 
 type BuilderState = {
   ssh?: SshConfig;
+  servers?: Record<string, SshConfig>;
   remotePath?: string;
   nodeVersion?: string;
   pkgManager?: PkgManager;
@@ -24,8 +27,11 @@ type BuilderState = {
   backup?: BackupConfig;
   cloudflare?: CloudflareConfig;
   aliases?: Record<string, string>;
+  registry?: RegistryConfig;
+  accessories?: Record<string, AccessoryConfig>;
   // Legacy per-app input fields (synthesized to apps[0] by z.preprocess)
   app?: string;
+  on?: string;
   pm2?: { apps: Pm2App[] };
   domain?: string;
   keepReleases?: number;
@@ -66,6 +72,16 @@ export class ShipnodeBuilder {
 
   ssh(opts: SshConfig): this {
     this.config.ssh = { ...this.config.ssh, ...opts };
+    return this;
+  }
+
+  servers(servers: Record<string, SshConfig>): this {
+    this.config.servers = servers;
+    return this;
+  }
+
+  on(target: string): this {
+    this.config.on = target;
     return this;
   }
 
@@ -206,6 +222,16 @@ export class ShipnodeBuilder {
     return this;
   }
 
+  registry(opts: RegistryConfig): this {
+    this.config.registry = opts;
+    return this;
+  }
+
+  accessories(accessories: Record<string, AccessoryConfig>): this {
+    this.config.accessories = accessories;
+    return this;
+  }
+
   /**
    * Start a new per-app sub-builder. Pair with `.apps([api, web])` on the workspace
    * builder to declare a multi-app deployment. See docs/adr/0004-workspace-multi-app.md.
@@ -283,6 +309,16 @@ export class ShipnodeAppBuilder {
 
   domain(d: string): this {
     this.state.domain = d;
+    return this;
+  }
+
+  on(target: string): this {
+    this.state.on = target;
+    return this;
+  }
+
+  caddy(opts: { append?: string }): this {
+    this.state.caddy = opts;
     return this;
   }
 

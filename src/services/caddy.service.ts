@@ -54,6 +54,7 @@ export class CaddyService {
   }
 
   private generateBackendCaddyfile(app: ShipnodeApp, port: number): string {
+    const append = this.renderAppend(app);
     return `${app.domain} {
     reverse_proxy localhost:${port}
 
@@ -62,10 +63,11 @@ export class CaddyService {
     log {
         output file /var/log/caddy/${app.name}.log
     }
-}`;
+${append}}`;
   }
 
   private generateFrontendCaddyfile(app: ShipnodeApp, servePath: string): string {
+    const append = this.renderAppend(app);
     return `${app.domain} {
     root * ${servePath}
     file_server
@@ -77,6 +79,11 @@ export class CaddyService {
     log {
         output file /var/log/caddy/${app.name}.log
     }
-}`;
+${append}}`;
+  }
+
+  private renderAppend(app: ShipnodeApp): string {
+    const append = app.caddy?.append?.trim();
+    return append ? `\n\n    ${append.replace(/\n/g, '\n    ')}\n` : '';
   }
 }

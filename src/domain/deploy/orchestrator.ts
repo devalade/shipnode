@@ -4,6 +4,7 @@ import type { RemoteExecutor } from '../remote/executor.js';
 import { ReleaseManager, DeployLock } from '../release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
 import { CaddyService } from '../../services/caddy.service.js';
+import { AccessoryService } from '../../services/accessory.service.js';
 import { DeployError } from '../../shared/errors.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
 import { BackendStrategy } from './backend-strategy.js';
@@ -16,6 +17,7 @@ export class DeployOrchestrator {
     private lock: DeployLock,
     private healthCheck: HealthCheckService,
     private caddy: CaddyService,
+    private accessories?: AccessoryService,
   ) {}
 
   async deploy(options: { cwd: string; skipBuild: boolean; gitCommit?: string }): Promise<void> {
@@ -24,6 +26,8 @@ export class DeployOrchestrator {
     await this.lock.acquire();
 
     try {
+      await this.accessories?.ensureAll();
+
       for (const app of this.config.apps) {
         console.log(chalk.cyan(`\n── ${chalk.bold(app.name)} (${app.appType}) ──\n`));
         const strategy = this.createStrategy(app, cwd);

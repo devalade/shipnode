@@ -1,15 +1,17 @@
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
-import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, getPm2Name } from '../../domain/pm2/apps.js';
 
 export async function cmdStatus(cwd: string, options: { config?: string; app?: string }): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
-    async ({ config, executor }) => {
+    async ({ config, executor, serverName }) => {
       const apps = options.app
-        ? [getActiveApp(config, options.app)]
+        ? config.apps.filter((app) => app.name === options.app)
         : config.apps;
+
+      if (apps.length === 0) return;
+      ui.heading(`Server: ${serverName} (${config.ssh.user}@${config.ssh.host})`);
 
       for (const app of apps) {
         ui.heading(`Status: ${app.name} (${app.appType})`);

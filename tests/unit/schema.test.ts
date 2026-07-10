@@ -141,4 +141,12 @@ describe('ShipnodeConfigSchema', () => {
       expect(result.data.apps[0].healthCheck.startupDelay).toBe(10);
     }
   });
+
+  it('safeParse returns false instead of throwing when ssh and servers are missing', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      remotePath: '/var/www/app',
+    });
+
+    expect(result.success).toBe(false);
+  });
 });

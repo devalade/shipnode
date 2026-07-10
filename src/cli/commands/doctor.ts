@@ -1,13 +1,13 @@
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
-import { getActiveApp } from '../../domain/workspace.js';
 import type { ShipnodeConfig } from '../../shared/types.js';
 
 export async function cmdDoctor(cwd: string, options: { config?: string; security?: boolean }): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
-    async ({ config, executor }) => {
+    async ({ config, executor, serverName }) => {
       ui.heading('ShipNode Doctor');
+      ui.heading(`Server: ${serverName} (${config.ssh.user}@${config.ssh.host})`);
 
       await checkLocal(config);
 
@@ -17,12 +17,11 @@ export async function cmdDoctor(cwd: string, options: { config?: string; securit
         await checkSecurity(config, executor);
       }
     },
-    { configPath: options.config },
+    { configPath: options.config, includeEmpty: true },
   );
 }
 
 function checkLocal(config: ShipnodeConfig): void {
-  const app = getActiveApp(config);
   ui.info('Checking local configuration...');
 
   const issues: string[] = [];
@@ -39,7 +38,7 @@ function checkLocal(config: ShipnodeConfig): void {
     issues.push('Remote path is not configured');
   }
 
-  if (app.appType === 'backend' && !app.pm2?.apps.length) {
+  if (config.apps.some((app) => app.appType === 'backend' && !app.pm2?.apps.length)) {
     issues.push('PM2 apps are not configured for backend app');
   }
 
@@ -53,15 +52,21 @@ function checkLocal(config: ShipnodeConfig): void {
 }
 
 async function checkRemote(
-  config: { ssh: { host: string; user: string }; remotePath: string },
+  config: ShipnodeConfig,
   executor: { exec: (cmd: string, opts?: { timeout?: number }) => Promise<{ stdout: string; exitCode: number }> },
 ): Promise<void> {
   ui.info('Checking remote server...');
 
+  const needsNode = config.apps.length > 0;
+  const needsPm2 = config.apps.some((app) => app.appType === 'backend' && app.pm2);
+  const needsCaddy = config.apps.some((app) => app.domain);
+  const needsDocker = Object.keys(config.accessories ?? {}).length > 0;
+
   const checks = [
-    { name: 'Node', cmd: 'node --version' },
-    { name: 'PM2', cmd: 'pm2 --version' },
-    { name: 'Caddy', cmd: 'caddy version' },
+    ...(needsNode ? [{ name: 'Node', cmd: 'node --version' }] : []),
+    ...(needsPm2 ? [{ name: 'PM2', cmd: 'pm2 --version' }] : []),
+    ...(needsCaddy ? [{ name: 'Caddy', cmd: 'caddy version' }] : []),
+    ...(needsDocker ? [{ name: 'Docker', cmd: 'docker --version' }] : []),
     { name: 'rsync', cmd: 'rsync --version' },
     { name: 'jq', cmd: 'jq --version' },
   ];
@@ -79,12 +84,14 @@ async function checkRemote(
     }
   }
 
-  ui.info('Checking deployment directory...');
-  const dirResult = await executor.exec(`test -d "${config.remotePath}" && echo "exists" || echo "missing"`);
-  if (dirResult.stdout === 'exists') {
-    ui.success(`Deployment directory exists: ${config.remotePath}`);
-  } else {
-    ui.warn(`Deployment directory does not exist. Run 'shipnode setup' first.`);
+  if (config.apps.length > 0) {
+    ui.info('Checking deployment directory...');
+    const dirResult = await executor.exec(`test -d "${config.remotePath}" && echo "exists" || echo "missing"`);
+    if (dirResult.stdout === 'exists') {
+      ui.success(`Deployment directory exists: ${config.remotePath}`);
+    } else {
+      ui.warn(`Deployment directory does not exist. Run 'shipnode setup' first.`);
+    }
   }
 }
 

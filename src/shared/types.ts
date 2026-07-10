@@ -40,6 +40,31 @@ export interface Pm2Config {
   apps: Pm2App[];
 }
 
+export interface DockerConfig {
+  image?: string;
+  dockerfile: string;
+  context: string;
+  port: number;
+  containerPort: number;
+  buildArgs?: Record<string, string>;
+  runArgs?: string[];
+}
+
+export interface RegistryConfig {
+  server: string;
+  username: string;
+  passwordEnv: string;
+}
+
+export interface AccessoryConfig {
+  image: string;
+  on?: string;
+  port?: string | string[];
+  directories?: string[];
+  env?: Record<string, string>;
+  registry?: RegistryConfig;
+}
+
 export interface HealthCheckConfig {
   enabled: boolean;
   path: string;
@@ -111,9 +136,14 @@ export interface HooksConfig {
 export interface ShipnodeApp {
   name: string;
   appType: AppType;
+  on?: string;
   appRoot?: string;
   domain?: string;
+  caddy?: {
+    append?: string;
+  };
   pm2?: Pm2Config;
+  docker?: DockerConfig;
   healthCheck: HealthCheckConfig;
   envFile: string;
   keepReleases: number;
@@ -126,6 +156,7 @@ export interface ShipnodeApp {
 export interface ShipnodeConfig {
   // workspace-level
   ssh: SshConfig;
+  servers: Record<string, SshConfig>;
   remotePath: string;
   nodeVersion: string;
   pkgManager?: PkgManager;
@@ -136,6 +167,8 @@ export interface ShipnodeConfig {
   backup?: BackupConfig;
   cloudflare?: CloudflareConfig;
   aliases?: Record<string, string>;
+  registry?: RegistryConfig;
+  accessories?: Record<string, AccessoryConfig>;
 
   /** Canonical app list. Always populated by assembleConfig (length >= 1). */
   apps: ShipnodeApp[];

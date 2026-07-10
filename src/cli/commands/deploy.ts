@@ -2,33 +2,36 @@ import chalk from 'chalk';
 import { loadConfig } from '../../config/loader.js';
 import { DeployService } from '../../services/deploy.service.js';
 import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
 import { getActiveApp } from '../../domain/workspace.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
+import { configForServer, getServerTargets, resolveServerName } from '../../domain/servers.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string }): Promise<void> {
   const config = await loadConfig(cwd, options.config);
-  const targetConfig = options.app
-    ? { ...config, apps: [getActiveApp(config, options.app)] }
-    : config;
+  const selectedApp = options.app ? getActiveApp(config, options.app) : undefined;
+  const targetConfig = selectedApp ? { ...config, apps: [selectedApp] } : config;
 
   if (options.dryRun) {
     printDryRun(targetConfig, options.skipBuild ?? false);
     return;
   }
 
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
-    async ({ config, executor }) => {
+    async ({ config, executor, serverName }) => {
+      const app = options.app ? config.apps.find((candidate) => candidate.name === options.app) : undefined;
       const deployConfig = options.app
-        ? { ...config, apps: [getActiveApp(config, options.app!)] }
+        ? { ...config, apps: app ? [app] : [] }
         : config;
+      if (deployConfig.apps.length === 0 && Object.keys(deployConfig.accessories ?? {}).length === 0) return;
 
       ui.banner();
       const names = deployConfig.apps.map((a) => a.name).join(', ');
-      ui.step(`Deploying ${chalk.bold(names)} → ${config.ssh.user}@${config.ssh.host}`);
+      const label = names || Object.keys(deployConfig.accessories ?? {}).join(', ');
+      ui.step(`Deploying ${chalk.bold(label)} → ${serverName} (${config.ssh.user}@${config.ssh.host})`);
 
       const deployer = new DeployService(new LoggingExecutor(executor), deployConfig);
       await deployer.execute(cwd, options.skipBuild ?? false);
@@ -45,12 +48,13 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
   );
 }
 
-function renderAppPlan(app: ShipnodeApp, skipBuild: boolean): string {
+function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: boolean): string {
   const namespace = app.pm2?.apps[0]?.name;
   const web = app.pm2?.apps.find((a) => a.port !== undefined);
 
   const serverRows: [string, string][] = [
     ['App type', app.appType],
+    ['Server', resolveServerName(config, app.on)],
     ['App root', app.appRoot ?? '(repo root)'],
     ['Keep releases', String(app.keepReleases)],
   ];
@@ -114,18 +118,22 @@ function renderAppPlan(app: ShipnodeApp, skipBuild: boolean): string {
   ].join('\n');
 }
 
-function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
+export function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
   ui.banner();
 
+  const servers = getServerTargets(config).map((target) => `${target.name}=${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`).join(', ');
   const header = [
     chalk.bold('Workspace'),
-    `  ${chalk.dim('Host'.padEnd(14))} ${config.ssh.user}@${config.ssh.host}:${config.ssh.port}`,
+    `  ${chalk.dim('Servers'.padEnd(14))} ${servers}`,
     `  ${chalk.dim('Remote path'.padEnd(14))} ${config.remotePath}`,
     `  ${chalk.dim('Node'.padEnd(14))} ${config.nodeVersion}`,
     `  ${chalk.dim('Apps'.padEnd(14))} ${config.apps.map((a) => a.name).join(', ')}`,
   ].join('\n');
 
-  const perApp = config.apps.map((app) => renderAppPlan(app, skipBuild)).join('\n\n');
+  const perApp = getServerTargets(config)
+    .map((target) => configForServer(config, target.name))
+    .flatMap((targetConfig) => targetConfig.apps.map((app) => renderAppPlan(config, app, skipBuild)))
+    .join('\n\n');
 
   ui.note([header, '', perApp].join('\n'), 'Dry run — no changes will be made');
 }

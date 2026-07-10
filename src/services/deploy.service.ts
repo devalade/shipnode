@@ -4,6 +4,7 @@ import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { DeployLock } from '../domain/release/manager.js';
 import { HealthCheckService } from '../services/health.service.js';
 import { CaddyService } from '../services/caddy.service.js';
+import { AccessoryService } from '../services/accessory.service.js';
 import { DeployOrchestrator } from '../domain/deploy/orchestrator.js';
 
 export class DeployService {
@@ -16,6 +17,7 @@ export class DeployService {
     const lock = new DeployLock(executor, config.remotePath);
     const healthCheck = new HealthCheckService(executor, config);
     const caddy = new CaddyService(executor, config);
+    const accessories = new AccessoryService(executor, config);
 
     this.orchestrator = new DeployOrchestrator(
       config,
@@ -23,6 +25,7 @@ export class DeployService {
       lock,
       healthCheck,
       caddy,
+      accessories,
     );
   }
 

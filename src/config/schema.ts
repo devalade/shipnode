@@ -11,6 +11,21 @@ export const SshConfigSchema = z.object({
   proxyCommand: z.string().optional(),
 });
 
+export const RegistryConfigSchema = z.object({
+  server: z.string().min(1, 'Registry server is required'),
+  username: z.string().min(1, 'Registry username is required'),
+  passwordEnv: z.string().min(1, 'Registry passwordEnv is required'),
+});
+
+export const AccessoryConfigSchema = z.object({
+  image: z.string().min(1, 'Accessory image is required'),
+  on: z.string().min(1).optional(),
+  port: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+  directories: z.array(z.string().min(1)).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  registry: RegistryConfigSchema.optional(),
+});
+
 export const Pm2AppSchema = z.object({
   name: z.string().refine(isValidPm2Name, 'PM2 app name must be alphanumeric, dash, or underscore (max 64 chars)'),
   command: z.string().min(1).optional(),
@@ -105,8 +120,12 @@ export const HooksConfigSchema = z.object({
 export const ShipnodeAppSchema = z.object({
   name: z.string().refine(isValidPm2Name, 'app name must be alphanumeric, dash, or underscore (max 64 chars)').default('app'),
   appType: z.enum(['backend', 'frontend']).default('backend'),
+  on: z.string().min(1).optional(),
   appRoot: z.string().optional(),
   domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
+  caddy: z.object({
+    append: z.string().optional(),
+  }).optional(),
   pm2: Pm2ConfigSchema.optional(),
   healthCheck: HealthCheckConfigSchema,
   envFile: z.string().default('.env'),
@@ -133,7 +152,8 @@ export const ShipnodeAppSchema = z.object({
 // modification.
 const ShipnodeConfigBaseSchema = z.object({
   // workspace-level
-  ssh: SshConfigSchema,
+  ssh: SshConfigSchema.optional(),
+  servers: z.record(z.string().min(1), SshConfigSchema).optional(),
   remotePath: z.string().min(1, 'Remote path is required').default('/var/www/app'),
   nodeVersion: z.string().default('lts'),
   pkgManager: z.enum(['npm', 'yarn', 'pnpm', 'bun']).optional(),
@@ -143,9 +163,60 @@ const ShipnodeConfigBaseSchema = z.object({
   backup: BackupConfigSchema,
   cloudflare: CloudflareConfigSchema,
   aliases: z.record(z.string(), z.string()).optional(),
+  registry: RegistryConfigSchema.optional(),
+  accessories: z.record(z.string().min(1), AccessoryConfigSchema).optional(),
 
   // canonical app list (always populated by assembleConfig; .min(1) enforced)
   apps: z.array(ShipnodeAppSchema).min(1, 'workspace must contain at least one app'),
+}).superRefine((cfg, ctx) => {
+  const servers = cfg.servers ?? (cfg.ssh ? { default: cfg.ssh } : undefined);
+  if (!servers) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Either ssh or servers must be configured',
+      path: ['ssh'],
+    });
+    return;
+  }
+
+  const serverNames = new Set(Object.keys(servers));
+  if (serverNames.size === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one server target must be configured',
+      path: ['servers'],
+    });
+    return;
+  }
+
+  const validateTarget = (target: string | undefined, path: (string | number)[]): void => {
+    if (!target) {
+      if (!serverNames.has('default') && serverNames.size !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Server target is required when no 'default' server is configured",
+          path,
+        });
+      }
+      return;
+    }
+    if (!serverNames.has(target)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Unknown server target '${target}'`,
+        path,
+      });
+    }
+  };
+
+  cfg.apps.forEach((app, index) => validateTarget(app.on, ['apps', index, 'on']));
+  Object.entries(cfg.accessories ?? {}).forEach(([name, accessory]) => {
+    validateTarget(accessory.on, ['accessories', name, 'on']);
+  });
+}).transform((cfg) => {
+  const servers = cfg.servers ?? { default: cfg.ssh! };
+  const ssh = cfg.ssh ?? servers.default ?? Object.values(servers)[0]!;
+  return { ...cfg, ssh, servers };
 });
 
 export const ShipnodeConfigSchema = z.preprocess(
@@ -163,8 +234,10 @@ export const ShipnodeConfigSchema = z.preprocess(
       apps: [{
         name: pm2Name ?? 'app',
         appType: obj.app,
+        on: obj.on,
         appRoot: obj.appRoot,
         domain: obj.domain,
+        caddy: obj.caddy,
         pm2: obj.pm2,
         healthCheck: obj.healthCheck,
         envFile: obj.envFile,

@@ -30,6 +30,8 @@ describe('ShipnodeBuilder', () => {
       .redis({ host: 'localhost', port: 6379, password: 'rp' })
       .backup({ s3Bucket: 'backups', s3Prefix: 'prod', schedule: 'daily', retentionDays: 30 })
       .cloudflare({ zone: 'example.com', tunnelName: 't', lockdownFirewall: true })
+      .registry({ server: 'ghcr.io', username: 'me', passwordEnv: 'REGISTRY_TOKEN' })
+      .accessories({ redis: { image: 'redis:7', port: '127.0.0.1:6379:6379' } })
       .preDeploy(preDeploy)
       .postDeploy(postDeploy)
       .aliases({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' })
@@ -56,6 +58,8 @@ describe('ShipnodeBuilder', () => {
     expect(config.redis).toEqual({ host: 'localhost', port: 6379, password: 'rp' });
     expect(config.backup).toMatchObject({ s3Bucket: 'backups', s3Prefix: 'prod', schedule: 'daily', retentionDays: 30 });
     expect(config.cloudflare).toMatchObject({ zone: 'example.com', tunnelName: 't', lockdownFirewall: true });
+    expect(config.registry).toEqual({ server: 'ghcr.io', username: 'me', passwordEnv: 'REGISTRY_TOKEN' });
+    expect(config.accessories?.redis?.image).toBe('redis:7');
     expect(config.apps[0].hooks?.preDeploy).toBe(preDeploy);
     expect(config.apps[0].hooks?.postDeploy).toBe(postDeploy);
     expect(config.aliases).toEqual({ migrate: 'pnpm db:apply', seed: 'pnpm db:seed' });
@@ -375,6 +379,32 @@ describe('ShipnodeAppBuilder + workspace .apps([])', () => {
     // Legacy top-level mirrors point to apps[0]
     expect(config.apps[0].domain).toBe('api.example.com');
     expect(config.apps[0].appRoot).toBe('apps/backend');
+  });
+
+  it('sets named servers, app target, and caddy snippets', () => {
+    const api = app()
+      .backend()
+      .name('api')
+      .on('app')
+      .domain('api.example.com')
+      .pm2('api')
+      .port(3333)
+      .caddy({ append: 'header X-Content-Type-Options "nosniff"' });
+
+    const config = new ShipnodeBuilder()
+      .servers({
+        app: { host: '1.1.1.1', user: 'deploy' },
+        data: { host: '2.2.2.2', user: 'deploy' },
+      })
+      .deployTo('/var/www/app')
+      .apps([api])
+      .accessories({ redis: { image: 'redis:7', on: 'data' } })
+      .build();
+
+    expect(config.servers.app.host).toBe('1.1.1.1');
+    expect(config.apps[0].on).toBe('app');
+    expect(config.apps[0].caddy?.append).toContain('nosniff');
+    expect(config.accessories?.redis?.on).toBe('data');
   });
 
   it('app builder collects workers alongside the web app', () => {

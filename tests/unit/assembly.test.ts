@@ -164,4 +164,54 @@ describe('assembleConfig', () => {
 
     expect(config.apps[0].appType).toBe('backend');
   });
+
+  it('normalizes legacy ssh to the default server target', () => {
+    const config = assembleConfig({
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+    });
+
+    expect(config.servers.default).toEqual(config.ssh);
+    expect(config.servers.default.host).toBe('1.2.3.4');
+  });
+
+  it('accepts named server targets for apps and accessories', () => {
+    const config = assembleConfig({
+      servers: {
+        app: { host: '1.1.1.1', user: 'deploy' },
+        data: { host: '2.2.2.2', user: 'deploy' },
+      },
+      remotePath: '/var/www/app',
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        on: 'app',
+        pm2: { apps: [{ name: 'api', port: 3000 }] },
+        healthCheck: { enabled: true },
+      }],
+      accessories: {
+        redis: { image: 'redis:7', on: 'data', port: '127.0.0.1:6379:6379' },
+      },
+    });
+
+    expect(config.ssh.host).toBe('1.1.1.1');
+    expect(config.apps[0].on).toBe('app');
+    expect(config.accessories?.redis?.on).toBe('data');
+  });
+
+  it('rejects unknown server targets', () => {
+    expect(() => assembleConfig({
+      servers: {
+        app: { host: '1.1.1.1', user: 'deploy' },
+      },
+      remotePath: '/var/www/app',
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        on: 'missing',
+        pm2: { apps: [{ name: 'api', port: 3000 }] },
+        healthCheck: { enabled: true },
+      }],
+    })).toThrow();
+  });
 });

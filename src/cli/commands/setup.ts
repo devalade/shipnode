@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { Listr } from 'listr2';
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
 import type { ShipnodeConfig, NetworkDatabaseConfig } from '../../shared/types.js';
@@ -22,11 +22,11 @@ interface SetupOptions {
 }
 
 export async function cmdSetup(cwd: string, options: SetupOptions): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
-    async ({ config, executor }) => {
+    async ({ config, executor, serverName }) => {
       ui.banner();
-      ui.step(`Setting up ${config.ssh.user}@${config.ssh.host}`);
+      ui.step(`Setting up ${serverName} (${config.ssh.user}@${config.ssh.host})`);
       const created = !options.noDeployUser && (await bootstrapDeployUser(cwd, config, executor));
       await buildTasks(executor, config, created ? DEPLOY_USER : null).run();
       if (created) {
@@ -43,7 +43,7 @@ export async function cmdSetup(cwd: string, options: SetupOptions): Promise<void
         ui.outro('Server ready — run: shipnode deploy');
       }
     },
-    { configPath: options.config },
+    { configPath: options.config, includeEmpty: true },
   );
 }
 
@@ -99,6 +99,8 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
   // so PM2 processes run as that user and `pm2-<user>.service` matches. Without
   // this, everything lands in root's home and deploy has no pm2 on their PATH.
   const targetHome = ownerUser ? `/home/${ownerUser}` : '$HOME';
+  const hasApps = config.apps.length > 0;
+  const hasAccessories = Object.keys(config.accessories ?? {}).length > 0;
 
   return new Listr(
     [
@@ -120,7 +122,7 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
           },
         ], { concurrent: false }),
       },
-      {
+      ...(hasApps ? [{
         title: `Mise (version manager)${ownerUser ? ` for ${ownerUser}` : ''}`,
         task: () =>
           executor.execOrThrow(
@@ -129,8 +131,8 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
               `if ! command -v mise &>/dev/null && [ ! -x "$HOME/.local/bin/mise" ]; then curl -fsSL https://mise.run | sh; fi`,
             ),
           ),
-      },
-      {
+      }] : []),
+      ...(hasApps ? [{
         title: `Node.js ${config.nodeVersion}`,
         task: (_ctx: object, task: any) => task.newListr([
           {
@@ -142,8 +144,8 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
             task: () => executor.execOrThrow(asUser(ownerUser, `${mise}; mise use -g -y "node@${nodeVersion}"`)),
           },
         ], { concurrent: false }),
-      },
-      {
+      }] : []),
+      ...(hasApps && config.apps.some((app) => app.appType === 'backend' && app.pm2) ? [{
         title: 'PM2',
         task: (_ctx: object, task: any) => task.newListr([
           {
@@ -180,8 +182,8 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
             ),
           },
         ], { concurrent: false }),
-      },
-      {
+      }] : []),
+      ...(hasApps && config.apps.some((app) => app.domain) ? [{
         title: 'Caddy',
         task: () =>
           executor.execOrThrow(
@@ -193,7 +195,23 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
             '  $SUDO apt-get update && $SUDO apt-get install -y caddy; ' +
             'fi',
           ),
-      },
+      }] : []),
+      ...(hasAccessories ? [{
+        title: 'Docker',
+        task: () =>
+          executor.execOrThrow(
+            'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
+            'if ! command -v docker &>/dev/null; then ' +
+            '  $SUDO apt-get install -y ca-certificates curl gnupg; ' +
+            '  $SUDO install -m 0755 -d /etc/apt/keyrings; ' +
+            '  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg; ' +
+            '  $SUDO chmod a+r /etc/apt/keyrings/docker.gpg; ' +
+            '  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | $SUDO tee /etc/apt/sources.list.d/docker.list > /dev/null; ' +
+            '  $SUDO apt-get update && $SUDO apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; ' +
+            'fi; ' +
+            '$SUDO systemctl enable docker && $SUDO systemctl start docker',
+          ),
+      }] : []),
       ...(config.database && config.database.type !== 'sqlite' && config.database.host === 'localhost'
         ? [{
             title: `Database (${config.database.type})`,
@@ -234,7 +252,7 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
             },
           }]
         : []),
-      {
+      ...(hasApps ? [{
         title: 'Deployment directories',
         task: (_ctx: object, task: any) => task.newListr([
           {
@@ -248,7 +266,7 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
                 : `mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`),
             ),
           },
-          {
+          ...(config.apps.some((app) => app.domain) ? [{
             title: 'Configure Caddy include',
             task: () => executor.execOrThrow(
               'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
@@ -257,9 +275,9 @@ function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser:
               'echo "import /etc/caddy/conf.d/*.caddy" | $SUDO tee -a /etc/caddy/Caddyfile > /dev/null && ' +
               '$SUDO systemctl reload caddy 2>/dev/null || true',
             ),
-          },
+          }] : []),
         ], { concurrent: false }),
-      },
+      }] : []),
     ],
     { rendererOptions: { collapseErrors: false } },
   );
