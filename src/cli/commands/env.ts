@@ -1,21 +1,22 @@
 import { readFile } from 'node:fs/promises';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
-import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName } from '../../domain/pm2/apps.js';
 
 export async function cmdEnv(
   cwd: string,
   options: { file?: string; config?: string; app?: string },
 ): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor }) => {
       const apps = options.app
-        ? [getActiveApp(config, options.app)]
+        ? config.apps.filter((app) => app.name === options.app)
         : config.apps;
+
+      if (options.app && apps.length === 0) return;
 
       for (const app of apps) {
         const envFile = options.file ?? app.envFile;
@@ -78,6 +79,6 @@ export async function cmdEnv(
         }
       }
     },
-    { configPath: options.config },
+    { configPath: options.config, appName: options.app },
   );
 }

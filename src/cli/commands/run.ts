@@ -4,6 +4,7 @@ import { loadConfig } from '../../config/loader.js';
 import { getActiveApp } from '../../domain/workspace.js';
 import { SshConnection } from '../../infrastructure/ssh/connection.js';
 import { ui } from '../ui.js';
+import { getServerTargetResult } from '../../domain/servers.js';
 
 const INTERACTIVE_SHELLS = new Set(['bash', 'sh', 'zsh', 'fish']);
 
@@ -28,6 +29,12 @@ export async function cmdRun(
 
   const config = await loadConfig(cwd, options.config);
   const app = options.app ? getActiveApp(config, options.app) : config.apps[0];
+  const target = getServerTargetResult(config, app.on);
+  if (target.isErr()) {
+    ui.error(target.error.message);
+    process.exit(1);
+    return;
+  }
 
   const aliasExpansion = config.aliases?.[cmdArgs[0]];
   const resolvedArgs = aliasExpansion
@@ -51,7 +58,7 @@ export async function cmdRun(
     `mise exec node@${nodeVersion} -- bash -lc ${shellQuote(cmd)}`,
   ].join(' && ');
 
-  const { host, user, port, identityFile } = config.ssh;
+  const { host, user, port, identityFile } = target.value.ssh;
 
   if (isInteractive) {
     const sshArgs: string[] = [
@@ -69,7 +76,7 @@ export async function cmdRun(
 
     try {
       ui.info(`Connecting to ${user}@${host}...`);
-      await ssh.connect(config.ssh);
+      await ssh.connect(target.value.ssh);
 
       const result = await ssh.exec(remoteCmd);
 

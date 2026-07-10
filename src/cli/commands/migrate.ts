@@ -1,13 +1,24 @@
 import { confirm } from '../prompt.js';
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForConfig } from '../runner.js';
 import { ReleaseManager } from '../../domain/release/manager.js';
 import { ui } from '../ui.js';
 import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName } from '../../domain/pm2/apps.js';
+import { loadConfig } from '../../config/loader.js';
+import { configForAppResult } from '../../domain/servers.js';
 
 export async function cmdMigrate(cwd: string, options: { config?: string }): Promise<void> {
-  await runRemoteCommand(
-    cwd,
+  const fullConfig = await loadConfig(cwd, options.config);
+  const activeApp = getActiveApp(fullConfig);
+  const selectedConfig = configForAppResult(fullConfig, activeApp.name);
+  if (selectedConfig.isErr()) {
+    ui.error(selectedConfig.error.message);
+    process.exit(1);
+    return;
+  }
+
+  await runRemoteCommandForConfig(
+    selectedConfig.value,
     async ({ config, executor }) => {
       const app = getActiveApp(config);
       const remotePath = config.remotePath;
@@ -96,6 +107,5 @@ export async function cmdMigrate(cwd: string, options: { config?: string }): Pro
       ui.info('Your app is now running under the zero-downtime release structure.');
       ui.info('Future deployments will use releases/ and atomic symlink switches.');
     },
-    { configPath: options.config },
   );
 }

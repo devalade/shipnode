@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.4.0",
+    "better-result": "^2.9.2",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "execa": "^9.5.1",

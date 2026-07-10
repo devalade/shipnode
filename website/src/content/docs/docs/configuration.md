@@ -37,13 +37,76 @@ export default shipnode
   .build();
 ```
 
+## Named servers and accessories
+
+Use `.ssh(...)` for a single server. It remains shorthand for the `default` target. Use `.servers(...)` when apps and Docker accessories should live on different hosts.
+
+```ts
+import { shipnode } from '@devalade/shipnode';
+
+export default shipnode
+  .servers({
+    app: { host: '203.0.113.10', user: 'deploy' },
+    data: { host: '203.0.113.20', user: 'deploy' },
+  })
+  .deployTo('/var/www/api')
+  .registry({
+    server: 'ghcr.io',
+    username: 'my-org',
+    passwordEnv: 'REGISTRY_TOKEN',
+  })
+  .accessories({
+    redis: {
+      image: 'redis:7',
+      on: 'data',
+      port: '127.0.0.1:6379:6379',
+      directories: ['api-redis:/data'],
+      healthCheck: { command: 'redis-cli ping' },
+    },
+  })
+  .apps([
+    shipnode.app()
+      .name('api')
+      .backend()
+      .on('app')
+      .domain('api.example.com')
+      .pm2('api')
+      .port(3000)
+      .caddy({
+        append: 'header X-Content-Type-Options "nosniff"',
+      }),
+  ])
+  .build();
+```
+
+Targets are single-host in this version. Apps and accessories are not replicated, ShipNode does not provision a load balancer, and Docker Compose is not used.
+
+Accessory management commands:
+
+```bash
+shipnode accessory status
+shipnode accessory logs redis --lines 200
+shipnode accessory restart redis
+shipnode accessory stop redis
+shipnode accessory health redis
+```
+
+Registry passwords are read from environment variables on the remote host. If `REGISTRY_TOKEN` is missing remotely, accessory deploy fails before `docker login` with a clear error.
+
+`shipnode deploy --dry-run` includes the generated Caddy site block for each app with a domain, including any appended directives.
+
 ## Method reference
 
 | Method | Purpose |
 |---|---|
 | `.backend()` / `.frontend()` | App type. Backend uses PM2; frontend is served as static files by Caddy. |
 | `.ssh({ host, user, port? })` | SSH target. Port defaults to 22. |
+| `.servers({ name: sshConfig })` | Named SSH targets for app/accessory placement. |
 | `.deployTo(path)` | Absolute path on the server (e.g. `/var/www/api`). |
+| `.on(name)` | Assign an app to a named server target. |
+| `.registry({ server, username, passwordEnv })` | Docker registry auth used by accessories. |
+| `.accessories({ name: config })` | Workspace-level Docker containers shared by apps. |
+| `.caddy({ append })` | Append raw Caddy directives inside the generated site block. |
 | `.pm2(name, opts?)` | PM2 app name + options (`{ instances, exec_mode }`). Backend only. |
 | `.port(n)` | App's listening port. Caddy reverse-proxies to it. |
 | `.domain(host)` | Public hostname. Caddy issues + renews certs. |

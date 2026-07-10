@@ -1,12 +1,14 @@
+import { Result, type Result as ResultType } from 'better-result';
 import type { AccessoryConfig, RegistryConfig, ShipnodeConfig } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
+import { MissingAccessoryHealthCheckError, type AccessoryCommandError } from '../shared/result-errors.js';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
 
 function registryLoginCommand(registry: RegistryConfig): string {
-  return `test -n "$${registry.passwordEnv}" && ` +
+  return `if [ -z "$${registry.passwordEnv}" ]; then echo "Registry password env ${registry.passwordEnv} is not set on the remote host" >&2; exit 1; fi; ` +
     `printf '%s' "$${registry.passwordEnv}" | sudo docker login ${shellQuote(registry.server)} ` +
     `--username ${shellQuote(registry.username)} --password-stdin`;
 }
@@ -39,6 +41,10 @@ export function buildAccessoryRunCommand(
   ].join('');
 }
 
+export function getAccessoryContainerName(name: string): string {
+  return `shipnode-${name}`;
+}
+
 export class AccessoryService {
   constructor(
     private executor: RemoteExecutor,
@@ -48,6 +54,47 @@ export class AccessoryService {
   async ensureAll(): Promise<void> {
     for (const [name, accessory] of Object.entries(this.config.accessories ?? {})) {
       await this.executor.execOrThrow(buildAccessoryRunCommand(name, accessory, this.config.registry));
+      if (accessory.healthCheck) {
+        await this.executor.execOrThrow(
+          `sudo docker exec ${shellQuote(getAccessoryContainerName(name))} sh -lc ${shellQuote(accessory.healthCheck.command)}`,
+        );
+      }
     }
+  }
+
+  async status(name?: string): Promise<string> {
+    const names = name ? [name] : Object.keys(this.config.accessories ?? {});
+    if (names.length === 0) return 'No accessories configured.';
+    const containers = names.map((item) => shellQuote(getAccessoryContainerName(item))).join(' ');
+    const result = await this.executor.exec(
+      `sudo docker inspect --format '{{.Name}} {{.State.Status}} {{.Config.Image}}' ${containers} 2>/dev/null || true`,
+    );
+    return result.stdout || 'No accessory containers found.';
+  }
+
+  async logs(name: string, lines: number): Promise<string> {
+    const result = await this.executor.exec(
+      `sudo docker logs --tail ${lines} ${shellQuote(getAccessoryContainerName(name))} 2>&1`,
+    );
+    return result.stdout || result.stderr;
+  }
+
+  async restart(name: string): Promise<void> {
+    await this.executor.execOrThrow(`sudo docker restart ${shellQuote(getAccessoryContainerName(name))}`);
+  }
+
+  async stop(name: string): Promise<void> {
+    await this.executor.execOrThrow(`sudo docker stop ${shellQuote(getAccessoryContainerName(name))}`);
+  }
+
+  async health(name: string): Promise<ResultType<void, AccessoryCommandError>> {
+    const accessory = this.config.accessories?.[name];
+    if (!accessory?.healthCheck) {
+      return Result.err(new MissingAccessoryHealthCheckError({ name }));
+    }
+    await this.executor.execOrThrow(
+      `sudo docker exec ${shellQuote(getAccessoryContainerName(name))} sh -lc ${shellQuote(accessory.healthCheck.command)}`,
+    );
+    return Result.ok();
   }
 }

@@ -5,17 +5,26 @@ import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
-import { getActiveApp } from '../../domain/workspace.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
-import { configForServer, getServerTargets, resolveServerName } from '../../domain/servers.js';
+import { configForAppResult, configForServer, getServerTargets, resolveServerName } from '../../domain/servers.js';
+import { generateBackendCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string }): Promise<void> {
   let config: ShipnodeConfig;
   let targetConfig: ShipnodeConfig;
   try {
     config = await loadConfig(cwd, options.config);
-    const selectedApp = options.app ? getActiveApp(config, options.app) : undefined;
-    targetConfig = selectedApp ? { ...config, apps: [selectedApp] } : config;
+    if (options.app) {
+      const selected = configForAppResult(config, options.app);
+      if (selected.isErr()) {
+        ui.error(selected.error.message);
+        process.exit(1);
+        return;
+      }
+      targetConfig = selected.value;
+    } else {
+      targetConfig = config;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     ui.error(message);
@@ -88,6 +97,8 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
 
   if (app.domain) serverRows.push(['Domain', app.domain]);
 
+  const caddyPreview = renderCaddyPreview(config, app);
+
   const buildRows: [string, string][] = [];
   if (skipBuild) {
     buildRows.push(['', chalk.dim('skipped (--skip-build)')]);
@@ -124,7 +135,18 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
     '',
     chalk.bold('  Deploy flow'),
     ...flowRows.map(([k, v]) => `    ${chalk.dim(k.padEnd(4))} ${v}`),
+    ...(caddyPreview ? ['', chalk.bold('  Caddy'), caddyPreview.split('\n').map((line) => `    ${line}`).join('\n')] : []),
   ].join('\n');
+}
+
+function renderCaddyPreview(config: ShipnodeConfig, app: ShipnodeApp): string | null {
+  if (!app.domain) return null;
+  if (app.appType === 'frontend') {
+    return generateFrontendCaddyfile(app, `${config.remotePath}/${app.name}/current`);
+  }
+  const web = app.pm2?.apps.find((pm2App) => pm2App.port !== undefined);
+  if (!web?.port) return null;
+  return generateBackendCaddyfile(app, web.port);
 }
 
 export function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {

@@ -28,6 +28,13 @@ import { cmdUserAdd, cmdUserSync, cmdUserList, cmdUserRemove } from './commands/
 import { cmdUpgrade } from './commands/upgrade.js';
 import { cmdBackupSetup, cmdBackupRun, cmdBackupStatus, cmdBackupList, cmdBackupRestore } from './commands/backup.js';
 import { cmdCloudflareInit, cmdCloudflareAudit, cmdCloudflareStatus } from './commands/cloudflare.js';
+import {
+  cmdAccessoryHealth,
+  cmdAccessoryLogs,
+  cmdAccessoryRestart,
+  cmdAccessoryStatus,
+  cmdAccessoryStop,
+} from './commands/accessory.js';
 
 // Read version from package.json so `shipnode --version` stays in sync with the published
 // version automatically. The dist layout puts this file at dist/cli/index.js, so the
@@ -262,6 +269,36 @@ backup.command('restore [snapshot]')
   .option('--host <host>', 'Filter by hostname')
   .option('--config <path>', 'Use a specific config file')
   .action((snapshot: string | undefined, opts) => cmdBackupRestore(process.cwd(), snapshot, opts));
+
+// ── Accessories ──────────────────────────────────────────────────
+
+const accessory = program.command('accessory').description('Manage Docker accessories');
+
+accessory.command('status [name]')
+  .description('Show accessory container status')
+  .option('--config <path>', 'Use a specific config file')
+  .action((name: string | undefined, opts) => cmdAccessoryStatus(process.cwd(), { ...opts, name }));
+
+accessory.command('logs <name>')
+  .description('Show accessory logs')
+  .option('--lines <n>', 'Number of log lines to show', '100')
+  .option('--config <path>', 'Use a specific config file')
+  .action((name: string, opts) => cmdAccessoryLogs(process.cwd(), name, { ...opts, lines: parseInt(opts.lines, 10) }));
+
+accessory.command('restart <name>')
+  .description('Restart an accessory')
+  .option('--config <path>', 'Use a specific config file')
+  .action((name: string, opts) => cmdAccessoryRestart(process.cwd(), name, opts));
+
+accessory.command('stop <name>')
+  .description('Stop an accessory')
+  .option('--config <path>', 'Use a specific config file')
+  .action((name: string, opts) => cmdAccessoryStop(process.cwd(), name, opts));
+
+accessory.command('health <name>')
+  .description('Run an accessory health check')
+  .option('--config <path>', 'Use a specific config file')
+  .action((name: string, opts) => cmdAccessoryHealth(process.cwd(), name, opts));
 
 // ── Cloudflare ────────────────────────────────────────────────────
 

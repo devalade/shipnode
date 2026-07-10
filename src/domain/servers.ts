@@ -1,4 +1,12 @@
+import { Result, type Result as ResultType } from 'better-result';
 import type { AccessoryConfig, ShipnodeApp, ShipnodeConfig, SshConfig } from '../shared/types.js';
+import {
+  MissingServerTargetError,
+  UnknownAppError,
+  UnknownServerTargetError,
+  type AppTargetError,
+  type ServerTargetError,
+} from '../shared/result-errors.js';
 
 export const DEFAULT_SERVER_TARGET = 'default';
 
@@ -8,21 +16,37 @@ export interface ServerTarget {
 }
 
 export function resolveServerName(config: ShipnodeConfig, target?: string): string {
-  if (target) return target;
-  if (config.servers[DEFAULT_SERVER_TARGET]) return DEFAULT_SERVER_TARGET;
+  return resolveServerNameResult(config, target).unwrap();
+}
+
+export function resolveServerNameResult(
+  config: ShipnodeConfig,
+  target?: string,
+): ResultType<string, ServerTargetError> {
+  if (target) return Result.ok(target);
+  if (config.servers[DEFAULT_SERVER_TARGET]) return Result.ok(DEFAULT_SERVER_TARGET);
   const names = Object.keys(config.servers);
-  if (names.length === 1) return names[0]!;
-  throw new Error(`Server target is required when no '${DEFAULT_SERVER_TARGET}' server is configured`);
+  if (names.length === 1) return Result.ok(names[0]!);
+  return Result.err(new MissingServerTargetError());
 }
 
 export function getServerTarget(config: ShipnodeConfig, target?: string): ServerTarget {
-  const name = resolveServerName(config, target);
+  return getServerTargetResult(config, target).unwrap();
+}
+
+export function getServerTargetResult(
+  config: ShipnodeConfig,
+  target?: string,
+): ResultType<ServerTarget, ServerTargetError> {
+  const resolved = resolveServerNameResult(config, target);
+  if (resolved.isErr()) return Result.err(resolved.error);
+  const name = resolved.value;
   const ssh = config.servers[name];
   if (!ssh) {
     const known = Object.keys(config.servers).join(', ') || '(none)';
-    throw new Error(`Unknown server target '${name}'. Known targets: ${known}`);
+    return Result.err(new UnknownServerTargetError({ target: name, known }));
   }
-  return { name, ssh };
+  return Result.ok({ name, ssh });
 }
 
 export function getServerTargets(config: ShipnodeConfig): ServerTarget[] {
@@ -47,4 +71,21 @@ export function configForServer(config: ShipnodeConfig, serverName: string): Shi
     apps: getAppsForServer(config, serverName),
     accessories: getAccessoriesForServer(config, serverName),
   };
+}
+
+export function configForApp(config: ShipnodeConfig, appName: string): ShipnodeConfig {
+  return configForAppResult(config, appName).unwrap();
+}
+
+export function configForAppResult(
+  config: ShipnodeConfig,
+  appName: string,
+): ResultType<ShipnodeConfig, AppTargetError> {
+  const app = config.apps.find((candidate) => candidate.name === appName);
+  if (!app) {
+    return Result.err(new UnknownAppError({ name: appName }));
+  }
+  const server = getServerTargetResult(config, app.on);
+  if (server.isErr()) return Result.err(server.error);
+  return Result.ok({ ...configForServer(config, server.value.name), apps: [app] });
 }

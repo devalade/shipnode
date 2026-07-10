@@ -63,6 +63,9 @@ export interface AccessoryConfig {
   directories?: string[];
   env?: Record<string, string>;
   registry?: RegistryConfig;
+  healthCheck?: {
+    command: string;
+  };
 }
 
 export interface HealthCheckConfig {

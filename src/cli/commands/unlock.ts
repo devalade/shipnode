@@ -1,4 +1,4 @@
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import { confirm } from '../prompt.js';
 
@@ -6,12 +6,12 @@ export async function cmdUnlock(
   cwd: string,
   options: { config?: string },
 ): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
-    async ({ config, executor }) => {
+    async ({ config, executor, serverName }) => {
       const lockFile = `${config.remotePath}/.shipnode/deploy.lock`;
 
-      ui.info(`Checking for deployment lock on ${config.ssh.user}@${config.ssh.host}...`);
+      ui.info(`Checking for deployment lock on ${serverName} (${config.ssh.user}@${config.ssh.host})...`);
 
       const result = await executor.exec(
         `if [ -f "${lockFile}" ]; then ` +
@@ -37,6 +37,6 @@ export async function cmdUnlock(
       await executor.exec(`rm -f "${lockFile}"`);
       ui.success('Deployment lock cleared.');
     },
-    { configPath: options.config },
+    { configPath: options.config, includeEmpty: true },
   );
 }

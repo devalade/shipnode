@@ -1,4 +1,4 @@
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForConfig } from '../runner.js';
 import { ReleaseManager } from '../../domain/release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
 import { ui } from '../ui.js';
@@ -6,6 +6,7 @@ import { confirm } from '../prompt.js';
 import { loadConfig } from '../../config/loader.js';
 import { getActiveApp } from '../../domain/workspace.js';
 import { getDeploymentName, getEcosystemPath } from '../../domain/pm2/apps.js';
+import { configForAppResult } from '../../domain/servers.js';
 
 export async function cmdRollback(
   cwd: string,
@@ -16,8 +17,16 @@ export async function cmdRollback(
       `rollback requires --app <name>. Available apps: ${(await loadConfig(cwd, options.config)).apps.map((a) => a.name).join(', ')}`,
     );
   }
-  await runRemoteCommand(
-    cwd,
+  const fullConfig = await loadConfig(cwd, options.config);
+  const selectedConfig = configForAppResult(fullConfig, options.app);
+  if (selectedConfig.isErr()) {
+    ui.error(selectedConfig.error.message);
+    process.exit(1);
+    return;
+  }
+
+  await runRemoteCommandForConfig(
+    selectedConfig.value,
     async ({ config, executor }) => {
       const app = getActiveApp(config, options.app);
       const appPath = `${config.remotePath}/${app.name}`;
@@ -78,6 +87,5 @@ export async function cmdRollback(
 
       ui.success(`Rolled back to ${target.timestamp}`);
     },
-    { configPath: options.config },
   );
 }

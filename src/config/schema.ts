@@ -24,6 +24,9 @@ export const AccessoryConfigSchema = z.object({
   directories: z.array(z.string().min(1)).optional(),
   env: z.record(z.string(), z.string()).optional(),
   registry: RegistryConfigSchema.optional(),
+  healthCheck: z.object({
+    command: z.string().min(1, 'Accessory health check command is required'),
+  }).optional(),
 });
 
 export const Pm2AppSchema = z.object({

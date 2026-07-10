@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
 import type { BackupConfig, ShipnodeConfig, NetworkDatabaseConfig } from '../../shared/types.js';
@@ -232,7 +232,7 @@ export async function cmdBackupSetup(
   cwd: string,
   options: { config?: string },
 ): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor }) => {
       if (!config.backup) {
@@ -318,7 +318,7 @@ export async function cmdBackupRun(
   cwd: string,
   options: { config?: string },
 ): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
     async ({ executor }) => {
       const check = await executor.exec(`[ -f "${BACKUP_SCRIPT_PATH}" ] && echo EXISTS || echo MISSING`);
@@ -347,7 +347,7 @@ export async function cmdBackupStatus(
   cwd: string,
   options: { config?: string },
 ): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
     async ({ executor }) => {
       const timerResult = await executor.exec(
@@ -377,7 +377,7 @@ export async function cmdBackupRestore(
   snapshot: string | undefined,
   options: { config?: string; target?: string; tag?: string; host?: string },
 ): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor }) => {
       if (!config.backup || (config.backup.strategy ?? 'snapshot') !== 'restic') {
@@ -422,7 +422,7 @@ export async function cmdBackupList(
   cwd: string,
   options: { config?: string },
 ): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor }) => {
       if (!config.backup) {

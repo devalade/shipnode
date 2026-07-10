@@ -1,16 +1,18 @@
-import { runRemoteCommand } from '../runner.js';
+import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
-import { getActiveApp } from '../../domain/workspace.js';
 
 export async function cmdRestart(cwd: string, options: { config?: string; process?: string; app?: string }): Promise<void> {
-  await runRemoteCommand(
+  await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor }) => {
       const apps = options.app
-        ? [getActiveApp(config, options.app)]
+        ? config.apps.filter((app) => app.name === options.app)
         : config.apps.filter((a) => a.appType === 'backend' && a.pm2);
 
+      if (options.app && apps.length === 0) return;
+
       if (apps.length === 0) {
+        if (options.app) return;
         throw new Error('No backend apps with PM2 configured');
       }
 
@@ -32,6 +34,6 @@ export async function cmdRestart(cwd: string, options: { config?: string; proces
         ui.success(`App '${app.name}' restarted successfully`);
       }
     },
-    { configPath: options.config },
+    { configPath: options.config, appName: options.app },
   );
 }

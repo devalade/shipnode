@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "better-result-adopt": {
+      "source": "dmmulroy/better-result",
+      "sourceType": "github",
+      "skillPath": "skills/better-result-adopt/SKILL.md",
+      "computedHash": "bb2cff6d6db16f141cf2d2789a87e0f4a54992f1839a33dc623a434ac49d6115"
+    },
+    "better-result-migrate-v2": {
+      "source": "dmmulroy/better-result",
+      "sourceType": "github",
+      "skillPath": "skills/better-result-migrate-v2/SKILL.md",
+      "computedHash": "d9093a0e826475a63a71526bf8fe91f7e4b2b9671db39f9cbcab97f4abd6e3c0"
+    }
+  }
+}

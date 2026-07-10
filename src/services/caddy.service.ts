@@ -2,6 +2,40 @@ import type { ShipnodeConfig, ShipnodeApp } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { getWebApp } from '../domain/pm2/apps.js';
 
+export function renderCaddyAppend(app: ShipnodeApp): string {
+  const append = app.caddy?.append?.trim();
+  return append ? `\n\n    ${append.replace(/\n/g, '\n    ')}\n` : '';
+}
+
+export function generateBackendCaddyfile(app: ShipnodeApp, port: number): string {
+  const append = renderCaddyAppend(app);
+  return `${app.domain} {
+    reverse_proxy localhost:${port}
+
+    encode gzip
+
+    log {
+        output file /var/log/caddy/${app.name}.log
+    }
+${append}}`;
+}
+
+export function generateFrontendCaddyfile(app: ShipnodeApp, servePath: string): string {
+  const append = renderCaddyAppend(app);
+  return `${app.domain} {
+    root * ${servePath}
+    file_server
+
+    try_files {path} /index.html
+
+    encode gzip
+
+    log {
+        output file /var/log/caddy/${app.name}.log
+    }
+${append}}`;
+}
+
 export class CaddyService {
   constructor(
     private executor: RemoteExecutor,
@@ -25,7 +59,7 @@ export class CaddyService {
 
     const webApp = getWebApp({ ...this.config, apps: [app] } as ShipnodeConfig);
     if (!webApp) return;
-    const caddyConfig = this.generateBackendCaddyfile(app, webApp.port!);
+    const caddyConfig = generateBackendCaddyfile(app, webApp.port!);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
     await this.executor.execOrThrow(
@@ -38,7 +72,7 @@ export class CaddyService {
     if (!app.domain) return;
 
     const servePath = `${this.config.remotePath}/${app.name}/current`;
-    const caddyConfig = this.generateFrontendCaddyfile(app, servePath);
+    const caddyConfig = generateFrontendCaddyfile(app, servePath);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
     await this.executor.execOrThrow(
@@ -53,37 +87,4 @@ export class CaddyService {
     );
   }
 
-  private generateBackendCaddyfile(app: ShipnodeApp, port: number): string {
-    const append = this.renderAppend(app);
-    return `${app.domain} {
-    reverse_proxy localhost:${port}
-
-    encode gzip
-
-    log {
-        output file /var/log/caddy/${app.name}.log
-    }
-${append}}`;
-  }
-
-  private generateFrontendCaddyfile(app: ShipnodeApp, servePath: string): string {
-    const append = this.renderAppend(app);
-    return `${app.domain} {
-    root * ${servePath}
-    file_server
-
-    try_files {path} /index.html
-
-    encode gzip
-
-    log {
-        output file /var/log/caddy/${app.name}.log
-    }
-${append}}`;
-  }
-
-  private renderAppend(app: ShipnodeApp): string {
-    const append = app.caddy?.append?.trim();
-    return append ? `\n\n    ${append.replace(/\n/g, '\n    ')}\n` : '';
-  }
 }

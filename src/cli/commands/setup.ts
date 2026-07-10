@@ -92,7 +92,7 @@ function asUser(user: string | null, cmd: string): string {
   return `sudo -u "${user}" bash -lc '${escaped}'`;
 }
 
-function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {
+export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
   const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
   // When a deploy user was bootstrapped, install mise/node/pm2 into their home
