@@ -4,6 +4,8 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [3.2.0-alpha.0] - 2026-07-11
+
 ### Added
 - **Blue-green (zero-downtime) releases** — opt a backend web app in with `.zeroDowntime(altPort?)`. The new release boots on the idle colour's port while the old colour keeps serving; the health check runs against the new colour, and only on success does Caddy's upstream flip via a graceful `systemctl reload caddy` (drains in-flight requests, drops nothing). A failed health check leaves the old colour serving untouched — zero user impact on a bad release. Rollback becomes an instant Caddy flip back to the still-running previous colour (no restart). Off by default; the recreate path is unchanged. Blue = the web app's `port`, green = `altPort` (default `port + 1`). Web app runs ~2× (both colours resident between deploys); workers stay a single reloaded set. See ADR-0005.
 
