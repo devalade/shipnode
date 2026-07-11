@@ -1,11 +1,21 @@
 import { runRemoteCommandForConfig } from '../runner.js';
 import { ReleaseManager } from '../../domain/release/manager.js';
 import { HealthCheckService } from '../../services/health.service.js';
+import { CaddyService } from '../../services/caddy.service.js';
 import { ui } from '../ui.js';
 import { confirm } from '../prompt.js';
 import { loadConfig } from '../../config/loader.js';
 import { getActiveApp } from '../../domain/workspace.js';
-import { getDeploymentName, getEcosystemPath } from '../../domain/pm2/apps.js';
+import { getDeploymentName, getEcosystemPath, getWebApp } from '../../domain/pm2/apps.js';
+import {
+  readDeployState,
+  writeDeployState,
+  otherColor,
+  portFor,
+  coloredWebName,
+} from '../../domain/deploy/blue-green.js';
+import type { RemoteExecutor } from '../../domain/remote/executor.js';
+import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
 import { configForAppResult } from '../../domain/servers.js';
 
 export async function cmdRollback(
@@ -30,8 +40,16 @@ export async function cmdRollback(
     async ({ config, executor }) => {
       const app = getActiveApp(config, options.app);
       const appPath = `${config.remotePath}/${app.name}`;
-      const releases = new ReleaseManager(executor, appPath, app.keepReleases);
       const stepsBack = options.steps ?? 1;
+
+      // Blue-green apps roll back by flipping Caddy back to the previous colour,
+      // which is still running — instant and zero-drop. No pm2 restart.
+      if (app.appType === 'backend' && app.zeroDowntime) {
+        await rollbackBlueGreen(executor, config, app, appPath, stepsBack);
+        return;
+      }
+
+      const releases = new ReleaseManager(executor, appPath, app.keepReleases);
 
       ui.info('Fetching release history...');
       const allReleases = await releases.listReleases();
@@ -88,4 +106,76 @@ export async function cmdRollback(
       ui.success(`Rolled back to ${target.timestamp}`);
     },
   );
+}
+
+/**
+ * Instant blue-green rollback: the previous colour is still resident, so we
+ * flip Caddy's upstream back to it and swap the persisted active colour. No
+ * process restart, no dropped requests.
+ *
+ * Only one step back is possible — older colours were reaped by later deploys.
+ * For anything deeper, redeploy the desired release instead.
+ */
+async function rollbackBlueGreen(
+  executor: RemoteExecutor,
+  config: ShipnodeConfig,
+  app: ShipnodeApp,
+  appPath: string,
+  stepsBack: number,
+): Promise<void> {
+  if (stepsBack !== 1) {
+    throw new Error(
+      `Blue-green rollback only supports one step (the live previous colour). ` +
+      `To go further back, redeploy the desired release.`,
+    );
+  }
+
+  const state = await readDeployState(executor, appPath);
+  if (!state) {
+    throw new Error('No blue-green state found on the server — nothing to roll back to.');
+  }
+
+  const webApp = getWebApp({ ...config, apps: [app] } as ShipnodeConfig);
+  if (!webApp) {
+    throw new Error('No web app (pm2 app with a port) found for this deployment.');
+  }
+  const namespace = app.pm2?.apps[0]?.name ?? app.name;
+  const previous = otherColor(state.activeColor);
+  const previousPort = portFor(previous, state);
+  const previousName = coloredWebName(namespace, webApp.name, previous);
+
+  // The previous colour must still be online to serve traffic after the flip.
+  // Parse pm2's JSON in-process rather than relying on `node` being on the
+  // remote PATH at rollback time.
+  const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+  const jlist = await executor.exec(`${mise} && mise exec -- pm2 jlist`);
+  let online = false;
+  try {
+    const entries = JSON.parse(jlist.stdout.trim()) as Array<{ name: string; pm2_env?: { status?: string } }>;
+    online = entries.some((e) => e.name === previousName && e.pm2_env?.status === 'online');
+  } catch {
+    online = false;
+  }
+  if (!online) {
+    throw new Error(
+      `Previous colour "${previousName}" is not running — cannot instant-rollback. ` +
+      `Redeploy the desired release instead.`,
+    );
+  }
+
+  ui.warn(`Active colour:   ${state.activeColor} (port ${portFor(state.activeColor, state)})`);
+  ui.warn(`Rollback target: ${previous} (port ${previousPort})`);
+
+  const ok = await confirm('Flip traffic back to the previous colour?');
+  if (!ok) {
+    ui.info('Rollback cancelled.');
+    return;
+  }
+
+  const caddy = new CaddyService(executor, config);
+  await caddy.configureBackend(app, previousPort);
+  await caddy.reload();
+  await writeDeployState(executor, appPath, { ...state, activeColor: previous });
+
+  ui.success(`Rolled back — traffic now on ${previous} (port ${previousPort})`);
 }

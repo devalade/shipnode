@@ -84,7 +84,7 @@ describe('DeployOrchestrator — multi-app', () => {
     expect(lockAcquire).toBeDefined();
 
     // Lock was released
-    const lockRelease = history.filter((h) => h.command.includes('rm -f') && h.command.includes('deploy.lock'));
+    const lockRelease = history.filter((h) => h.command.includes('rm -rf') && h.command.includes('deploy.lock'));
     expect(lockRelease.length).toBeGreaterThan(0);
 
     // Backend release dir was created

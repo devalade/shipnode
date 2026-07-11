@@ -143,6 +143,8 @@ export const ShipnodeAppSchema = z.object({
   healthCheck: HealthCheckConfigSchema,
   envFile: z.string().default('.env'),
   keepReleases: z.number().int().min(1).default(5),
+  zeroDowntime: z.boolean().default(false),
+  altPort: z.number().int().positive().optional(),
   sharedDirs: z.array(z.string()).optional(),
   sharedFiles: z.array(z.string()).optional(),
   buildDir: z.string().optional(),
@@ -158,6 +160,19 @@ export const ShipnodeAppSchema = z.object({
     return hasWebApp ?? false;
   },
   { message: 'domain requires a web app: one pm2.apps entry must declare a port', path: ['domain'] },
+).refine(
+  (cfg) => {
+    if (!cfg.zeroDowntime) return true;
+    return cfg.appType === 'backend' && (cfg.pm2?.apps.some((a) => a.port !== undefined) ?? false);
+  },
+  { message: 'zeroDowntime requires a backend web app: one pm2.apps entry must declare a port', path: ['zeroDowntime'] },
+).refine(
+  (cfg) => {
+    if (!cfg.zeroDowntime || cfg.altPort === undefined) return true;
+    const webPort = cfg.pm2?.apps.find((a) => a.port !== undefined)?.port;
+    return webPort === undefined || cfg.altPort !== webPort;
+  },
+  { message: 'altPort must differ from the web app port (blue and green need distinct ports)', path: ['altPort'] },
 );
 
 // A z.preprocess wrapper synthesizes `apps[0]` from the legacy top-level fields when
@@ -273,6 +288,8 @@ export const ShipnodeConfigSchema = z.preprocess(
         healthCheck: obj.healthCheck,
         envFile: obj.envFile,
         keepReleases: obj.keepReleases,
+        zeroDowntime: obj.zeroDowntime,
+        altPort: obj.altPort,
         sharedDirs: obj.sharedDirs,
         sharedFiles: obj.sharedFiles,
         buildDir: obj.buildDir,

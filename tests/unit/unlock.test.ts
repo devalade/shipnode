@@ -44,10 +44,10 @@ describe('DeployLock', () => {
     }
   });
 
-  it('releases lock by removing the lock file', async () => {
+  it('releases lock by removing the lock directory', async () => {
     const executor = new FakeRemoteExecutor();
     executor.when(
-      (cmd) => cmd.includes('rm -f') && cmd.includes('deploy.lock'),
+      (cmd) => cmd.includes('rm -rf') && cmd.includes('deploy.lock'),
       { stdout: '', exitCode: 0 },
     );
 
@@ -55,7 +55,7 @@ describe('DeployLock', () => {
     await lock.release();
 
     const history = executor.getHistory();
-    expect(history.some((h) => h.command.includes('rm -f') && h.command.includes('deploy.lock'))).toBe(true);
+    expect(history.some((h) => h.command.includes('rm -rf') && h.command.includes('deploy.lock'))).toBe(true);
   });
 
   it('stale lock (age >= 3600s) is cleared automatically on acquire', async () => {

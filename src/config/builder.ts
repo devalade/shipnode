@@ -38,6 +38,8 @@ type BuilderState = {
   healthCheck?: Partial<HealthCheckConfig>;
   envFile?: string;
   buildDir?: string;
+  zeroDowntime?: boolean;
+  altPort?: number;
   sharedDirs?: string[];
   sharedFiles?: string[];
   appRoot?: string;
@@ -127,6 +129,16 @@ export class ShipnodeBuilder {
 
   keepReleases(n: number): this {
     this.config.keepReleases = n;
+    return this;
+  }
+
+  /**
+   * Enable zero-downtime (blue-green) releases for the web app. Optional
+   * `altPort` sets the green port (defaults to web port + 1).
+   */
+  zeroDowntime(altPort?: number): this {
+    this.config.zeroDowntime = true;
+    if (altPort !== undefined) this.config.altPort = altPort;
     return this;
   }
 
@@ -340,6 +352,16 @@ export class ShipnodeAppBuilder {
 
   keepReleases(n: number): this {
     this.state.keepReleases = n;
+    return this;
+  }
+
+  /**
+   * Enable zero-downtime (blue-green) releases for this web app. Optional
+   * `altPort` sets the green port (defaults to web port + 1).
+   */
+  zeroDowntime(altPort?: number): this {
+    this.state.zeroDowntime = true;
+    if (altPort !== undefined) this.state.altPort = altPort;
     return this;
   }
 

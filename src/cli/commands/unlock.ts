@@ -9,13 +9,13 @@ export async function cmdUnlock(
   await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor, serverName }) => {
-      const lockFile = `${config.remotePath}/.shipnode/deploy.lock`;
+      const lockPath = `${config.remotePath}/.shipnode/deploy.lock`;
 
       ui.info(`Checking for deployment lock on ${serverName} (${config.ssh.user}@${config.ssh.host})...`);
 
       const result = await executor.exec(
-        `if [ -f "${lockFile}" ]; then ` +
-          `age=$(( $(date +%s) - $(stat -c %Y "${lockFile}") )); ` +
+        `if [ -e "${lockPath}" ]; then ` +
+          `age=$(( $(date +%s) - $(stat -c %Y "${lockPath}") )); ` +
           `echo "FOUND:$age"; ` +
           `else echo "NOTFOUND"; fi`,
       );
@@ -34,7 +34,7 @@ export async function cmdUnlock(
         return;
       }
 
-      await executor.exec(`rm -f "${lockFile}"`);
+      await executor.exec(`rm -rf "${lockPath}"`);
       ui.success('Deployment lock cleared.');
     },
     { configPath: options.config, includeEmpty: true },

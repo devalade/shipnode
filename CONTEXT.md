@@ -27,7 +27,7 @@ A symlink pointing to the active release. In zero-downtime mode, `/remotePath/cu
 Owns release directory creation, symlink switching, release recording, and cleanup. Operates through a `RemoteExecutor`.
 
 ### DeployLock
-A PID-based lock file preventing concurrent deployments. Lives at `/remotePath/.shipnode/deploy.lock`.
+An atomic `mkdir`-based lock preventing concurrent deployments. Lives at `/remotePath/.shipnode/deploy.lock/` (directory). Legacy file-shaped locks are still recognised.
 
 ### Zero-Downtime
 The deployment mode where a new release is staged, then atomically switched via symlink. The old release remains available until the switch succeeds and health checks pass.
@@ -36,7 +36,7 @@ The deployment mode where a new release is staged, then atomically switched via 
 The deployment mode where files are rsynced directly to the remote path. No releases, no symlinks, no rollback.
 
 ### DeployOrchestrator
-Owns the invariant deployment sequence: lock → release → stage → setup → hooks → symlink → start → health check → record → cleanup → unlock. Knows nothing about app-specific details.
+Owns the invariant deployment sequence: lock → release → stage → setup → hooks → symlink → start → health check → afterHealthy → caddy flip → record → cleanup → unlock. On failure: revert `current` symlink (when a previous release exists) and record a failed release. Knows nothing about app-specific details.
 
 ### DeploymentStrategy
 An adapter that knows how to stage, prepare, and start a specific kind of application (backend, frontend, etc.). Plugs into the orchestrator at fixed lifecycle hooks.

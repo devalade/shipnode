@@ -10,6 +10,12 @@ export interface StrategyContext {
   workDir: string;
   cwd: string;
   skipBuild: boolean;
+  /**
+   * Blue-green target for this deploy, resolved by the orchestrator before
+   * `startApp` when the app has `zeroDowntime` enabled. Absent for the default
+   * recreate path.
+   */
+  deployTarget?: import('./blue-green.js').DeployTarget;
 }
 
 /**
@@ -44,6 +50,15 @@ export interface DeploymentStrategy {
    *
    * Optional. For backend apps this means reloading PM2.
    * For static frontends this is usually a no-op (Caddy serves files).
+   *
+   * Blue-green backends start only the web colour here; workers wait for
+   * `afterHealthy` so a failed health check does not leave them on the new release.
    */
   startApp?(ctx: StrategyContext): Promise<void>;
+
+  /**
+   * Optional step after the new release is healthy (and before traffic flip
+   * completes recording). Blue-green backends reload workers here.
+   */
+  afterHealthy?(ctx: StrategyContext): Promise<void>;
 }

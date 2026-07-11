@@ -160,6 +160,19 @@ export interface ShipnodeApp {
   healthCheck: HealthCheckConfig;
   envFile: string;
   keepReleases: number;
+  /**
+   * Zero-downtime (blue-green) releases for a backend web app. When true the
+   * new release boots on the idle colour's port while the old colour keeps
+   * serving; Caddy's upstream is flipped only after the health check passes.
+   * Requires one pm2 app with a port. See docs/adr and blue-green.ts.
+   */
+  zeroDowntime: boolean;
+  /**
+   * The second port used by blue-green. Blue = the web app's port, green =
+   * `altPort` (defaults to web port + 1). Both colours may be resident at once,
+   * so this port must be free on the host.
+   */
+  altPort?: number;
   sharedDirs?: string[];
   sharedFiles?: string[];
   buildDir?: string;

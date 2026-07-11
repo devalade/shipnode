@@ -17,7 +17,22 @@ export class HealthCheckService {
     _config: ShipnodeConfig,
   ) {}
 
-  async perform(app: ShipnodeApp): Promise<{ attempts: number; responseMs: number }> {
+  /**
+   * `opts` lets blue-green deploys check the *target* colour rather than the
+   * statically-configured web app: `httpPort` overrides the port the HTTP probe
+   * hits, `resolvePm2Name` overrides how each pm2 app's process name is
+   * derived (the web app carries a colour suffix; workers do not), and
+   * `pm2Apps` narrows which processes are required online (blue-green checks
+   * only the web colour before workers reload in `afterHealthy`).
+   */
+  async perform(
+    app: ShipnodeApp,
+    opts?: {
+      httpPort?: number;
+      resolvePm2Name?: (a: Pm2App) => string;
+      pm2Apps?: Pm2App[];
+    },
+  ): Promise<{ attempts: number; responseMs: number }> {
     if (!app.healthCheck.enabled) {
       return { attempts: 0, responseMs: 0 };
     }
@@ -31,21 +46,23 @@ export class HealthCheckService {
     let responseMs = 0;
 
     if (webApp) {
-      const result = await this.performHttpCheck(webApp, app.healthCheck);
+      const result = await this.performHttpCheck(webApp, app.healthCheck, opts?.httpPort);
       attempts = result.attempts;
       responseMs = result.responseMs;
     }
 
-    if (app.pm2?.apps.length) {
-      await this.performPm2StatusCheck(app);
+    const pm2Apps = opts?.pm2Apps ?? app.pm2?.apps;
+    if (pm2Apps?.length) {
+      await this.performPm2StatusCheck(app, pm2Apps, opts?.resolvePm2Name);
     }
 
     return { attempts, responseMs };
   }
 
-  private async performHttpCheck(webApp: Pm2App, healthCheck: ShipnodeApp['healthCheck']): Promise<{ attempts: number; responseMs: number }> {
+  private async performHttpCheck(webApp: Pm2App, healthCheck: ShipnodeApp['healthCheck'], portOverride?: number): Promise<{ attempts: number; responseMs: number }> {
     const { path, timeout, retries } = healthCheck;
-    const url = `http://localhost:${webApp.port}${path}`;
+    const port = portOverride ?? webApp.port;
+    const url = `http://localhost:${port}${path}`;
 
     let lastStatus = 0;
     let lastResponseMs = 0;
@@ -79,7 +96,11 @@ export class HealthCheckService {
     );
   }
 
-  private async performPm2StatusCheck(app: ShipnodeApp): Promise<void> {
+  private async performPm2StatusCheck(
+    app: ShipnodeApp,
+    pm2Apps: Pm2App[],
+    resolvePm2Name?: (a: Pm2App) => string,
+  ): Promise<void> {
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
     const result = await this.executor.exec(`${mise} && mise exec -- pm2 jlist`);
 
@@ -98,11 +119,12 @@ export class HealthCheckService {
     // not workspace-wide. Using the workspace's deploymentName would build the
     // wrong prefix for every non-first app in a multi-app workspace.
     const namespace = app.pm2?.apps[0]?.name ?? '';
+    const nameOf = resolvePm2Name ?? ((a: Pm2App) => getPm2Name(namespace, a.name));
     const byName = new Map(parsed.map((e) => [e.name, e]));
     const failures: string[] = [];
 
-    for (const pm2App of app.pm2?.apps ?? []) {
-      const pm2Name = getPm2Name(namespace, pm2App.name);
+    for (const pm2App of pm2Apps) {
+      const pm2Name = nameOf(pm2App);
       const entry = byName.get(pm2Name);
       if (!entry) {
         failures.push(`${pm2Name}: not running (no PM2 entry found)`);
@@ -122,8 +144,8 @@ export class HealthCheckService {
     if (failures.length === 0) return;
 
     let diagnostics = '';
-    for (const pm2App of app.pm2?.apps ?? []) {
-      const pm2Name = getPm2Name(namespace, pm2App.name);
+    for (const pm2App of pm2Apps) {
+      const pm2Name = nameOf(pm2App);
       const entry = byName.get(pm2Name);
       if (entry && entry.pm2_env?.status === 'online' && (entry.pm2_env?.restart_time ?? 0) === 0) continue;
       diagnostics += await this.collectPm2Logs(pm2Name);

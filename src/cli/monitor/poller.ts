@@ -33,10 +33,14 @@ function buildSystemSection(): string {
   ].join('; ');
 }
 
-function buildLockSection(lockFile: string): string {
+function buildLockSection(lockPath: string): string {
+  // Directory lock (atomic mkdir) stores the timestamp in acquired;
+  // legacy file locks store it as the file contents.
   return (
-    `if [ -f "${lockFile}" ]; then ` +
-    `echo "$(cat "${lockFile}" 2>/dev/null) $(( $(date +%s) - $(stat -c %Y "${lockFile}" 2>/dev/null || date +%s) ))"; ` +
+    `if [ -d "${lockPath}" ]; then ` +
+    `echo "$(cat "${lockPath}/acquired" 2>/dev/null) $(( $(date +%s) - $(stat -c %Y "${lockPath}" 2>/dev/null || date +%s) ))"; ` +
+    `elif [ -f "${lockPath}" ]; then ` +
+    `echo "$(cat "${lockPath}" 2>/dev/null) $(( $(date +%s) - $(stat -c %Y "${lockPath}" 2>/dev/null || date +%s) ))"; ` +
     `else echo "none"; fi`
   );
 }

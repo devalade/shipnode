@@ -34,6 +34,8 @@ type AssembleInput = {
   healthCheck?: unknown;
   envFile?: string;
   keepReleases?: number;
+  zeroDowntime?: boolean;
+  altPort?: number;
   sharedDirs?: string[];
   sharedFiles?: string[];
   buildDir?: string;

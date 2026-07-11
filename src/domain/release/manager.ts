@@ -19,6 +19,17 @@ export class ReleaseManager {
     await this.executor.execOrThrow(`mkdir -p "${this.remotePath}/releases" "${this.remotePath}/shared" "${this.remotePath}/.shipnode"`);
   }
 
+  /**
+   * Read the current symlink target, or null when no release is active yet.
+   */
+  async getCurrentReleasePath(): Promise<string | null> {
+    const result = await this.executor.exec(
+      `readlink "${this.remotePath}/current" 2>/dev/null || echo ''`,
+    );
+    const target = result.stdout.trim();
+    return target || null;
+  }
+
   async switchSymlink(releasePath: string): Promise<void> {
     const tmpLink = `${this.remotePath}/current.tmp`;
     await this.executor.execOrThrow(`ln -sfn "${releasePath}" "${tmpLink}"`);
@@ -71,6 +82,12 @@ export class ReleaseManager {
   }
 }
 
+/**
+ * Atomic deploy lock via `mkdir` (POSIX create-or-fail).
+ *
+ * Path: `<remotePath>/.shipnode/deploy.lock/` (directory). Older file-shaped
+ * locks from pre-atomic versions are still recognised and cleared/honoured.
+ */
 export class DeployLock {
   constructor(
     private executor: RemoteExecutor,
@@ -78,20 +95,26 @@ export class DeployLock {
   ) {}
 
   async acquire(): Promise<void> {
-    const lockFile = `${this.remotePath}/.shipnode/deploy.lock`;
+    const lockPath = `${this.remotePath}/.shipnode/deploy.lock`;
     const staleAfterSeconds = 3600;
 
     const result = await this.executor.exec(
       `mkdir -p "${this.remotePath}/.shipnode" && ` +
-      `if [ -f "${lockFile}" ]; then ` +
-      `  age=$(( $(date +%s) - $(stat -c %Y "${lockFile}") )); ` +
-      `  if [ "$age" -lt ${staleAfterSeconds} ]; then ` +
-      `    echo "LOCKED:$age"; exit 1; ` +
+      `acquire_lock() { ` +
+      `  mkdir "${lockPath}" 2>/dev/null && date -u +%Y-%m-%dT%H:%M:%SZ > "${lockPath}/acquired" && echo "OK" && return 0; ` +
+      `  return 1; ` +
+      `}; ` +
+      `if acquire_lock; then true; ` +
+      `elif [ -e "${lockPath}" ]; then ` +
+      `  age=$(( $(date +%s) - $(stat -c %Y "${lockPath}" 2>/dev/null || echo 0) )); ` +
+      `  if [ "$age" -ge ${staleAfterSeconds} ]; then ` +
+      `    rm -rf "${lockPath}" && acquire_lock; ` +
       `  else ` +
-      `    rm -f "${lockFile}"; ` +
+      `    echo "LOCKED:$age"; exit 1; ` +
       `  fi; ` +
-      `fi && ` +
-      `date -u +%Y-%m-%dT%H:%M:%SZ > "${lockFile}" && echo "OK"`,
+      `else ` +
+      `  echo "LOCKED:0"; exit 1; ` +
+      `fi`,
     );
 
     if (result.stdout.startsWith('LOCKED:')) {
@@ -101,14 +124,14 @@ export class DeployLock {
       );
     }
 
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== 0 || !result.stdout.includes('OK')) {
       throw new LockError(result.stderr || 'Failed to acquire deployment lock');
     }
   }
 
   async release(): Promise<void> {
-    const lockFile = `${this.remotePath}/.shipnode/deploy.lock`;
-    await this.executor.exec(`rm -f "${lockFile}"`).catch(() => {
+    const lockPath = `${this.remotePath}/.shipnode/deploy.lock`;
+    await this.executor.exec(`rm -rf "${lockPath}"`).catch(() => {
       // Best-effort cleanup
     });
   }

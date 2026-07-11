@@ -92,8 +92,7 @@ All commands accept `--config <path>` to use a non-default config file.
 | `.nodeVersion(v)` | `lts` | Node version via mise |
 | `.pkgManager(pm)` | auto-detected | `npm` \| `yarn` \| `pnpm` \| `bun` |
 | `.buildDir(dir)` | auto-detected | Frontend build output directory |
-| `.zeroDowntime({ keepReleases? })` | true, 5 releases | Zero-downtime mode |
-| `.legacy()` | — | In-place rsync deploy, no rollback |
+| `.zeroDowntime(altPort?)` | off; green = web port + 1 | Blue-green releases: boot the idle colour, health-check it, reload workers, then flip Caddy. Requires a web app (a `.port`). `altPort` sets the green port. |
 | `.healthCheck(path, opts?)` | `/health`, 30s, 3 retries | Post-deploy check |
 | `.noHealthCheck()` | — | Skip health check |
 | `.envFile(f)` | `.env` | Local .env file to upload |

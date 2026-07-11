@@ -29,13 +29,13 @@ describe('DeployOrchestrator', () => {
     const config = makeConfig();
 
     executor
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
       .when((cmd) => cmd.includes('mkdir -p'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
       .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('deploy.lock'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 42', exitCode: 0 })
       .when((cmd) => cmd.includes('pm2 jlist'), { stdout: '[]', exitCode: 0 });
 
@@ -61,7 +61,7 @@ describe('DeployOrchestrator', () => {
     const history = executor.getHistory();
     const lockAcquire = history.find((h) => h.command.includes('deploy.lock'));
     expect(lockAcquire).toBeDefined();
-    const lockRelease = history.filter((h) => h.command.includes('rm -f') && h.command.includes('deploy.lock'));
+    const lockRelease = history.filter((h) => h.command.includes('rm -rf') && h.command.includes('deploy.lock'));
     expect(lockRelease.length).toBeGreaterThan(0);
   });
 
@@ -79,13 +79,13 @@ describe('DeployOrchestrator', () => {
     });
 
     executor
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
       .when((cmd) => cmd.includes('mkdir -p'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
       .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
       .when((cmd) => {
         if (cmd.includes('migration:run')) captured = cmd;
         return cmd.includes('migration:run');
@@ -127,13 +127,13 @@ describe('DeployOrchestrator', () => {
     });
 
     executor
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
       .when((cmd) => cmd.includes('mkdir -p'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
       .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
       .when((cmd) => {
         if (cmd.includes('migration:run')) captured = cmd;
         return cmd.includes('migration:run');
@@ -165,13 +165,13 @@ describe('DeployOrchestrator', () => {
     });
 
     executor
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
       .when((cmd) => cmd.includes('mkdir -p'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
       .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 });
+      .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 });
 
     const { DeployLock } = await import('../../src/domain/release/manager.js');
     const { HealthCheckService } = await import('../../src/services/health.service.js');

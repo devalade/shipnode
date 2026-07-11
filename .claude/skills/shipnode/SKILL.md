@@ -43,9 +43,9 @@ Frontend app: swap `.backend()` → `.frontend()`, add `.buildDir('dist')`, drop
 3. `shipnode env` — uploads .env
 4. `shipnode deploy`
 
-### Zero-downtime is the default
+### Releases + zero-downtime
 Releases live in `/remotePath/releases/<timestamp>/`. Current symlink is atomically switched.
-To opt out: add `.legacy()` to the builder.
+Backend apps can opt into blue-green with `.zeroDowntime()` — boot idle colour, health-check, then flip Caddy.
 
 ### Rollback
 ```bash

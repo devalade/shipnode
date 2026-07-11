@@ -1,8 +1,9 @@
 import { execa } from 'execa';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
-import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../../shared/types.js';
+import type { ShipnodeConfig, ShipnodeApp, Pm2App, PkgManager } from '../../shared/types.js';
 import { getPm2Name } from '../pm2/apps.js';
+import { coloredWebName } from './blue-green.js';
 import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework/detector.js';
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
 import { DeployError } from '../../shared/errors.js';
@@ -129,44 +130,44 @@ export class BackendStrategy implements DeploymentStrategy {
     if (!this.app.pm2) return;
 
     const pkgManager = await this.resolvePkgManager();
+    const cdPath = `${this.appPath}/current`;
+    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+
+    if (this.app.zeroDowntime && ctx.deployTarget) {
+      await this.startBlueGreen(ctx, pkgManager, cdPath, mise);
+      return;
+    }
+
+    await this.startRecreate(ctx, pkgManager, cdPath, mise);
+  }
+
+  /**
+   * Default strategy: stop the whole process set and start the new release.
+   * Drops in-flight requests during the boot window — use `zeroDowntime` to
+   * avoid that.
+   */
+  private async startRecreate(
+    ctx: StrategyContext,
+    pkgManager: PkgManager,
+    cdPath: string,
+    mise: string,
+  ): Promise<void> {
     const ecosystemContent = this.generateEcosystemFile(pkgManager);
     // Ecosystem lives inside the release directory (per-release snapshot, ADR-0001).
     // PM2 references it via the `current` symlink so it always resolves to the active release.
     const ecosystemWritePath = `${ctx.workDir}/ecosystem.config.cjs`;
     const ecosystemRuntimePath = `${this.appPath}/current/ecosystem.config.cjs`;
 
-    const escaped = ecosystemContent.replace(/'/g, "'\"'\"'");
-    await ctx.executor.execOrThrow(`echo '${escaped}' > "${ecosystemWritePath}"`);
+    await this.writeEcosystem(ctx, ecosystemWritePath, ecosystemContent);
 
-    const cdPath = `${this.appPath}/current`;
-    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-
-    // Re-run install from the final directory so the pkg manager's module
-    // resolution state matches the path PM2 will use. Packages are already
-    // in the local store so this is a fast offline relink, not a download.
-    // If the user supplied a custom installCommand we use it verbatim — they've
-    // chosen their flags and appending --prefer-offline would compose poorly.
-    const baseInstall = this.workspace.installCommand ?? getInstallCommand(pkgManager);
-    const relinkInstall = this.workspace.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
-    // Source env before relinking too — same reason as setupEnvironment:
-    // private-registry tokens in `.npmrc` use env-var interpolation.
-    const sourceCmd = sourceEnvCommand(this.app.envFile);
-    const sourceStep = sourceCmd ? `${sourceCmd} && ` : '';
-    const installResult = await ctx.executor.exec(
-      `cd "${cdPath}" && ${mise} && ${sourceStep}${relinkInstall}`,
-    );
-    this.assertNoBuildScriptsIgnored(pkgManager, installResult);
-    if (installResult.exitCode !== 0) {
-      const detail = (installResult.stderr || installResult.stdout).trim();
-      throw new DeployError(detail || 'Package relink failed', 'start');
-    }
+    await this.relinkPackages(ctx, pkgManager, cdPath, mise);
 
     // Silent legacy-name fallback: previous deploys (pre multi-process) started a single
     // PM2 app by its name, not from an ecosystem file. `pm2 delete <ecosystem>` won't find
     // those, so we also delete by the first app's name. After one deploy this is a no-op
     // forever. See ADR-0002 and the migration note in the design (Q10).
-    const firstAppName = this.app.pm2.apps[0].name;
-    const webApp = this.app.pm2.apps.find((a) => a.port !== undefined);
+    const firstAppName = this.app.pm2!.apps[0].name;
+    const webApp = this.app.pm2!.apps.find((a) => a.port !== undefined);
     const portGuard = webApp
       ? `{ ss -tlnp | grep -q ":${webApp.port} " && echo "Port ${webApp.port} is already in use by another process" && false || true; } && `
       : '';
@@ -181,12 +182,145 @@ export class BackendStrategy implements DeploymentStrategy {
     );
   }
 
+  /**
+   * Blue-green strategy: boot the idle colour on its own port without touching
+   * the colour currently serving traffic. The orchestrator health-checks the
+   * new colour, then calls `afterHealthy` to reload workers, then flips Caddy.
+   * See blue-green.ts.
+   *
+   * The web app is duplicated per-colour; workers are a single set (duplicating
+   * a worker would double-process its queue). Workers wait until after health
+   * so a bad release does not leave them on the new code.
+   */
+  private async startBlueGreen(
+    ctx: StrategyContext,
+    pkgManager: PkgManager,
+    cdPath: string,
+    mise: string,
+  ): Promise<void> {
+    const target = ctx.deployTarget!;
+    const pm2 = this.app.pm2!;
+    const namespace = pm2.apps[0].name;
+    // Guaranteed by schema: zeroDowntime requires a web app (one pm2 app with a port).
+    const webApp = pm2.apps.find((a) => a.port !== undefined)!;
+    const workers = pm2.apps.filter((a) => a.port === undefined);
+    const coloredName = coloredWebName(namespace, webApp.name, target.color);
+
+    // Web ecosystem: just the web app, coloured name, target-colour port.
+    const webEco = this.generateEcosystemForApps([webApp], pkgManager, (a) =>
+      a.name === webApp.name ? { nameSuffix: `-${target.color}`, portOverride: target.port } : {},
+    );
+    const webRuntimePath = `${this.appPath}/current/ecosystem.web.cjs`;
+    await this.writeEcosystem(ctx, `${ctx.workDir}/ecosystem.web.cjs`, webEco);
+
+    // Write workers ecosystem now so afterHealthy can reload it; do not start yet.
+    if (workers.length > 0) {
+      const workersEco = this.generateEcosystemForApps(workers, pkgManager);
+      await this.writeEcosystem(ctx, `${ctx.workDir}/ecosystem.workers.cjs`, workersEco);
+    }
+
+    await this.relinkPackages(ctx, pkgManager, cdPath, mise);
+
+    // On the first blue-green deploy, the pre-existing uncoloured web process
+    // (recreate path, or pre-blue-green) still holds the web (== blue) port.
+    // Delete it by name so the target colour can bind.
+    const legacyCleanup = target.previousColor === null
+      ? `{ mise exec -- pm2 delete "${getPm2Name(namespace, webApp.name)}" 2>/dev/null || true; } && `
+      : '';
+    // Reap any stale same-colour instance (from two deploys ago; serving nothing),
+    // then guard the target port against a genuine foreign conflict.
+    const reapTarget = `{ mise exec -- pm2 delete "${coloredName}" 2>/dev/null || true; } && `;
+    const portGuard = `{ ss -tlnp | grep -q ":${target.port} " && echo "Port ${target.port} is already in use by another process" && false || true; } && `;
+
+    await ctx.executor.execOrThrow(
+      `cd "${cdPath}" && ${mise} && ` +
+      legacyCleanup +
+      reapTarget +
+      portGuard +
+      `mise exec -- pm2 start "${webRuntimePath}" --update-env && ` +
+      `mise exec -- pm2 save`,
+    );
+  }
+
+  /**
+   * Reload the single worker set against the healthy release. No-op when
+   * zero-downtime is off or there are no workers.
+   */
+  async afterHealthy(ctx: StrategyContext): Promise<void> {
+    if (!this.app.zeroDowntime || !ctx.deployTarget || !this.app.pm2) return;
+
+    const workers = this.app.pm2.apps.filter((a) => a.port === undefined);
+    if (workers.length === 0) return;
+
+    const cdPath = `${this.appPath}/current`;
+    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    const workersRuntimePath = `${this.appPath}/current/ecosystem.workers.cjs`;
+
+    await ctx.executor.execOrThrow(
+      `cd "${cdPath}" && ${mise} && ` +
+      `{ mise exec -- pm2 reload "${workersRuntimePath}" --update-env 2>/dev/null || mise exec -- pm2 start "${workersRuntimePath}" --update-env; } && ` +
+      `mise exec -- pm2 save`,
+    );
+  }
+
+  private async writeEcosystem(ctx: StrategyContext, writePath: string, content: string): Promise<void> {
+    const escaped = content.replace(/'/g, "'\"'\"'");
+    await ctx.executor.execOrThrow(`echo '${escaped}' > "${writePath}"`);
+  }
+
+  /**
+   * Re-run install from the final directory so the pkg manager's module
+   * resolution state matches the path PM2 will use. Packages are already in the
+   * local store so this is a fast offline relink, not a download. A custom
+   * installCommand is used verbatim — appending --prefer-offline would compose
+   * poorly with the user's chosen flags.
+   */
+  private async relinkPackages(
+    ctx: StrategyContext,
+    pkgManager: PkgManager,
+    cdPath: string,
+    mise: string,
+  ): Promise<void> {
+    const baseInstall = this.workspace.installCommand ?? getInstallCommand(pkgManager);
+    const relinkInstall = this.workspace.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
+    // Source env before relinking — private-registry tokens in `.npmrc` use
+    // env-var interpolation.
+    const sourceCmd = sourceEnvCommand(this.app.envFile);
+    const sourceStep = sourceCmd ? `${sourceCmd} && ` : '';
+    const installResult = await ctx.executor.exec(
+      `cd "${cdPath}" && ${mise} && ${sourceStep}${relinkInstall}`,
+    );
+    this.assertNoBuildScriptsIgnored(pkgManager, installResult);
+    if (installResult.exitCode !== 0) {
+      const detail = (installResult.stderr || installResult.stdout).trim();
+      throw new DeployError(detail || 'Package relink failed', 'start');
+    }
+  }
+
   private generateEcosystemFile(pkgManager: string): string {
+    if (!this.app.pm2) return '';
+    return this.generateEcosystemForApps(this.app.pm2.apps, pkgManager);
+  }
+
+  /**
+   * Render an ecosystem file for a subset of the declared pm2 apps.
+   *
+   * `perApp` lets blue-green override the name (colour suffix) and port for the
+   * web app while leaving workers untouched. The namespace is always the first
+   * declared app's name so `pm2 list` grouping is stable across colours.
+   */
+  private generateEcosystemForApps(
+    apps: Pm2App[],
+    pkgManager: string,
+    perApp: (app: Pm2App) => { nameSuffix?: string; portOverride?: number } = () => ({}),
+  ): string {
     if (!this.app.pm2) return '';
 
     const namespace = this.app.pm2.apps[0].name;
     const envFilePath = `${this.appPath}/shared/${this.app.envFile}`;
-    const appBlocks = this.app.pm2.apps.map((app) => this.generateAppBlock(app, pkgManager, namespace, envFilePath));
+    const appBlocks = apps.map((app) =>
+      this.generateAppBlock(app, pkgManager, namespace, envFilePath, perApp(app)),
+    );
 
     return `module.exports = {
   apps: [
@@ -203,20 +337,27 @@ ${appBlocks.join(',\n')}
    * env file before `exec`ing the real script. `args` is emitted as an array
    * to avoid PM2 word-splitting the wrapped command on whitespace.
    */
-  private generateAppBlock(app: Pm2App, pkgManager: string, namespace: string, envFilePath: string): string {
+  private generateAppBlock(
+    app: Pm2App,
+    pkgManager: string,
+    namespace: string,
+    envFilePath: string,
+    opts: { nameSuffix?: string; portOverride?: number } = {},
+  ): string {
     const { script: origScript, args: origArgs } = parseCommand(app.command, pkgManager);
     const instances = app.instances ?? 1;
     const maxMemory = app.maxMemory ?? '512M';
 
+    const port = opts.portOverride ?? app.port;
     const env: Record<string, string | number> = { NODE_ENV: 'production' };
-    if (app.port !== undefined) env.PORT = app.port;
+    if (port !== undefined) env.PORT = port;
     for (const [k, v] of Object.entries(app.env ?? {})) env[k] = v;
 
     const envLines = Object.entries(env)
       .map(([k, v]) => `      ${k}: ${typeof v === 'number' ? v : `'${escapeSingleQuotes(String(v))}'`},`)
       .join('\n');
 
-    const pm2Name = getPm2Name(namespace, app.name);
+    const pm2Name = `${getPm2Name(namespace, app.name)}${opts.nameSuffix ?? ''}`;
 
     const useWrapper = Boolean(this.app.envFile);
     let scriptLine: string;

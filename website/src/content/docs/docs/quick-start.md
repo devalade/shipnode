@@ -232,7 +232,7 @@ Most common reasons:
 
 ### `Deploy is locked` even though nothing is running
 
-A previous deploy was killed mid-flight and left a stale lock at `<deployPath>/.shipnode/deploy.lock`. After confirming nothing is actually deploying:
+A previous deploy was killed mid-flight and left a stale lock at `<deployPath>/.shipnode/deploy.lock` (directory). After confirming nothing is actually deploying:
 
 ```bash
 npx shipnode unlock

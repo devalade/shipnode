@@ -47,6 +47,10 @@ export class CaddyService {
       if (!app.domain) continue;
 
       if (app.appType === 'backend') {
+        // zeroDowntime backends have their upstream flipped by the orchestrator
+        // (per-colour port, after the health check) — writing the static port
+        // here would point Caddy at the wrong colour.
+        if (app.zeroDowntime) continue;
         await this.configureBackend(app);
       } else {
         await this.configureFrontend(app);
@@ -54,12 +58,17 @@ export class CaddyService {
     }
   }
 
-  async configureBackend(app: ShipnodeApp): Promise<void> {
+  /**
+   * Write the Caddy site for a backend. `portOverride` lets blue-green point the
+   * upstream at the target colour's port; otherwise the web app's configured
+   * port is used. Callers reload Caddy separately (`reload()`) to apply.
+   */
+  async configureBackend(app: ShipnodeApp, portOverride?: number): Promise<void> {
     if (!app.domain || !app.pm2) return;
 
     const webApp = getWebApp({ ...this.config, apps: [app] } as ShipnodeConfig);
     if (!webApp) return;
-    const caddyConfig = generateBackendCaddyfile(app, webApp.port!);
+    const caddyConfig = generateBackendCaddyfile(app, portOverride ?? webApp.port!);
 
     const escaped = caddyConfig.replace(/'/g, "'\"'\"'");
     await this.executor.execOrThrow(

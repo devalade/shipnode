@@ -51,6 +51,28 @@ describe('rollback — ReleaseManager', () => {
     expect(history.some((h) => h.command.includes('mv -Tf'))).toBe(true);
   });
 
+  it('getCurrentReleasePath returns readlink target', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(
+      (cmd) => cmd.includes('readlink') && cmd.includes('/current'),
+      { stdout: '/var/www/app/releases/2025-01-01\n', exitCode: 0 },
+    );
+
+    const manager = new ReleaseManager(executor, '/var/www/app', 5);
+    await expect(manager.getCurrentReleasePath()).resolves.toBe('/var/www/app/releases/2025-01-01');
+  });
+
+  it('getCurrentReleasePath returns null when current is missing', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(
+      (cmd) => cmd.includes('readlink'),
+      { stdout: '', exitCode: 0 },
+    );
+
+    const manager = new ReleaseManager(executor, '/var/www/app', 5);
+    await expect(manager.getCurrentReleasePath()).resolves.toBeNull();
+  });
+
   it('recordRelease uses base64 to avoid shell quoting limits', async () => {
     const executor = new FakeRemoteExecutor();
     executor

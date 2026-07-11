@@ -485,3 +485,84 @@ describe('BackendStrategy.startApp', () => {
     await expect(strategy.setupEnvironment!(makeCtx(executor))).rejects.toThrow('pnpm approve-builds');
   });
 });
+
+// ── startApp (blue-green / zeroDowntime) ──────────────────────────
+
+describe('BackendStrategy.startApp — blue-green', () => {
+  function bgTarget(overrides: Partial<{ color: 'blue' | 'green'; port: number; previousColor: 'blue' | 'green' | null }> = {}) {
+    const color = overrides.color ?? 'green';
+    return {
+      color,
+      port: overrides.port ?? 3001,
+      previousColor: 'previousColor' in overrides ? overrides.previousColor : 'blue',
+      previousPort: 3000,
+      bluePort: 3000,
+      greenPort: 3001,
+    } as const;
+  }
+
+  it('writes a coloured web ecosystem on the target port and starts it', async () => {
+    const strategy = makeStrategy(makeConfig({ zeroDowntime: true }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget() }));
+
+    const cmds = executor.getHistory().map((h) => h.command);
+    const webEco = cmds.find((c) => c.includes('ecosystem.web.cjs') && c.includes('echo'));
+    expect(webEco).toContain('myapp-green');
+    expect(webEco).toContain('PORT: 3001');
+
+    const start = cmds.find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'));
+    expect(start).toBeDefined();
+    // reaps any stale same-colour instance before starting
+    expect(start).toContain('pm2 delete "myapp-green"');
+  });
+
+  it('does not delete the legacy uncoloured process on a non-first deploy', async () => {
+    const strategy = makeStrategy(makeConfig({ zeroDowntime: true }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget({ previousColor: 'blue' }) }));
+
+    const start = executor.getHistory().map((h) => h.command).find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'))!;
+    expect(start).not.toContain('pm2 delete "myapp"');
+  });
+
+  it('deletes the legacy uncoloured process on the first blue-green deploy', async () => {
+    const strategy = makeStrategy(makeConfig({ zeroDowntime: true }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget({ color: 'blue', port: 3000, previousColor: null }) }));
+
+    const start = executor.getHistory().map((h) => h.command).find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'))!;
+    // frees the web (== blue) port held by the pre-blue-green process
+    expect(start).toContain('pm2 delete "myapp"');
+  });
+
+  it('keeps workers in a single set written at start, reloaded only in afterHealthy', async () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      zeroDowntime: true,
+      pm2: { apps: [{ name: 'api', port: 3000 }, { name: 'worker', command: 'node dist/worker.js' }] },
+      pkgManager: 'npm',
+    });
+    const strategy = makeStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    const ctx = makeCtx(executor, { config, deployTarget: bgTarget({ color: 'green', port: 3001 }) });
+    await strategy.startApp!(ctx);
+
+    const cmds = executor.getHistory().map((h) => h.command);
+    // web ecosystem holds only the coloured web app
+    const webEco = cmds.find((c) => c.includes('ecosystem.web.cjs') && c.includes('echo'))!;
+    expect(webEco).toContain('api-green');
+    expect(webEco).not.toContain('worker');
+    // workers ecosystem written during start, but not reloaded yet
+    const workersEco = cmds.find((c) => c.includes('ecosystem.workers.cjs') && c.includes('echo'))!;
+    expect(workersEco).toContain('api-worker');
+    const start = cmds.find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'))!;
+    expect(start).not.toContain('ecosystem.workers.cjs');
+
+    await strategy.afterHealthy!(ctx);
+    const afterCmds = executor.getHistory().map((h) => h.command);
+    expect(afterCmds.some((c) => c.includes('pm2 reload') && c.includes('ecosystem.workers.cjs'))).toBe(true);
+  });
+});

@@ -2,6 +2,16 @@
 
 All notable changes to `@devalade/shipnode` will be documented here.
 
+## [Unreleased]
+
+### Added
+- **Blue-green (zero-downtime) releases** — opt a backend web app in with `.zeroDowntime(altPort?)`. The new release boots on the idle colour's port while the old colour keeps serving; the health check runs against the new colour, and only on success does Caddy's upstream flip via a graceful `systemctl reload caddy` (drains in-flight requests, drops nothing). A failed health check leaves the old colour serving untouched — zero user impact on a bad release. Rollback becomes an instant Caddy flip back to the still-running previous colour (no restart). Off by default; the recreate path is unchanged. Blue = the web app's `port`, green = `altPort` (default `port + 1`). Web app runs ~2× (both colours resident between deploys); workers stay a single reloaded set. See ADR-0005.
+
+### Fixed
+- **Blue-green workers wait for health** — workers reload only after the new colour passes health (and before the Caddy flip), so a bad release no longer leaves workers on new code while traffic stays on the old colour.
+- **Failed deploys revert `current` and record history** — on failure after the symlink switch, `current` is restored to the previous release (when one exists) and a `status: 'failed'` entry is written to `releases.json`.
+- **Atomic deploy lock** — lock acquisition uses `mkdir` (create-or-fail) instead of a TOCTOU file check. Path is still `.shipnode/deploy.lock` (now a directory); `unlock` / monitor handle both directory and legacy file shapes.
+
 ## [3.1.0] - 2026-07-02
 
 First real production run of 3.0 surfaced a batch of bugs — all fixed — plus one new feature (incremental restic backups to Cloudflare R2 / any S3-compatible store).
