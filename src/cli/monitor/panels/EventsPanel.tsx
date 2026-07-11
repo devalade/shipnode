@@ -20,7 +20,7 @@ export function EventsPanel({ events }: EventsPanelProps) {
     >
       <Text bold color={ACCENT}>Events</Text>
       {events.length === 0 ? (
-        <Text dimColor>  No events yet. Press [L] to enable live logs.</Text>
+        <Text dimColor>  No events yet. [L] live logs · [F] fullscreen · [?] help</Text>
       ) : (
         events.slice(-6).map((event, index) => <Text key={`${index}-${event}`}>{event}</Text>)
       )}

@@ -59,6 +59,19 @@ export class MissingAccessoryHealthCheckError extends TaggedError('MissingAccess
   }
 }
 
+export class ProcessRestartError extends TaggedError('ProcessRestartError')<{
+  pm2Name: string;
+  detail: string;
+  message: string;
+}>() {
+  constructor(args: { pm2Name: string; detail: string }) {
+    super({
+      ...args,
+      message: `Failed to restart '${args.pm2Name}': ${args.detail}`,
+    });
+  }
+}
+
 export type ServerTargetError =
   | MissingServerTargetError
   | UnknownServerTargetError;

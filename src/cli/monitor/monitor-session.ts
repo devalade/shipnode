@@ -37,3 +37,16 @@ export function getAppsForMonitorTarget(
   }
   return Result.ok(apps);
 }
+
+export function getAccessoriesForMonitorTarget(
+  config: ShipnodeConfig,
+  targetName: string,
+): ResultType<string[], ServerTargetError> {
+  const names: string[] = [];
+  for (const [name, accessory] of Object.entries(config.accessories ?? {})) {
+    const serverName = resolveServerNameResult(config, accessory.on);
+    if (serverName.isErr()) return Result.err(serverName.error);
+    if (serverName.value === targetName) names.push(name);
+  }
+  return Result.ok(names);
+}

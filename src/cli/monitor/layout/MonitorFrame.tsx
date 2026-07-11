@@ -41,6 +41,7 @@ export function MonitorFrame({
         host={host}
         interval={interval}
         liveMode={liveMode}
+        deployLock={snapshot?.deployLock}
       />
       {children}
       <StatusBar

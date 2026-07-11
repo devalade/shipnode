@@ -1,87 +1,79 @@
 import { describe, it, expect } from 'vitest';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
-import { sparkline, gauge, formatUptime, formatBytes, statusDot } from '../../src/cli/monitor/charts.js';
-import { parsePm2Jlist, parseSystemStats, parseReleaseRecords, MetricsHistory } from '../../src/cli/monitor/state.js';
-import { collectMetrics, collectLogs } from '../../src/cli/monitor/poller.js';
+import { buildSparkline, buildGauge, thresholdColor, statusColor, formatUptime, formatBytes } from '../../src/cli/monitor/charts.js';
+import { parsePm2Jlist, parseSystemStats, parseReleaseRecords, parseDeployLock, parseHealthProbe, parseAccessoryStatus, parseCaddyInfo, splitSections, systemCpuPercent, MetricsHistory, type ProcessInfo, type SystemInfo } from '../../src/cli/monitor/state.js';
+import { buildMonitorCommand, collectMetrics, collectLogs, collectCaddyLogs } from '../../src/cli/monitor/poller.js';
+import { restartProcess } from '../../src/cli/monitor/actions.js';
 import { assembleConfig } from '../../src/config/assembly.js';
-import { getAppsForMonitorTarget, resolveMonitorSession } from '../../src/cli/monitor/monitor-session.js';
+import { getAccessoriesForMonitorTarget, getAppsForMonitorTarget, resolveMonitorSession } from '../../src/cli/monitor/monitor-session.js';
 
 // ── Charts ────────────────────────────────────────────────────────
 
-describe('sparkline', () => {
-  it('renders empty string for empty values', () => {
-    expect(sparkline([], 5)).toBe('');
+describe('buildSparkline', () => {
+  it('returns no points for empty values', () => {
+    expect(buildSparkline([], 5)).toEqual([]);
   });
 
-  it('renders correct characters for normalized values', () => {
-    const result = sparkline([0, 50, 100], 3);
-    expect(result).toHaveLength(3);
-    expect(result).toBe('▁▅█');
+  it('maps normalized values to spark characters', () => {
+    const chars = buildSparkline([0, 50, 100], 3).map((p) => p.char);
+    expect(chars).toEqual(['▁', '▅', '█']);
   });
 
-  it('handles single value', () => {
-    const result = sparkline([50], 3);
-    // Single value < 7 → Math.round(50) = 50, clamped to 7 → SPARK_CHARS[7] = █
-    expect(result).toBe('███');
+  it('colors points by normalized height', () => {
+    const colors = buildSparkline([0, 50, 100], 3).map((p) => p.color);
+    expect(colors).toEqual(['green', 'yellow', 'red']);
   });
 
   it('handles constant values (no range)', () => {
-    const result = sparkline([10, 10, 10], 3);
-    expect(result).toHaveLength(3);
+    const points = buildSparkline([10, 10, 10], 3);
+    expect(points).toHaveLength(3);
+    expect(points.every((p) => p.color === 'green')).toBe(true);
   });
 
   it('samples down to fit width', () => {
     const values = Array.from({ length: 100 }, (_, i) => i);
-    const result = sparkline(values, 10);
-    expect(result).toHaveLength(10);
+    expect(buildSparkline(values, 10)).toHaveLength(10);
   });
 });
 
-describe('gauge', () => {
+describe('buildGauge', () => {
   it('renders a full bar for 100%', () => {
-    const result = gauge(1, 10);
-    expect(result).toContain('█');
-    expect(result).not.toContain('░');
+    expect(buildGauge(1, 10).bar).toBe('█'.repeat(10));
   });
 
   it('renders an empty bar for 0%', () => {
-    const result = gauge(0, 10);
-    expect(result).toContain('░');
+    expect(buildGauge(0, 10).bar).toBe('░'.repeat(10));
   });
 
   it('renders half bar for 50%', () => {
-    const result = gauge(0.5, 10);
-    const filledCount = [...result].filter((c) => c === '█').length;
-    expect(filledCount).toBe(5);
+    const filled = [...buildGauge(0.5, 10).bar].filter((c) => c === '█').length;
+    expect(filled).toBe(5);
   });
 
-  it('clamps values above 1', () => {
-    const result = gauge(2, 10);
-    expect(result).not.toContain('░');
+  it('clamps values above 1 and below 0', () => {
+    expect(buildGauge(2, 10).bar).toBe('█'.repeat(10));
+    expect(buildGauge(-1, 10).bar).toBe('░'.repeat(10));
   });
 
-  it('clamps values below 0', () => {
-    const result = gauge(-1, 10);
-    expect(result).not.toContain('█');
+  it('always emits exactly width characters', () => {
+    expect(buildGauge(0.33, 7).bar).toHaveLength(7);
+  });
+});
+
+describe('thresholdColor', () => {
+  it('is green below 60%', () => {
+    expect(thresholdColor(0)).toBe('green');
+    expect(thresholdColor(0.59)).toBe('green');
   });
 
-  it('uses green for < 60%', () => {
-    const result = gauge(0.5, 5);
-    expect(result).toBeTruthy();
-    expect(result).toContain('█');
-    expect(result).toContain('░');
+  it('is yellow from 60% to 85%', () => {
+    expect(thresholdColor(0.6)).toBe('yellow');
+    expect(thresholdColor(0.84)).toBe('yellow');
   });
 
-  it('uses yellow for 60-85%', () => {
-    const result = gauge(0.7, 5);
-    expect(result).toBeTruthy();
-    expect(result).toContain('█');
-  });
-
-  it('uses red for > 85%', () => {
-    const result = gauge(0.9, 5);
-    expect(result).toBeTruthy();
-    expect(result).not.toContain('░');
+  it('is red at 85% and above', () => {
+    expect(thresholdColor(0.85)).toBe('red');
+    expect(thresholdColor(1.5)).toBe('red');
   });
 });
 
@@ -113,15 +105,13 @@ describe('formatBytes', () => {
   });
 });
 
-describe('statusDot', () => {
-  it('returns ● for online', () => {
-    expect(statusDot('online')).toBeTruthy();
-    expect(statusDot('online')).toContain('●');
-  });
-
-  it('returns ● for errored', () => {
-    expect(statusDot('errored')).toBeTruthy();
-    expect(statusDot('errored')).toContain('●');
+describe('statusColor', () => {
+  it('maps process states to colors', () => {
+    expect(statusColor('online')).toBe('green');
+    expect(statusColor('stopped')).toBe('yellow');
+    expect(statusColor('stopping')).toBe('yellow');
+    expect(statusColor('errored')).toBe('red');
+    expect(statusColor('launching')).toBe('gray');
   });
 });
 
@@ -176,29 +166,213 @@ describe('parsePm2Jlist', () => {
     expect(result[0].cpu).toBe(0);
     expect(result[0].memory).toBe(0);
   });
+
+  it('parses cluster mode details', () => {
+    const stdout = JSON.stringify([makePm2Entry('api', {
+      pm2_env: { status: 'online', pm_uptime: 1, restart_time: 0, exec_mode: 'cluster_mode', instances: 4, unstable_restarts: 2, node_version: '22.1.0' },
+    })]);
+    const [process] = parsePm2Jlist(stdout, 'api');
+    expect(process.execMode).toBe('cluster');
+    expect(process.instances).toBe(4);
+    expect(process.unstableRestarts).toBe(2);
+    expect(process.nodeVersion).toBe('22.1.0');
+  });
+
+  it('parses exit code for errored fork processes', () => {
+    const stdout = JSON.stringify([makePm2Entry('api', {
+      pm2_env: { status: 'errored', exec_mode: 'fork_mode', exit_code: 1 },
+    })]);
+    const [process] = parsePm2Jlist(stdout, 'api');
+    expect(process.execMode).toBe('fork');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('defaults enrichment fields when absent', () => {
+    const [process] = parsePm2Jlist(JSON.stringify([makePm2Entry('api')]), 'api');
+    expect(process.execMode).toBe('unknown');
+    expect(process.instances).toBe(1);
+    expect(process.unstableRestarts).toBe(0);
+    expect(process.nodeVersion).toBeUndefined();
+    expect(process.exitCode).toBeNull();
+  });
+});
+
+describe('parseHealthProbe', () => {
+  it('parses a healthy probe', () => {
+    expect(parseHealthProbe('200 34')).toEqual({ status: 'ok', httpCode: 200, responseMs: 34 });
+  });
+
+  it('treats redirects as ok', () => {
+    expect(parseHealthProbe('302 12')?.status).toBe('ok');
+  });
+
+  it('flags error statuses and unreachable apps as failures', () => {
+    expect(parseHealthProbe('502 120')).toEqual({ status: 'fail', httpCode: 502, responseMs: 120 });
+    expect(parseHealthProbe('000 5')?.status).toBe('fail');
+  });
+
+  it('returns null for empty or garbage output', () => {
+    expect(parseHealthProbe('')).toBeNull();
+    expect(parseHealthProbe('curl: command not found')).toBeNull();
+  });
+});
+
+describe('parseAccessoryStatus', () => {
+  it('parses docker inspect lines and strips the container prefix', () => {
+    const section = [
+      '/shipnode-postgres|running|healthy|postgres:16',
+      '/shipnode-redis|running|<no value>|redis:7',
+    ].join('\n');
+
+    expect(parseAccessoryStatus(section)).toEqual([
+      { name: 'postgres', status: 'running', health: 'healthy', image: 'postgres:16' },
+      { name: 'redis', status: 'running', health: '-', image: 'redis:7' },
+    ]);
+  });
+
+  it('returns empty for empty or garbage sections', () => {
+    expect(parseAccessoryStatus('')).toEqual([]);
+    expect(parseAccessoryStatus('Error: No such object: shipnode-postgres')).toEqual([]);
+  });
+});
+
+describe('parseCaddyInfo', () => {
+  const logLine = (status: number, uri = '/', duration = 0.012) =>
+    JSON.stringify({ status, duration, request: { method: 'GET', uri } });
+
+  it('reports caddy service state', () => {
+    expect(parseCaddyInfo('active', '').serviceActive).toBe(true);
+    expect(parseCaddyInfo('unknown', '').serviceActive).toBe(false);
+  });
+
+  it('buckets request statuses and converts duration to ms', () => {
+    const log = [logLine(200), logLine(404), logLine(503)].join('\n');
+    const info = parseCaddyInfo('active', log);
+    expect(info.total).toBe(3);
+    expect(info.ok2xx).toBe(1);
+    expect(info.err4xx).toBe(1);
+    expect(info.err5xx).toBe(1);
+    expect(info.recent[0]).toEqual({ status: 200, method: 'GET', uri: '/', ms: 12 });
+  });
+
+  it('skips lines that are not caddy JSON', () => {
+    const log = ['garbage', logLine(200), '{"broken json'].join('\n');
+    const info = parseCaddyInfo('active', log);
+    expect(info.total).toBe(1);
+  });
+
+  it('keeps only the five most recent requests', () => {
+    const log = Array.from({ length: 7 }, (_, i) => logLine(200, `/page-${i}`)).join('\n');
+    const info = parseCaddyInfo('active', log);
+    expect(info.total).toBe(7);
+    expect(info.recent).toHaveLength(5);
+    expect(info.recent[4].uri).toBe('/page-6');
+  });
 });
 
 describe('parseSystemStats', () => {
   it('parses all system fields', () => {
     const stdout = [
       'mem:16000 8000',
-      'load:0.5',
+      'load:0.5 0.4 0.3',
+      'cores:4',
       'uptime:86400',
       'disk:100 45',
     ].join('\n');
     const result = parseSystemStats(stdout);
     expect(result.totalMem).toBe(16000);
     expect(result.usedMem).toBe(8000);
-    expect(result.cpuLoad).toBe(0.5);
+    expect(result.load1).toBe(0.5);
+    expect(result.load5).toBe(0.4);
+    expect(result.load15).toBe(0.3);
+    expect(result.cores).toBe(4);
     expect(result.uptime).toBe(86400);
     expect(result.totalDisk).toBe(100);
     expect(result.usedDisk).toBe(45);
   });
 
-  it('defaults to zero for missing fields', () => {
+  it('defaults to zero load and one core for missing fields', () => {
     const result = parseSystemStats('');
     expect(result.totalMem).toBe(0);
-    expect(result.cpuLoad).toBe(0);
+    expect(result.load1).toBe(0);
+    expect(result.cores).toBe(1);
+  });
+});
+
+describe('systemCpuPercent', () => {
+  const base: SystemInfo = { load1: 0, load5: 0, load15: 0, cores: 1, totalMem: 0, usedMem: 0, totalDisk: 0, usedDisk: 0, uptime: 0 };
+
+  it('normalises load by core count', () => {
+    expect(systemCpuPercent({ ...base, load1: 2, cores: 4 })).toBe(0.5);
+  });
+
+  it('clamps to 1 when load exceeds core count', () => {
+    expect(systemCpuPercent({ ...base, load1: 8, cores: 4 })).toBe(1);
+  });
+
+  it('treats zero cores as a single core', () => {
+    expect(systemCpuPercent({ ...base, load1: 0.5, cores: 0 })).toBe(0.5);
+  });
+});
+
+describe('splitSections', () => {
+  it('splits delimited output into named sections', () => {
+    const stdout = [
+      '@@SHIPNODE:pm2@@',
+      '[]',
+      '@@SHIPNODE:sys@@',
+      'mem:16000 8000',
+      'load:0.5 0.4 0.3',
+      '@@SHIPNODE:current@@',
+      '/var/www/app/api/releases/x',
+    ].join('\n');
+
+    const sections = splitSections(stdout);
+
+    expect(sections.get('pm2')).toBe('[]');
+    expect(sections.get('sys')).toBe('mem:16000 8000\nload:0.5 0.4 0.3');
+    expect(sections.get('current')).toBe('/var/www/app/api/releases/x');
+  });
+
+  it('ignores output before the first marker', () => {
+    const sections = splitSections('mise warning\n@@SHIPNODE:pm2@@\n[]');
+    expect(sections.size).toBe(1);
+    expect(sections.get('pm2')).toBe('[]');
+  });
+
+  it('keeps empty sections as empty strings', () => {
+    const sections = splitSections('@@SHIPNODE:pm2@@\n@@SHIPNODE:sys@@\nload:0.5 0.4 0.3');
+    expect(sections.get('pm2')).toBe('');
+    expect(sections.get('sys')).toBe('load:0.5 0.4 0.3');
+  });
+
+  it('returns an empty map for undelimited output', () => {
+    expect(splitSections('random garbage').size).toBe(0);
+    expect(splitSections('').size).toBe(0);
+  });
+});
+
+describe('parseDeployLock', () => {
+  it('parses timestamp and age', () => {
+    const result = parseDeployLock('2026-07-11T10:00:00Z 42');
+    expect(result).toEqual({ lockedAt: '2026-07-11T10:00:00Z', ageSeconds: 42 });
+  });
+
+  it('returns null when unlocked', () => {
+    expect(parseDeployLock('none')).toBeNull();
+    expect(parseDeployLock('')).toBeNull();
+  });
+
+  it('returns null for garbage', () => {
+    expect(parseDeployLock('not a lock line')).toBeNull();
+  });
+
+  it('handles an empty lock file with a valid age', () => {
+    expect(parseDeployLock(' 42')).toEqual({ lockedAt: '', ageSeconds: 42 });
+  });
+
+  it('clamps negative ages to zero', () => {
+    expect(parseDeployLock('2026-07-11T10:00:00Z -5')).toEqual({ lockedAt: '2026-07-11T10:00:00Z', ageSeconds: 0 });
   });
 });
 
@@ -218,18 +392,39 @@ describe('parseReleaseRecords', () => {
   });
 });
 
+const emptySystem: SystemInfo = { load1: 0, load5: 0, load15: 0, cores: 1, totalMem: 0, usedMem: 0, totalDisk: 0, usedDisk: 0, uptime: 0 };
+
+function makeProcess(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
+  return {
+    name: 'a',
+    pm2Name: 'a',
+    pid: 1,
+    status: 'online',
+    cpu: 0,
+    memory: 0,
+    uptime: 0,
+    restarts: 0,
+    execMode: 'fork',
+    instances: 1,
+    unstableRestarts: 0,
+    exitCode: null,
+    ...overrides,
+  };
+}
+
 describe('MetricsHistory', () => {
   it('pushes CPU and memory averages', () => {
     const history = new MetricsHistory(5);
     history.push({
       timestamp: 'now',
       processes: [
-        { name: 'a', pm2Name: 'a', pid: 1, status: 'online', cpu: 10, memory: 100, uptime: 0, restarts: 0 },
-        { name: 'b', pm2Name: 'b', pid: 2, status: 'online', cpu: 20, memory: 200, uptime: 0, restarts: 0 },
+        makeProcess({ cpu: 10, memory: 100 }),
+        makeProcess({ name: 'b', pm2Name: 'b', pid: 2, cpu: 20, memory: 200 }),
       ],
-      system: { cpuLoad: 0, totalMem: 0, usedMem: 0, totalDisk: 0, usedDisk: 0, uptime: 0 },
+      system: emptySystem,
       currentRelease: null,
       releases: [],
+      deployLock: null,
     });
     expect(history.cpu).toHaveLength(1);
     expect(history.cpu[0]).toBe(15); // average of 10, 20
@@ -241,14 +436,26 @@ describe('MetricsHistory', () => {
     for (let i = 0; i < 5; i++) {
       history.push({
         timestamp: `${i}`,
-        processes: [{ name: 'a', pm2Name: 'a', pid: 1, status: 'online', cpu: i, memory: i * 10, uptime: 0, restarts: 0 }],
-        system: { cpuLoad: 0, totalMem: 0, usedMem: 0, totalDisk: 0, usedDisk: 0, uptime: 0 },
+        processes: [makeProcess({ cpu: i, memory: i * 10 })],
+        system: emptySystem,
         currentRelease: null,
         releases: [],
+        deployLock: null,
       });
     }
     expect(history.cpu).toHaveLength(3);
     expect(history.cpu).toEqual([2, 3, 4]);
+  });
+
+  it('records response times only when a health probe is present', () => {
+    const history = new MetricsHistory(5);
+    const base = { timestamp: 'now', processes: [], system: emptySystem, currentRelease: null, releases: [], deployLock: null };
+
+    history.push(base);
+    expect(history.responseMs).toHaveLength(0);
+
+    history.push({ ...base, health: { status: 'ok' as const, httpCode: 200, responseMs: 34 } });
+    expect(history.responseMs).toEqual([34]);
   });
 });
 
@@ -261,37 +468,120 @@ const testConfig = assembleConfig({
   pm2: { apps: [{ name: 'api', port: 3000 }] },
 });
 
+function sectioned(sections: Record<string, string>): string {
+  return Object.entries(sections)
+    .map(([name, body]) => `@@SHIPNODE:${name}@@\n${body}`)
+    .join('\n');
+}
+
+describe('buildMonitorCommand', () => {
+  it('emits every section marker', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
+    for (const name of ['pm2', 'sys', 'current', 'releases', 'lock']) {
+      expect(command).toContain(`@@SHIPNODE:${name}@@`);
+    }
+  });
+
+  it('joins sections with ; so one failure cannot blank the rest', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
+    expect(command).not.toContain('&&');
+  });
+
+  it('gives pm2 a failure sentinel fallback for backend apps', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
+    expect(command).toContain('pm2 jlist 2>/dev/null || echo "##SHIPNODE_PM2_FAILED##"');
+  });
+
+  it('skips pm2 for frontend apps', () => {
+    const frontendConfig = assembleConfig({
+      app: 'frontend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+    });
+    const command = buildMonitorCommand(frontendConfig.apps[0], frontendConfig);
+    expect(command).not.toContain('pm2 jlist');
+  });
+
+  it('reads the workspace-level deploy lock', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
+    expect(command).toContain('/var/www/app/.shipnode/deploy.lock');
+  });
+
+  it('collects core count and all three load averages', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
+    expect(command).toContain('nproc');
+    expect(command).toContain(`awk '{print $1, $2, $3}' /proc/loadavg`);
+  });
+
+  it('probes the health endpoint capped to the poll interval', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig, { healthMaxTimeSeconds: 2 });
+    expect(command).toContain('@@SHIPNODE:health@@');
+    expect(command).toContain('http://localhost:3000/health');
+    expect(command).toContain('--max-time 2');
+  });
+
+  it('omits the health probe when the health check is disabled', () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      healthCheck: { enabled: false },
+    });
+    expect(buildMonitorCommand(config.apps[0], config)).not.toContain('@@SHIPNODE:health@@');
+  });
+
+  it('omits the health probe when no pm2 app declares a port', () => {
+    const config = assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'worker' }] },
+    });
+    expect(buildMonitorCommand(config.apps[0], config)).not.toContain('@@SHIPNODE:health@@');
+  });
+
+  it('samples accessories with sudo -n docker inspect', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig, { accessoryNames: ['postgres', 'redis'] });
+    expect(command).toContain('@@SHIPNODE:accessories@@');
+    expect(command).toContain('sudo -n docker inspect');
+    expect(command).not.toContain('sudo docker inspect');
+    expect(command).toContain(`'shipnode-postgres' 'shipnode-redis'`);
+  });
+
+  it('omits the accessories section when no names are given', () => {
+    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
+    expect(command).not.toContain('@@SHIPNODE:accessories@@');
+  });
+
+  it('adds caddy sections for frontend apps only', () => {
+    const frontendConfig = assembleConfig({
+      app: 'frontend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+    });
+    const frontendApp = frontendConfig.apps[0];
+    const command = buildMonitorCommand(frontendApp, frontendConfig);
+    expect(command).toContain('@@SHIPNODE:caddy-status@@');
+    expect(command).toContain('systemctl is-active caddy');
+    expect(command).toContain(`/var/log/caddy/${frontendApp.name}.log`);
+
+    expect(buildMonitorCommand(testConfig.apps[0], testConfig)).not.toContain('caddy');
+  });
+});
+
 describe('collectMetrics', () => {
-  it('issues correct SSH commands and parses results', async () => {
+  const fullStdout = sectioned({
+    pm2: JSON.stringify([{ name: 'api', pid: 123, pm2_env: { status: 'online', pm_uptime: Date.now(), restart_time: 0 }, monit: { cpu: 2.5, memory: 128 * 1024 * 1024 } }]),
+    sys: ['mem:16000 8000', 'load:0.5 0.4 0.3', 'cores:2', 'uptime:86400', 'disk:100 45'].join('\n'),
+    current: '/var/www/app/releases/2026-01-01T00-00-00',
+    releases: JSON.stringify([{ timestamp: '2026-01-01', status: 'success', duration: 10 }]),
+    lock: 'none',
+  });
+
+  it('collects the full snapshot in a single SSH round trip', async () => {
     const executor = new FakeRemoteExecutor();
-    executor.when(
-      (c) => c.includes('pm2 jlist'),
-      { stdout: JSON.stringify([{ name: 'api', pid: 123, pm2_env: { status: 'online', pm_uptime: Date.now(), restart_time: 0 }, monit: { cpu: 2.5, memory: 128 * 1024 * 1024 } }]), stderr: '', exitCode: 0 },
-    );
-    executor.when(
-      (c) => c.includes('free -mb'),
-      { stdout: 'mem:16000 8000', stderr: '', exitCode: 0 },
-    );
-    executor.when(
-      (c) => c.includes('/proc/loadavg'),
-      { stdout: 'load:0.5', stderr: '', exitCode: 0 },
-    );
-    executor.when(
-      (c) => c.includes('/proc/uptime'),
-      { stdout: 'uptime:86400', stderr: '', exitCode: 0 },
-    );
-    executor.when(
-      (c) => c.includes('df -BG'),
-      { stdout: 'disk:100 45', stderr: '', exitCode: 0 },
-    );
-    executor.when(
-      (c) => c.includes('readlink'),
-      { stdout: '/var/www/app/releases/2026-01-01T00-00-00', stderr: '', exitCode: 0 },
-    );
-    executor.when(
-      (c) => c.includes('releases.json'),
-      { stdout: JSON.stringify([{ timestamp: '2026-01-01', status: 'success', duration: 10 }]), stderr: '', exitCode: 0 },
-    );
+    executor.when((c) => c.includes('@@SHIPNODE:pm2@@'), { stdout: fullStdout, stderr: '', exitCode: 0 });
 
     const result = await collectMetrics(executor, testConfig.apps[0], testConfig);
 
@@ -299,29 +589,85 @@ describe('collectMetrics', () => {
     expect(result.processes[0].name).toBe('api');
     expect(result.processes[0].cpu).toBe(2.5);
     expect(result.system.totalMem).toBe(16000);
+    expect(result.system.cores).toBe(2);
+    expect(result.system.load15).toBe(0.3);
     expect(result.currentRelease).toContain('2026-01-01');
     expect(result.releases).toHaveLength(1);
+    expect(result.deployLock).toBeNull();
+    expect(result.error).toBeUndefined();
 
-    const history = executor.getHistory();
-    expect(history.some((h) => h.command.includes('pm2 jlist'))).toBe(true);
-    expect(history.some((h) => h.command.includes('readlink'))).toBe(true);
-    expect(history.some((h) => h.command.includes('releases.json'))).toBe(true);
+    expect(executor.getHistory()).toHaveLength(1);
+  });
+
+  it('derives the SSH timeout from the poll interval', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: fullStdout, stderr: '', exitCode: 0 });
+
+    await collectMetrics(executor, testConfig.apps[0], testConfig, { intervalSeconds: 2 });
+
+    expect(executor.getHistory()[0].options?.timeout).toBe(6000);
+  });
+
+  it('parses health and accessories sections when present', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, {
+      stdout: sectioned({
+        pm2: '[]',
+        lock: 'none',
+        health: '200 34',
+        accessories: '/shipnode-postgres|running|healthy|postgres:16',
+      }),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await collectMetrics(executor, testConfig.apps[0], testConfig, { accessoryNames: ['postgres'] });
+
+    expect(result.health).toEqual({ status: 'ok', httpCode: 200, responseMs: 34 });
+    expect(result.accessories).toEqual([
+      { name: 'postgres', status: 'running', health: 'healthy', image: 'postgres:16' },
+    ]);
+  });
+
+  it('leaves accessories undefined on polls that skip the section', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: fullStdout, stderr: '', exitCode: 0 });
+
+    const result = await collectMetrics(executor, testConfig.apps[0], testConfig);
+    expect(result.accessories).toBeUndefined();
+  });
+
+  it('reports an active deploy lock', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, {
+      stdout: sectioned({ pm2: '[]', lock: '2026-07-11T10:00:00Z 42' }),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const result = await collectMetrics(executor, testConfig.apps[0], testConfig);
+    expect(result.deployLock).toEqual({ lockedAt: '2026-07-11T10:00:00Z', ageSeconds: 42 });
   });
 
   it('sets error flag when pm2 jlist fails for backend app', async () => {
     const executor = new FakeRemoteExecutor();
-    executor.when(
-      (c) => c.includes('pm2 jlist'),
-      { stdout: '', stderr: 'connection refused', exitCode: 1 },
-    );
-    executor.when(
-      (c) => true,
-      { stdout: '', stderr: '', exitCode: 0 },
-    );
+    executor.when(() => true, {
+      stdout: sectioned({ pm2: '##SHIPNODE_PM2_FAILED##', lock: 'none' }),
+      stderr: '',
+      exitCode: 0,
+    });
 
     const result = await collectMetrics(executor, testConfig.apps[0], testConfig);
     expect(result.error).toBe('PM2 command failed');
     expect(result.processes).toEqual([]);
+  });
+
+  it('sets error flag when the poll returns no sections at all', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: '', stderr: '', exitCode: 1 });
+
+    const result = await collectMetrics(executor, testConfig.apps[0], testConfig);
+    expect(result.error).toBe('Monitor poll returned no data');
   });
 
   it('handles frontend app without PM2 gracefully', async () => {
@@ -332,13 +678,15 @@ describe('collectMetrics', () => {
     });
 
     const executor = new FakeRemoteExecutor();
-    executor.when(
-      (c) => true,
-      { stdout: '', stderr: '', exitCode: 0 },
-    );
+    executor.when(() => true, {
+      stdout: sectioned({ pm2: '[]', lock: 'none' }),
+      stderr: '',
+      exitCode: 0,
+    });
 
     const result = await collectMetrics(executor, frontendConfig.apps[0], frontendConfig);
     expect(result.processes).toEqual([]);
+    expect(result.error).toBeUndefined();
   });
 });
 
@@ -353,6 +701,29 @@ describe('collectLogs', () => {
     await collectLogs(executor, "api'worker", 20);
 
     expect(executor.getHistory()[0].command).toContain("pm2 logs 'api'\"'\"'worker'");
+  });
+
+  it('tails a single process when given an exact pm2 name', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: 'ok', stderr: '', exitCode: 0 });
+
+    await collectLogs(executor, 'api-worker', 20);
+
+    expect(executor.getHistory()[0].command).toContain("pm2 logs 'api-worker' --lines 20");
+  });
+});
+
+describe('collectCaddyLogs', () => {
+  it('tails the caddy access log with a non-interactive sudo fallback', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: '{}', stderr: '', exitCode: 0 });
+
+    await collectCaddyLogs(executor, 'web', 50);
+
+    const command = executor.getHistory()[0].command;
+    expect(command).toContain('sudo -n tail -n 50 "/var/log/caddy/web.log"');
+    expect(command).toContain('|| tail -n 50 "/var/log/caddy/web.log"');
+    expect(command).not.toContain('sudo tail');
   });
 });
 
@@ -398,6 +769,59 @@ describe('monitor session', () => {
     expect(apps.isOk()).toBe(true);
     if (apps.isOk()) expect(apps.value.map((app) => app.name)).toEqual(['api', 'web']);
   });
+
+  it('limits accessories to the connected server target', () => {
+    const config = assembleConfig({
+      servers: {
+        app: { host: '1.1.1.1', user: 'deploy', port: 22 },
+        data: { host: '2.2.2.2', user: 'deploy', port: 22 },
+      },
+      remotePath: '/var/www/app',
+      apps: [
+        { name: 'api', appType: 'backend', on: 'app', healthCheck: { enabled: true } },
+      ],
+      accessories: {
+        postgres: { image: 'postgres:16', on: 'data' },
+        redis: { image: 'redis:7', on: 'app' },
+      },
+    });
+
+    const names = getAccessoriesForMonitorTarget(config, 'data');
+
+    expect(names.isOk()).toBe(true);
+    if (names.isOk()) expect(names.value).toEqual(['postgres']);
+  });
+});
+
+// ── Actions ───────────────────────────────────────────────────────
+
+describe('restartProcess', () => {
+  it('restarts exactly the given pm2 process with env refresh', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: 'ok', stderr: '', exitCode: 0 });
+
+    const result = await restartProcess(executor, "api'worker");
+
+    expect(result.isOk()).toBe(true);
+    const command = executor.getHistory()[0].command;
+    expect(command).toContain('mise/shims');
+    expect(command).toContain(`pm2 restart 'api'"'"'worker' --update-env`);
+    expect(executor.getHistory()).toHaveLength(1);
+  });
+
+  it('returns a typed error when the restart fails', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: '', stderr: 'process not found', exitCode: 1 });
+
+    const result = await restartProcess(executor, 'api-worker');
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error._tag).toBe('ProcessRestartError');
+      expect(result.error.pm2Name).toBe('api-worker');
+      expect(result.error.message).toContain('process not found');
+    }
+  });
 });
 
 // ── Ink Component smoke tests ─────────────────────────────────────
@@ -436,5 +860,31 @@ describe('Ink components', () => {
   it('runMonitor is a function', async () => {
     const mod = await import('../../src/cli/monitor/index.js');
     expect(typeof mod.runMonitor).toBe('function');
+  });
+
+  it('AccessoriesPanel is a function', async () => {
+    const mod = await import('../../src/cli/monitor/panels/AccessoriesPanel.js');
+    expect(typeof mod.AccessoriesPanel).toBe('function');
+  });
+
+  it('StaticFrontendPanel is a function', async () => {
+    const mod = await import('../../src/cli/monitor/panels/StaticFrontendPanel.js');
+    expect(typeof mod.StaticFrontendPanel).toBe('function');
+  });
+
+  it('HelpOverlay is a function', async () => {
+    const mod = await import('../../src/cli/monitor/components/HelpOverlay.js');
+    expect(typeof mod.HelpOverlay).toBe('function');
+  });
+
+  it('ConfirmDialog is a function', async () => {
+    const mod = await import('../../src/cli/monitor/components/ConfirmDialog.js');
+    expect(typeof mod.ConfirmDialog).toBe('function');
+  });
+
+  it('Gauge and Sparkline are functions', async () => {
+    const mod = await import('../../src/cli/monitor/components/charts.js');
+    expect(typeof mod.Gauge).toBe('function');
+    expect(typeof mod.Sparkline).toBe('function');
   });
 });

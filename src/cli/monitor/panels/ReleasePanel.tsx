@@ -6,9 +6,10 @@ const BG = '#0d1117';
 interface ReleasePanelProps {
   currentRelease: string | null;
   releases: ReleaseRecord[];
+  maxReleases?: number;
 }
 
-export function ReleasePanel({ currentRelease, releases }: ReleasePanelProps) {
+export function ReleasePanel({ currentRelease, releases, maxReleases = 5 }: ReleasePanelProps) {
   return (
     <Box borderStyle="round" borderColor="#30363d" paddingX={1} paddingY={1} flexDirection="column" flexGrow={1} backgroundColor={BG}>
       <Text bold color="#d6a85d">  Releases</Text>
@@ -24,7 +25,7 @@ export function ReleasePanel({ currentRelease, releases }: ReleasePanelProps) {
       </Box>
       {releases.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
-          {releases.slice(0, 5).map((r, i) => {
+          {releases.slice(0, maxReleases).map((r, i) => {
             const dur = r.duration ? `${r.duration}s` : '—';
             const statusIcon = r.status === 'success' ? '✓' : '✗';
             const statusColor = r.status === 'success' ? 'green' : 'red';

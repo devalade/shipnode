@@ -8,6 +8,7 @@ interface MonitorOptions {
   config: ShipnodeConfig;
   app: ShipnodeApp;
   apps: ShipnodeApp[];
+  accessoryNames: string[];
   targetName: string;
   host: string;
   interval: number;

@@ -1,7 +1,7 @@
 import { loadConfig } from '../../config/loader.js';
 import { SshConnection } from '../../infrastructure/ssh/connection.js';
 import { runMonitor } from '../monitor/index.js';
-import { getAppsForMonitorTarget, resolveMonitorSession } from '../monitor/monitor-session.js';
+import { getAccessoriesForMonitorTarget, getAppsForMonitorTarget, resolveMonitorSession } from '../monitor/monitor-session.js';
 import { ui } from '../ui.js';
 
 export async function cmdMonitor(
@@ -24,6 +24,13 @@ export async function cmdMonitor(
     return;
   }
 
+  const accessoryNames = getAccessoriesForMonitorTarget(config, session.value.target.name);
+  if (accessoryNames.isErr()) {
+    ui.error(accessoryNames.error.message);
+    process.exit(1);
+    return;
+  }
+
   const host = `${session.value.target.ssh.user}@${session.value.target.ssh.host}:${session.value.target.ssh.port}`;
   const ssh = new SshConnection();
 
@@ -42,6 +49,7 @@ export async function cmdMonitor(
       config,
       app: session.value.app,
       apps: apps.value,
+      accessoryNames: accessoryNames.value,
       targetName: session.value.target.name,
       host,
       interval,

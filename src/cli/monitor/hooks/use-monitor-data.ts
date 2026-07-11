@@ -5,6 +5,9 @@ import type { ShipnodeApp, ShipnodeConfig } from '../../../shared/types.js';
 import { collectMetrics } from '../poller.js';
 import { MetricsHistory, type MetricsSnapshot } from '../state.js';
 
+/** Sample docker accessory state roughly every this many seconds, not every poll. */
+const ACCESSORY_SAMPLE_SECONDS = 10;
+
 export interface MonitorDataState {
   snapshot: MetricsSnapshot | null;
   history: MetricsHistory;
@@ -22,6 +25,7 @@ export function useMonitorData(
   config: ShipnodeConfig,
   app: ShipnodeApp,
   interval: number,
+  accessoryNames: string[] = [],
 ): MonitorDataState {
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
   const [events, setEvents] = useState<string[]>([]);
@@ -30,6 +34,7 @@ export function useMonitorData(
   const [polling, setPolling] = useState(false);
   const historyRef = useRef(new MetricsHistory());
   const inFlightRef = useRef(false);
+  const pollCountRef = useRef(0);
 
   const appendEvent = (message: string): void => {
     setEvents((prev) => [...prev.slice(-100), message]);
@@ -40,8 +45,19 @@ export function useMonitorData(
     inFlightRef.current = true;
     setPolling(true);
     try {
-      const nextSnapshot = await collectMetrics(executor, app, config);
-      setSnapshot(nextSnapshot);
+      const cadence = Math.max(1, Math.ceil(ACCESSORY_SAMPLE_SECONDS / interval));
+      const sampleAccessories = pollCountRef.current % cadence === 0;
+      pollCountRef.current += 1;
+
+      const nextSnapshot = await collectMetrics(executor, app, config, {
+        intervalSeconds: interval,
+        accessoryNames: sampleAccessories ? accessoryNames : undefined,
+      });
+      setSnapshot((prev) =>
+        nextSnapshot.accessories === undefined && prev !== null
+          ? { ...nextSnapshot, accessories: prev.accessories }
+          : nextSnapshot,
+      );
       historyRef.current.push(nextSnapshot);
       setLastUpdate(new Date().toLocaleTimeString());
       setError(nextSnapshot.error ?? null);
@@ -58,6 +74,7 @@ export function useMonitorData(
 
   const reset = (): void => {
     historyRef.current.clear();
+    pollCountRef.current = 0;
     setSnapshot(null);
     setError(null);
     setLastUpdate('');
