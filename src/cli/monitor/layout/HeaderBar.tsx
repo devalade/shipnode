@@ -12,9 +12,11 @@ interface HeaderBarProps {
   interval: number;
   liveMode: boolean;
   deployLock?: DeployLockInfo | null;
+  /** Consecutive failed health probes; alerting once it reaches the threshold. */
+  healthFailStreak?: number;
 }
 
-export function HeaderBar({ app, targetName, host, interval, liveMode, deployLock }: HeaderBarProps) {
+export function HeaderBar({ app, targetName, host, interval, liveMode, deployLock, healthFailStreak = 0 }: HeaderBarProps) {
   return (
     <Box height={1} backgroundColor={BG_HEADER} paddingLeft={1}>
       <Text bold color={ACCENT}>ShipNode Monitor </Text>
@@ -28,6 +30,9 @@ export function HeaderBar({ app, targetName, host, interval, liveMode, deployLoc
       )}
       {deployLock != null && (
         <Text bold color="red">{'  │ '}DEPLOY LOCK ({deployLock.ageSeconds}s)</Text>
+      )}
+      {healthFailStreak > 0 && (
+        <Text bold color="red">{'  │ '}HEALTH FAILING ×{healthFailStreak}</Text>
       )}
       <Text dimColor>{'  │'} [?] help</Text>
     </Box>

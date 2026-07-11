@@ -72,6 +72,20 @@ export class ProcessRestartError extends TaggedError('ProcessRestartError')<{
   }
 }
 
+export class ReleaseRollbackError extends TaggedError('ReleaseRollbackError')<{
+  appName: string;
+  timestamp: string;
+  detail: string;
+  message: string;
+}>() {
+  constructor(args: { appName: string; timestamp: string; detail: string }) {
+    super({
+      ...args,
+      message: `Failed to roll back '${args.appName}' to ${args.timestamp}: ${args.detail}`,
+    });
+  }
+}
+
 export type ServerTargetError =
   | MissingServerTargetError
   | UnknownServerTargetError;

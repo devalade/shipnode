@@ -43,6 +43,16 @@ export interface HealthInfo {
   responseMs: number;
 }
 
+/**
+ * Consecutive-failure streak for the HTTP health probe. A poll without probe
+ * data (health check disabled or probe produced nothing) leaves the streak
+ * untouched — only a real `ok` result clears it.
+ */
+export function nextHealthFailStreak(previous: number, health: HealthInfo | undefined): number {
+  if (health === undefined) return previous;
+  return health.status === 'fail' ? previous + 1 : 0;
+}
+
 export interface AccessoryInfo {
   name: string;
   status: string;

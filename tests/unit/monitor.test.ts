@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
 import { buildSparkline, buildGauge, thresholdColor, statusColor, formatUptime, formatBytes } from '../../src/cli/monitor/charts.js';
-import { parsePm2Jlist, parseSystemStats, parseReleaseRecords, parseDeployLock, parseHealthProbe, parseAccessoryStatus, parseCaddyInfo, splitSections, systemCpuPercent, MetricsHistory, type ProcessInfo, type SystemInfo } from '../../src/cli/monitor/state.js';
+import { parsePm2Jlist, parseSystemStats, parseReleaseRecords, parseDeployLock, parseHealthProbe, parseAccessoryStatus, parseCaddyInfo, splitSections, systemCpuPercent, nextHealthFailStreak, MetricsHistory, type ProcessInfo, type SystemInfo } from '../../src/cli/monitor/state.js';
 import { buildMonitorCommand, collectMetrics, collectLogs, collectCaddyLogs } from '../../src/cli/monitor/poller.js';
-import { restartProcess } from '../../src/cli/monitor/actions.js';
+import { restartProcess, rollbackToRelease } from '../../src/cli/monitor/actions.js';
+import { logLineColor } from '../../src/cli/monitor/panels/LogPanel.js';
 import { assembleConfig } from '../../src/config/assembly.js';
 import { getAccessoriesForMonitorTarget, getAppsForMonitorTarget, resolveMonitorSession } from '../../src/cli/monitor/monitor-session.js';
 
@@ -214,6 +215,63 @@ describe('parseHealthProbe', () => {
   it('returns null for empty or garbage output', () => {
     expect(parseHealthProbe('')).toBeNull();
     expect(parseHealthProbe('curl: command not found')).toBeNull();
+  });
+});
+
+describe('nextHealthFailStreak', () => {
+  it('increments on a failed probe', () => {
+    expect(nextHealthFailStreak(0, { status: 'fail', httpCode: 500, responseMs: 12 })).toBe(1);
+    expect(nextHealthFailStreak(2, { status: 'fail', httpCode: 0, responseMs: 2000 })).toBe(3);
+  });
+
+  it('resets to zero on a successful probe', () => {
+    expect(nextHealthFailStreak(5, { status: 'ok', httpCode: 200, responseMs: 34 })).toBe(0);
+  });
+
+  it('keeps the streak untouched when no probe data is present', () => {
+    expect(nextHealthFailStreak(2, undefined)).toBe(2);
+    expect(nextHealthFailStreak(0, undefined)).toBe(0);
+  });
+});
+
+describe('logLineColor', () => {
+  it('flags error-like lines red', () => {
+    expect(logLineColor('TypeError: cannot read foo')).toBe('red');
+    expect(logLineColor('[ERROR] connection refused')).toBe('red');
+    expect(logLineColor('Unhandled rejection in worker')).toBe('red');
+  });
+
+  it('flags warnings yellow', () => {
+    expect(logLineColor('WARN memory usage high')).toBe('yellow');
+    expect(logLineColor('deprecation warning: crypto')).toBe('yellow');
+  });
+
+  it('leaves ordinary lines unstyled', () => {
+    expect(logLineColor('GET /health 200 12ms')).toBeUndefined();
+    expect(logLineColor('server listening on :3000')).toBeUndefined();
+  });
+
+  it('does not false-positive on words that merely contain "error" or "warn"', () => {
+    expect(logLineColor('reflection off the mirror')).toBeUndefined();
+    expect(logLineColor('forwarning the request to upstream')).toBeUndefined();
+  });
+
+  it('reads structured pino/winston string levels', () => {
+    expect(logLineColor('{"level":"error","msg":"db down"}')).toBe('red');
+    expect(logLineColor('{"level":"fatal","msg":"oom"}')).toBe('red');
+    expect(logLineColor('{"level":"warn","msg":"slow query"}')).toBe('yellow');
+    expect(logLineColor('{"level":"info","msg":"ready"}')).toBeUndefined();
+  });
+
+  it('reads numeric pino levels', () => {
+    expect(logLineColor('{"level":50,"msg":"boom"}')).toBe('red');
+    expect(logLineColor('{"level":60,"msg":"boom"}')).toBe('red');
+    expect(logLineColor('{"level":40,"msg":"careful"}')).toBe('yellow');
+    expect(logLineColor('{"level":30,"msg":"ready"}')).toBeUndefined();
+  });
+
+  it('falls back to text heuristics for malformed JSON-looking lines', () => {
+    expect(logLineColor('{not valid json, but has ERROR in it')).toBe('red');
   });
 });
 
@@ -820,6 +878,70 @@ describe('restartProcess', () => {
       expect(result.error._tag).toBe('ProcessRestartError');
       expect(result.error.pm2Name).toBe('api-worker');
       expect(result.error.message).toContain('process not found');
+    }
+  });
+});
+
+describe('rollbackToRelease', () => {
+  const app = testConfig.apps[0];
+
+  it('checks the release exists, switches the symlink atomically, then reloads PM2', async () => {
+    const executor = new FakeRemoteExecutor();
+
+    const result = await rollbackToRelease(executor, testConfig, app, '2024-06-01T12-00-00');
+
+    expect(result.isOk()).toBe(true);
+    const commands = executor.getHistory().map((entry) => entry.command);
+    expect(commands).toHaveLength(3);
+    expect(commands[0]).toContain(`[ -d '/var/www/app/${app.name}/releases/2024-06-01T12-00-00' ]`);
+    expect(commands[1]).toContain('ln -sfn');
+    expect(commands[1]).toContain('mv -Tf');
+    expect(commands[1]).toContain(`/var/www/app/${app.name}/current`);
+    expect(commands[2]).toContain('pm2 reload');
+    expect(commands[2]).toContain('current/ecosystem.config.cjs');
+    expect(commands[2]).toContain('--update-env');
+  });
+
+  it('fails without touching the symlink when the release directory is missing', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when(() => true, { stdout: '', stderr: '', exitCode: 1 });
+
+    const result = await rollbackToRelease(executor, testConfig, app, '2024-06-01T12-00-00');
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error._tag).toBe('ReleaseRollbackError');
+      expect(result.error.message).toContain('release directory not found');
+    }
+    expect(executor.getHistory()).toHaveLength(1);
+  });
+
+  it('skips the PM2 reload for frontend apps', async () => {
+    const frontendConfig = assembleConfig({
+      app: 'frontend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+    });
+    const executor = new FakeRemoteExecutor();
+
+    const result = await rollbackToRelease(executor, frontendConfig, frontendConfig.apps[0], '2024-06-01T12-00-00');
+
+    expect(result.isOk()).toBe(true);
+    const commands = executor.getHistory().map((entry) => entry.command);
+    expect(commands).toHaveLength(2);
+    expect(commands.some((command) => command.includes('pm2'))).toBe(false);
+  });
+
+  it('reports a typed error when the symlink switched but PM2 reload failed', async () => {
+    const executor = new FakeRemoteExecutor();
+    executor.when((command) => command.includes('pm2 reload'), { stdout: '', stderr: 'reload boom', exitCode: 1 });
+
+    const result = await rollbackToRelease(executor, testConfig, app, '2024-06-01T12-00-00');
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain('PM2 reload failed');
+      expect(result.error.message).toContain('reload boom');
     }
   });
 });

@@ -10,8 +10,10 @@ const BINDINGS: Array<[string, string]> = [
   ['l', 'toggle live log strip'],
   ['f', 'fullscreen logs'],
   ['←/→', 'filter logs by process (fullscreen)'],
-  ['↑/↓', 'select process'],
-  ['Enter/x', 'restart selected process'],
+  ['/', 'search logs (fullscreen)'],
+  ['space', 'pause/resume logs (fullscreen)'],
+  ['↑/↓', 'select process or release'],
+  ['Enter/x', 'restart process / rollback to release'],
   ['?', 'this help'],
 ];
 

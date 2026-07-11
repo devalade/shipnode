@@ -18,6 +18,8 @@ interface MonitorFrameProps {
   snapshot: MetricsSnapshot | null;
   polling: boolean;
   error: string | null;
+  /** Streak to surface in the header; pass 0 until it crosses the alert threshold. */
+  healthFailStreak?: number;
   children: ReactNode;
 }
 
@@ -31,6 +33,7 @@ export function MonitorFrame({
   snapshot,
   polling,
   error,
+  healthFailStreak = 0,
   children,
 }: MonitorFrameProps) {
   return (
@@ -42,6 +45,7 @@ export function MonitorFrame({
         interval={interval}
         liveMode={liveMode}
         deployLock={snapshot?.deployLock}
+        healthFailStreak={healthFailStreak}
       />
       {children}
       <StatusBar
