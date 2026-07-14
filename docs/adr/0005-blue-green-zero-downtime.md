@@ -9,7 +9,7 @@ Two ports, named **blue** and **green**. Blue is the web app's configured `port`
 Each deploy:
 
 1. Stages the release and switches the `current` symlink (as always). The previously-started colour keeps running the old code in memory — the symlink move doesn't touch a running process.
-2. Boots the **idle** colour on its own port (`pm2 start ecosystem.web.cjs`), reaping any stale same-colour instance first. The active colour is never touched. Workers are **not** reloaded yet.
+2. Boots the **idle** colour on its own port (`pm2 start ecosystem.web.config.cjs`), reaping any stale same-colour instance first. The active colour is never touched. Workers are **not** reloaded yet.
 3. Health-checks the new colour on **its** port and colour-suffixed pm2 name (`api-green`).
 4. Only on success: reloads the single worker set against the new release, then rewrites the Caddy site to the new colour's port and `systemctl reload caddy` — a graceful reload that drains in-flight requests. Then persists the new active colour. On the first migration only, the legacy uncoloured process is removed after this sequence.
 
@@ -17,7 +17,7 @@ A failed health check throws before step 4: Caddy is untouched, workers stay on 
 
 ## Why the web app is duplicated but workers are not
 
-Blue-green needs two copies of the *web* app (old + new, different ports) resident at once. Workers have no port and aren't behind Caddy; running two copies would double-process their queues. So the ecosystem is split: `ecosystem.web.cjs` holds only the colour-suffixed web app; `ecosystem.workers.cjs` holds the workers as a single set, reloaded in place **after** health passes (a brief worker blip on a successful deploy is acceptable — they're not serving HTTP). Reloading before health would leave workers on a bad release while traffic stayed on the old colour.
+Blue-green needs two copies of the *web* app (old + new, different ports) resident at once. Workers have no port and aren't behind Caddy; running two copies would double-process their queues. So the ecosystem is split: `ecosystem.web.config.cjs` holds only the colour-suffixed web app; `ecosystem.workers.config.cjs` holds the workers as a single set, reloaded in place **after** health passes (a brief worker blip on a successful deploy is acceptable — they're not serving HTTP). The `.config.cjs` suffix is required so PM2 parses these files as ecosystem configuration instead of launching the file itself as an application. Reloading before health would leave workers on a bad release while traffic stayed on the old colour.
 
 ## Rollback is a flip, not a restart
 

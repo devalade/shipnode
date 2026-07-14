@@ -69,7 +69,7 @@ describe('blue-green deploy (orchestrator)', () => {
     const cmds = history.map((h) => h.command);
 
     // green avoids interrupting a legacy uncoloured process on the blue port
-    const webEco = cmds.find((c) => c.includes('ecosystem.web.cjs') && c.includes('echo'));
+    const webEco = cmds.find((c) => c.includes('ecosystem.web.config.cjs') && c.includes('echo'));
     expect(webEco).toBeDefined();
     expect(webEco).toContain('app-green');
     expect(webEco).toContain('PORT: 3001');
@@ -101,7 +101,7 @@ describe('blue-green deploy (orchestrator)', () => {
     await orchestrator.deploy({ cwd: '/test', skipBuild: false });
 
     const cmds = executor.getHistory().map((h) => h.command);
-    const webEco = cmds.find((c) => c.includes('ecosystem.web.cjs') && c.includes('echo'));
+    const webEco = cmds.find((c) => c.includes('ecosystem.web.config.cjs') && c.includes('echo'));
     expect(webEco).toContain('app-green');
     expect(webEco).toContain('PORT: 3001');
     expect(cmds.some((c) => c.includes('curl') && c.includes('localhost:3001/health'))).toBe(true);
@@ -195,8 +195,8 @@ describe('blue-green deploy (orchestrator)', () => {
     await orchestrator.deploy({ cwd: '/test', skipBuild: false });
 
     const cmds = executor.getHistory().map((h) => h.command);
-    const webStartIdx = cmds.findIndex((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'));
-    const workersIdx = cmds.findIndex((c) => c.includes('ecosystem.workers.cjs') && (c.includes('pm2 reload') || c.includes('pm2 start')));
+    const webStartIdx = cmds.findIndex((c) => c.includes('pm2 start') && c.includes('ecosystem.web.config.cjs'));
+    const workersIdx = cmds.findIndex((c) => c.includes('ecosystem.workers.config.cjs') && (c.includes('pm2 reload') || c.includes('pm2 start')));
     const curlIdx = cmds.findIndex((c) => c.includes('curl') && c.includes('/health'));
     const caddyIdx = cmds.findIndex((c) => c.includes('systemctl reload caddy'));
 
@@ -219,7 +219,7 @@ describe('blue-green deploy (orchestrator)', () => {
 
     const commands = executor.getHistory().map((entry) => entry.command);
     expect(commands.some((command) => command.includes('ecosystem.config.cjs') && command.includes('pm2 start'))).toBe(true);
-    expect(commands.some((command) => command.includes('ecosystem.web.cjs'))).toBe(false);
+    expect(commands.some((command) => command.includes('ecosystem.web.config.cjs'))).toBe(false);
     expect(commands.some((command) => command.includes('deploy-state.json'))).toBe(false);
   });
 });

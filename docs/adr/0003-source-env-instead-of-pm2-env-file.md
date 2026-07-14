@@ -7,12 +7,12 @@ We now drop `env_file` from the ecosystem and emit each app as a `bash` script w
 ```js
 {
   script: 'bash',
-  args: ['-c', "set -a && . '/var/www/app/shared/.env.production' && set +a && exec node dist/server.js"],
+  args: ['-c', "set -a && . '/var/www/app/shared/.env.production' && set +a && export NODE_ENV='production' PORT='3000' && exec node dist/server.js"],
   env: { NODE_ENV: 'production', PORT: 3000 }
 }
 ```
 
-`set -a` exports everything sourced. `exec` replaces the wrapper shell so PM2 supervises the real process directly — signals, reloads, and crash detection behave exactly as before. Per-app `env:` overrides (e.g. `WORKER_QUEUE`) still apply because PM2 layers them on top of the inherited env. Secrets stay in the chmod-600 `.env` file; they do **not** leak into the world-readable `ecosystem.config.cjs`.
+`set -a` exports everything sourced. The wrapper then reapplies the ecosystem's explicit values so `NODE_ENV`, per-app overrides, and especially a blue-green target `PORT` take precedence over stale values in the shared dotenv file. `exec` replaces the wrapper shell so PM2 supervises the real process directly — signals, reloads, and crash detection behave exactly as before. Secrets from the dotenv file stay in the chmod-600 shared file; they are not duplicated into the world-readable ecosystem configuration.
 
 `args` is emitted as an array because PM2 word-splits string args on whitespace, which would shred the inline shell snippet.
 

@@ -13,6 +13,10 @@ function escapeSingleQuotes(s: string): string {
   return s.replace(/'/g, "\\'");
 }
 
+function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'"'"'`)}'`;
+}
+
 // Q5: `command` is shell-style — split on whitespace into script + args.
 // Omitted command falls back to `<pkgManager> start` (the pre-multi-process default).
 function parseCommand(command: string | undefined, pkgManager: string): { script: string; args: string } {
@@ -216,13 +220,13 @@ export class BackendStrategy implements DeploymentStrategy {
     const webEco = this.generateEcosystemForApps([webApp], pkgManager, (a) =>
       a.name === webApp.name ? { nameSuffix: `-${target.color}`, portOverride: target.port } : {},
     );
-    const webRuntimePath = `${this.appPath}/current/ecosystem.web.cjs`;
-    await this.writeEcosystem(ctx, `${ctx.workDir}/ecosystem.web.cjs`, webEco);
+    const webRuntimePath = `${this.appPath}/current/ecosystem.web.config.cjs`;
+    await this.writeEcosystem(ctx, `${ctx.workDir}/ecosystem.web.config.cjs`, webEco);
 
     // Write workers ecosystem now so afterHealthy can reload it; do not start yet.
     if (workers.length > 0) {
       const workersEco = this.generateEcosystemForApps(workers, pkgManager);
-      await this.writeEcosystem(ctx, `${ctx.workDir}/ecosystem.workers.cjs`, workersEco);
+      await this.writeEcosystem(ctx, `${ctx.workDir}/ecosystem.workers.config.cjs`, workersEco);
     }
 
     await this.relinkPackages(ctx, pkgManager, cdPath, mise);
@@ -253,7 +257,7 @@ export class BackendStrategy implements DeploymentStrategy {
 
     const cdPath = `${this.appPath}/current`;
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-    const workersRuntimePath = `${this.appPath}/current/ecosystem.workers.cjs`;
+    const workersRuntimePath = `${this.appPath}/current/ecosystem.workers.config.cjs`;
 
     await ctx.executor.execOrThrow(
       `cd "${cdPath}" && ${mise} && ` +
@@ -381,7 +385,14 @@ ${appBlocks.join(',\n')}
 
     if (useWrapper) {
       const tail = origArgs ? `${origScript} ${origArgs}` : origScript;
-      const inner = `set -a && . '${escapeSingleQuotes(envFilePath)}' && set +a && exec ${tail}`;
+      // Sourcing the dotenv file happens inside the PM2-launched shell, so it
+      // can overwrite inline PM2 values such as the blue-green port. Re-apply
+      // the ecosystem's explicit values afterwards to preserve their normal
+      // precedence over the shared environment.
+      const explicitEnv = Object.entries(env)
+        .map(([key, value]) => `${key}=${shellSingleQuote(String(value))}`)
+        .join(' ');
+      const inner = `set -a && . '${escapeSingleQuotes(envFilePath)}' && set +a && export ${explicitEnv} && exec ${tail}`;
       scriptLine = `script: 'bash',`;
       argsLine = `\n      args: ['-c', '${escapeSingleQuotes(inner)}'],`;
     } else {

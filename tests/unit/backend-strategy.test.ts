@@ -424,6 +424,10 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).toContain(`script: '"'"'bash'"'"',`);
     expect(writeCmd).toContain('shared/.env.production');
     expect(writeCmd).toContain('set -a');
+    expect(writeCmd).toContain('export NODE_ENV=');
+    expect(writeCmd).toContain('PORT=');
+    expect(writeCmd).toContain('3000');
+    expect(writeCmd.indexOf('export NODE_ENV=')).toBeGreaterThan(writeCmd.indexOf('set +a'));
     expect(writeCmd).toContain('exec');
   });
 
@@ -507,11 +511,11 @@ describe('BackendStrategy.startApp — blue-green', () => {
     await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget() }));
 
     const cmds = executor.getHistory().map((h) => h.command);
-    const webEco = cmds.find((c) => c.includes('ecosystem.web.cjs') && c.includes('echo'));
+    const webEco = cmds.find((c) => c.includes('ecosystem.web.config.cjs') && c.includes('echo'));
     expect(webEco).toContain('myapp-green');
     expect(webEco).toContain('PORT: 3001');
 
-    const start = cmds.find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'));
+    const start = cmds.find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.config.cjs'));
     expect(start).toBeDefined();
     // reaps any stale same-colour instance before starting
     expect(start).toContain('pm2 delete "myapp-green"');
@@ -522,7 +526,7 @@ describe('BackendStrategy.startApp — blue-green', () => {
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget({ previousColor: 'blue' }) }));
 
-    const start = executor.getHistory().map((h) => h.command).find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'))!;
+    const start = executor.getHistory().map((h) => h.command).find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.config.cjs'))!;
     expect(start).not.toContain('pm2 delete "myapp"');
   });
 
@@ -532,7 +536,7 @@ describe('BackendStrategy.startApp — blue-green', () => {
     const ctx = makeCtx(executor, { deployTarget: bgTarget({ color: 'green', port: 3001, previousColor: null }) });
     await strategy.startApp!(ctx);
 
-    const start = executor.getHistory().map((h) => h.command).find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'))!;
+    const start = executor.getHistory().map((h) => h.command).find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.config.cjs'))!;
     expect(start).not.toContain('pm2 delete "myapp"');
 
     await strategy.afterTrafficSwitch!(ctx);
@@ -558,17 +562,17 @@ describe('BackendStrategy.startApp — blue-green', () => {
 
     const cmds = executor.getHistory().map((h) => h.command);
     // web ecosystem holds only the coloured web app
-    const webEco = cmds.find((c) => c.includes('ecosystem.web.cjs') && c.includes('echo'))!;
+    const webEco = cmds.find((c) => c.includes('ecosystem.web.config.cjs') && c.includes('echo'))!;
     expect(webEco).toContain('api-green');
     expect(webEco).not.toContain('worker');
     // workers ecosystem written during start, but not reloaded yet
-    const workersEco = cmds.find((c) => c.includes('ecosystem.workers.cjs') && c.includes('echo'))!;
+    const workersEco = cmds.find((c) => c.includes('ecosystem.workers.config.cjs') && c.includes('echo'))!;
     expect(workersEco).toContain('api-worker');
-    const start = cmds.find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'))!;
-    expect(start).not.toContain('ecosystem.workers.cjs');
+    const start = cmds.find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.config.cjs'))!;
+    expect(start).not.toContain('ecosystem.workers.config.cjs');
 
     await strategy.afterHealthy!(ctx);
     const afterCmds = executor.getHistory().map((h) => h.command);
-    expect(afterCmds.some((c) => c.includes('pm2 reload') && c.includes('ecosystem.workers.cjs'))).toBe(true);
+    expect(afterCmds.some((c) => c.includes('pm2 reload') && c.includes('ecosystem.workers.config.cjs'))).toBe(true);
   });
 });
