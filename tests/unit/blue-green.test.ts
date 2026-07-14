@@ -37,11 +37,11 @@ describe('blue-green helpers', () => {
 });
 
 describe('resolveTarget', () => {
-  it('first deploy targets blue on the web port', () => {
+  it('first deploy targets green so a legacy process can keep serving on blue', () => {
     const t = resolveTarget(null, 3000, 3001);
     expect(t).toMatchObject({
-      color: 'blue',
-      port: 3000,
+      color: 'green',
+      port: 3001,
       previousColor: null,
       previousPort: null,
       bluePort: 3000,

@@ -9,12 +9,13 @@ ShipNode generates a ready-to-use GitHub Actions workflow.
 npx shipnode ci github
 ```
 
-This writes `.github/workflows/deploy.yml` that:
+This writes `.github/workflows/shipnode-deploy.yml` at the Git repository root. From a monorepo subdirectory, only the deploy step runs from that directory; root changes still trigger the workflow.
 
 1. Checks out the repo
 2. Installs deps with your package manager
 3. Sets up SSH using a secret deploy key
-4. Runs `npx shipnode deploy`
+4. Installs the exact scoped Shipnode version used to generate the file
+5. Runs `shipnode deploy`
 
 ## Required secrets
 

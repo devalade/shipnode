@@ -125,6 +125,20 @@ describe('ShipnodeBuilder', () => {
     expect(config.apps[0].envFile).toBe('.env.production');
     expect(config.nodeVersion).toBe('22');
     expect(config.pkgManager).toBe('pnpm');
+    expect(config.apps[0].zeroDowntime).toBe(true);
+  });
+
+  it('allows the root builder to opt out of automatic blue-green deploys', () => {
+    const config = new ShipnodeBuilder()
+      .backend()
+      .ssh({ host: '10.0.0.1', user: 'deploy' })
+      .pm2('api')
+      .port(3000)
+      .domain('api.example.com')
+      .noZeroDowntime()
+      .build();
+
+    expect(config.apps[0].zeroDowntime).toBe(false);
   });
 
   it('disables health check', () => {
@@ -332,6 +346,22 @@ describe('ShipnodeAppBuilder + workspace .apps([])', () => {
   it('shipnode.app() and the standalone app() factory both produce a ShipnodeAppBuilder', () => {
     expect(shipnode.app()).toBeInstanceOf(ShipnodeAppBuilder);
     expect(app()).toBeInstanceOf(ShipnodeAppBuilder);
+  });
+
+  it('allows a per-app builder to opt out of automatic blue-green deploys', () => {
+    const api = app()
+      .backend()
+      .name('api')
+      .pm2('api')
+      .port(3000)
+      .domain('api.example.com')
+      .noZeroDowntime();
+    const config = new ShipnodeBuilder()
+      .ssh({ host: '10.0.0.1', user: 'deploy' })
+      .apps([api])
+      .build();
+
+    expect(config.apps[0].zeroDowntime).toBe(false);
   });
 
   it('composes a multi-app workspace via .apps([api, web])', () => {

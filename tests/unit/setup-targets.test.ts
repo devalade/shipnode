@@ -51,4 +51,72 @@ describe('setup target dependency selection', () => {
     expect(commands).toContain('caddy-stable');
     expect(commands).not.toContain('docker-ce');
   });
+
+  it('creates deployment directories with the effective SSH user as owner', async () => {
+    const executor = new FakeRemoteExecutor();
+    const config = baseConfig({
+      ssh: { host: '1.2.3.4', user: 'ubuntu', port: 22 },
+      apps: [{
+        name: 'worker',
+        appType: 'backend',
+        pm2: { apps: [{ name: 'worker', command: 'node worker.js' }] },
+        healthCheck: { enabled: false, path: '/health', timeout: 30, retries: 3, startupDelay: 3 },
+        envFile: '.env',
+        keepReleases: 5,
+        zeroDowntime: false,
+      }],
+    });
+
+    await buildTasks(executor, config, null).run();
+
+    const directories = executor.getHistory().find((entry) => entry.command.includes('install -d'))?.command;
+    expect(directories).toContain("OWNER='ubuntu'");
+    expect(directories).toContain('-o "$OWNER"');
+    expect(directories).toContain("'/var/www/app/releases'");
+  });
+
+  it('installs and verifies the PM2 systemd unit, then saves as the deploy user', async () => {
+    const executor = new FakeRemoteExecutor();
+    const config = baseConfig({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        pm2: { apps: [{ name: 'api', port: 3000 }] },
+        healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 3 },
+        envFile: '.env',
+        keepReleases: 5,
+        zeroDowntime: false,
+      }],
+    });
+
+    await buildTasks(executor, config, 'deploy').run();
+
+    const startup = executor.getHistory().find((entry) => entry.command.includes('startup systemd'))?.command;
+    expect(startup).toContain('sudo');
+    expect(startup).toContain('pm2-deploy.service');
+    expect(startup).toContain('systemctl is-enabled --quiet');
+    expect(startup).toContain('sudo -u "deploy"');
+    expect(startup).toContain('pm2 save --force');
+    expect(startup).not.toContain('|| true');
+  });
+
+  it('propagates a PM2 startup failure with its command output', async () => {
+    const executor = new FakeRemoteExecutor().when(
+      (command) => command.includes('startup systemd'),
+      { stdout: '', stderr: 'systemd unit could not be enabled', exitCode: 1 },
+    );
+    const config = baseConfig({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        pm2: { apps: [{ name: 'api', port: 3000 }] },
+        healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 3 },
+        envFile: '.env',
+        keepReleases: 5,
+        zeroDowntime: false,
+      }],
+    });
+
+    await expect(buildTasks(executor, config, 'deploy').run()).rejects.toThrow('systemd unit could not be enabled');
+  });
 });

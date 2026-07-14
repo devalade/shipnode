@@ -28,6 +28,7 @@ describe('CaddyService snippets', () => {
 
     await caddy.configureBackend(baseApp);
 
+    expect(executor.getLastCommand()?.command).toContain('$SUDO tee /etc/caddy/conf.d/api.caddy');
     expect(executor.getLastCommand()?.command).toContain(`api.example.com {
     reverse_proxy localhost:3000
 
@@ -37,6 +38,18 @@ describe('CaddyService snippets', () => {
         output file /var/log/caddy/api.log
     }
 }`);
+  });
+
+  it('reloads Caddy through sudo and propagates failures', async () => {
+    const executor = new FakeRemoteExecutor().when(
+      (command) => command.includes('systemctl reload caddy'),
+      { stdout: '', stderr: 'reload failed', exitCode: 1 },
+    );
+    const caddy = new CaddyService(executor, config);
+
+    await expect(caddy.reload()).rejects.toThrow('reload failed');
+
+    expect(executor.getLastCommand()?.command).toContain('$SUDO systemctl reload caddy');
   });
 
   it('appends non-empty snippets inside the site block', async () => {

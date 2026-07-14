@@ -116,11 +116,14 @@ Registry passwords are read from environment variables on the remote host. If `R
 | `.worker({ name, command, env? })` | Extra long-running PM2 process. Can be repeated. |
 | `.env(path)` | Path to a `.env` file uploaded as `shared/.env`. |
 | `.keepReleases(n)` | How many old releases to keep on disk (default 5). |
-| `.zeroDowntime(bool)` | Toggle the symlink-flip release strategy. |
+| `.zeroDowntime(altPort?)` | Force blue-green on a Caddy backend and optionally choose its alternate port. |
+| `.noZeroDowntime()` | Opt out of automatic blue-green for a Caddy backend. |
 | `.aliases({ name: cmd })` | Define short names for `shipnode run` (see [Aliases](#aliases)). |
 | `.preDeploy(fn)` | Run a function on the server before the health check (see [Hooks](#hooks)). |
 | `.postDeploy(fn)` | Run a function on the server after a healthy release. |
 | `.build()` | Required terminal call. Returns the resolved config. |
+
+Backend apps with both `.domain(...)` and a PM2 web `.port(...)` use blue-green deploys by default. They temporarily need about 2× the web process memory while both colours are resident. Backends without a domain and worker-only apps use PM2 recreate. Raw configs can opt out with `zeroDowntime: false`.
 
 ## Aliases
 

@@ -1,10 +1,67 @@
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { Result, type Result as ResultType } from 'better-result';
 import { Client, ConnectConfig, ClientChannel } from 'ssh2';
 import { SshError } from '../../shared/errors.js';
 import type { SshConfig, ExecResult } from '../../shared/types.js';
 import { RemoteExecutor, type ExecOptions } from '../../domain/remote/executor.js';
+import {
+  SshAuthenticationUnavailableError,
+  SshIdentityFileUnreadableError,
+} from '../../shared/result-errors.js';
+
+type SshAuthentication = Pick<ConnectConfig, 'privateKey' | 'agent'>;
+type SshAuthenticationError = SshAuthenticationUnavailableError | SshIdentityFileUnreadableError;
+
+interface SshAuthenticationEnvironment {
+  sshAuthSock?: string;
+  homeDir: string;
+}
+
+interface SshAuthenticationFiles {
+  exists(path: string): boolean;
+  read(path: string): Buffer;
+}
+
+const systemAuthenticationFiles: SshAuthenticationFiles = {
+  exists: existsSync,
+  read: readFileSync,
+};
+
+/** Resolve the first usable SSH authentication method without throwing expected failures. */
+export function resolveSshAuthentication(
+  config: SshConfig,
+  environment: SshAuthenticationEnvironment,
+  files: SshAuthenticationFiles = systemAuthenticationFiles,
+): ResultType<SshAuthentication, SshAuthenticationError> {
+  if (config.identityFile && files.exists(config.identityFile)) {
+    try {
+      return Result.ok({ privateKey: files.read(config.identityFile) });
+    } catch (cause: unknown) {
+      return Result.err(new SshIdentityFileUnreadableError({ path: config.identityFile, cause }));
+    }
+  }
+
+  const agent = environment.sshAuthSock;
+
+  for (const name of ['id_ed25519', 'id_ecdsa', 'id_rsa', 'id_dsa']) {
+    const keyPath = join(environment.homeDir, '.ssh', name);
+    if (!files.exists(keyPath)) continue;
+    try {
+      return Result.ok({
+        ...(agent ? { agent } : {}),
+        privateKey: files.read(keyPath),
+      });
+    } catch (cause: unknown) {
+      return Result.err(new SshIdentityFileUnreadableError({ path: keyPath, cause }));
+    }
+  }
+
+  if (agent) return Result.ok({ agent });
+
+  return Result.err(new SshAuthenticationUnavailableError());
+}
 
 export interface SshConnectionOptions {
   onReady?: () => void;
@@ -28,27 +85,14 @@ export class SshConnection extends RemoteExecutor {
       readyTimeout: 30000,
     };
 
-    if (config.identityFile) {
-      sshConfig.privateKey = readFileSync(config.identityFile);
-    } else {
-      if (process.env['SSH_AUTH_SOCK']) {
-        sshConfig.agent = process.env['SSH_AUTH_SOCK'];
-      }
-      // Also try default key files — agent may be set but have no keys loaded
-      const defaults = ['id_ed25519', 'id_ecdsa', 'id_rsa', 'id_dsa'];
-      for (const name of defaults) {
-        const keyPath = join(homedir(), '.ssh', name);
-        if (existsSync(keyPath)) {
-          sshConfig.privateKey = readFileSync(keyPath);
-          break;
-        }
-      }
-      if (!sshConfig.agent && !sshConfig.privateKey) {
-        throw new SshError(
-          'No SSH auth method found. Set identityFile in config, run ssh-add, or place a key in ~/.ssh/',
-        );
-      }
+    const authentication = resolveSshAuthentication(config, {
+      sshAuthSock: process.env['SSH_AUTH_SOCK'],
+      homeDir: homedir(),
+    });
+    if (authentication.isErr()) {
+      throw authentication.error;
     }
+    Object.assign(sshConfig, authentication.value);
 
     if (config.proxyMode === 'cloudflare') {
       throw new SshError('Cloudflare Access proxy requires external connector. Use ssh2-http-proxy-agent.');

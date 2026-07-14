@@ -61,4 +61,7 @@ export interface DeploymentStrategy {
    * completes recording). Blue-green backends reload workers here.
    */
   afterHealthy?(ctx: StrategyContext): Promise<void>;
+
+  /** Optional cleanup that is safe only after Caddy has switched traffic. */
+  afterTrafficSwitch?(ctx: StrategyContext): Promise<void>;
 }

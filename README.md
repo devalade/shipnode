@@ -229,8 +229,8 @@ export default shipnode
 | `.pkgManager(pm, opts?)` | auto-detected | `npm` \| `yarn` \| `pnpm` \| `bun`; `opts.installCommand` overrides the install command |
 | `.installCommand(cmd)` | derived from pkg manager | Override the install command run on the server (e.g. `'npm ci --legacy-peer-deps'`). Equivalent to `pkgManager(pm, { installCommand: cmd })` |
 | `.buildDir(dir)` | auto-detected | Frontend build output dir |
-| `.zeroDowntime({ keepReleases? })` | true, 5 | Zero-downtime releases |
-| `.legacy()` | — | Simple in-place deploy |
+| `.zeroDowntime(altPort?)` | automatic for Caddy backends | Force blue-green releases and optionally choose the green port |
+| `.noZeroDowntime()` | — | Opt out and recreate PM2 processes during deploy |
 | `.healthCheck(path, opts?)` | `/health`, 30s, 3 retries | Post-deploy health check |
 | `.noHealthCheck()` | — | Skip health check |
 | `.envFile(f)` | `.env` | Local .env file to upload |
@@ -466,7 +466,11 @@ export default shipnode
 
 ## Zero-downtime releases
 
-By default, shipnode uses a Capistrano-style release structure:
+Backends with a domain and a PM2 web port use blue-green releases automatically. Shipnode starts the new web process on the idle port, checks it, and reloads Caddy only after it is healthy. Apps without a domain and worker-only apps keep the PM2 recreate path. Use `.noZeroDowntime()` to opt out explicitly; raw configuration may set `zeroDowntime: false`.
+
+Blue-green keeps the previous and current web processes resident, so budget about **2× the web process memory**. On an eligible Caddy backend, `.zeroDowntime(altPort?)` remains available to force the mode and choose the alternate port (default: web port + 1).
+
+Every app still uses a Capistrano-style release structure:
 
 ```
 /var/www/myapp/
@@ -479,7 +483,7 @@ By default, shipnode uses a Capistrano-style release structure:
   current -> releases/20240102T090000
 ```
 
-PM2 is reloaded against `current/` after the symlink switch. If the health check fails, you can roll back instantly with `shipnode rollback`.
+On the first migration, the new release starts on green while the existing uncoloured process keeps serving on blue. After health succeeds and Caddy reloads, Shipnode removes that legacy process. If health fails, Caddy and the legacy process remain untouched.
 
 ## Requirements
 

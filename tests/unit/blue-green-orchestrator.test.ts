@@ -57,7 +57,7 @@ function baseStubs(executor: FakeRemoteExecutor): FakeRemoteExecutor {
 }
 
 describe('blue-green deploy (orchestrator)', () => {
-  it('first deploy boots blue on the web port and flips Caddy after health', async () => {
+  it('first deploy boots green and removes a legacy process only after the Caddy flip', async () => {
     const executor = new FakeRemoteExecutor();
     baseStubs(executor).when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 12', stderr: '', exitCode: 0 });
     const config = bgConfig();
@@ -68,24 +68,25 @@ describe('blue-green deploy (orchestrator)', () => {
     const history = executor.getHistory();
     const cmds = history.map((h) => h.command);
 
-    // web ecosystem written for the blue colour on port 3000
+    // green avoids interrupting a legacy uncoloured process on the blue port
     const webEco = cmds.find((c) => c.includes('ecosystem.web.cjs') && c.includes('echo'));
     expect(webEco).toBeDefined();
-    expect(webEco).toContain('app-blue');
-    expect(webEco).toContain('PORT: 3000');
+    expect(webEco).toContain('app-green');
+    expect(webEco).toContain('PORT: 3001');
 
-    // health probe hit the blue port
-    const curl = cmds.find((c) => c.includes('curl') && c.includes('localhost:3000/health'));
+    const curl = cmds.find((c) => c.includes('curl') && c.includes('localhost:3001/health'));
     expect(curl).toBeDefined();
 
     // Caddy flipped to port 3000 and reloaded, then state persisted — in that order
-    const caddyIdx = cmds.findIndex((c) => c.includes('reverse_proxy localhost:3000') && c.includes('tee'));
+    const caddyIdx = cmds.findIndex((c) => c.includes('reverse_proxy localhost:3001') && c.includes('tee'));
     const reloadIdx = cmds.findIndex((c) => c.includes('systemctl reload caddy'));
     const stateIdx = cmds.findIndex((c) => c.includes('deploy-state.json') && c.includes('base64 -d'));
+    const cleanupIdx = cmds.findIndex((c) => c.includes('pm2 delete "app"'));
     const curlIdx = cmds.findIndex((c) => c.includes('curl') && c.includes('/health'));
     expect(caddyIdx).toBeGreaterThan(curlIdx);
     expect(reloadIdx).toBeGreaterThan(caddyIdx);
     expect(stateIdx).toBeGreaterThan(reloadIdx);
+    expect(cleanupIdx).toBeGreaterThan(stateIdx);
   });
 
   it('second deploy (blue active) targets green on the alt port', async () => {
@@ -107,6 +108,22 @@ describe('blue-green deploy (orchestrator)', () => {
     expect(cmds.some((c) => c.includes('reverse_proxy localhost:3001') && c.includes('tee'))).toBe(true);
   });
 
+  it('second switch (green active) reuses blue only after the first migration cleaned it', async () => {
+    const executor = new FakeRemoteExecutor();
+    const state: DeployState = { activeColor: 'green', bluePort: 3000, greenPort: 3001 };
+    baseStubs(executor)
+      .when((cmd) => cmd.includes('deploy-state.json') && cmd.includes('cat'), { stdout: JSON.stringify(state), stderr: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 12', stderr: '', exitCode: 0 });
+    const orchestrator = await buildOrchestrator(executor, bgConfig());
+
+    await orchestrator.deploy({ cwd: '/test', skipBuild: false });
+
+    const commands = executor.getHistory().map((entry) => entry.command);
+    expect(commands.some((command) => command.includes('app-blue') && command.includes('PORT: 3000'))).toBe(true);
+    expect(commands.some((command) => command.includes('localhost:3000/health'))).toBe(true);
+    expect(commands.some((command) => command.includes('reverse_proxy localhost:3000'))).toBe(true);
+  });
+
   it('health failure leaves the old colour serving — no Caddy flip, no state write', async () => {
     const executor = new FakeRemoteExecutor();
     baseStubs(executor)
@@ -124,6 +141,7 @@ describe('blue-green deploy (orchestrator)', () => {
     const cmds = executor.getHistory().map((h) => h.command);
     expect(cmds.some((c) => c.includes('systemctl reload caddy'))).toBe(false);
     expect(cmds.some((c) => c.includes('deploy-state.json') && c.includes('base64 -d'))).toBe(false);
+    expect(cmds.some((c) => c.includes('pm2 delete "app"'))).toBe(false);
     // current reverted to the previous release
     expect(cmds.some((c) => c.includes('ln -sfn') && c.includes('2026-01-01T00-00-00-000Z'))).toBe(true);
     // failed release recorded
@@ -135,6 +153,26 @@ describe('blue-green deploy (orchestrator)', () => {
     expect(decoded.at(-1).status).toBe('failed');
   });
 
+  it('does not revert current after traffic switched when legacy cleanup fails', async () => {
+    const executor = new FakeRemoteExecutor();
+    baseStubs(executor)
+      .when((cmd) => cmd.includes('readlink') && cmd.includes('/current'), {
+        stdout: '/var/www/app/app/releases/2026-01-01T00-00-00-000Z',
+        stderr: '',
+        exitCode: 0,
+      })
+      .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 12', stderr: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('pm2 delete "app"'), { stdout: '', stderr: 'pm2 save failed', exitCode: 1 });
+    const orchestrator = await buildOrchestrator(executor, bgConfig());
+
+    await expect(orchestrator.deploy({ cwd: '/test', skipBuild: false })).rejects.toThrow('pm2 save failed');
+
+    const commands = executor.getHistory().map((entry) => entry.command);
+    expect(commands.some((command) => command.includes('systemctl reload caddy'))).toBe(true);
+    expect(commands.some((command) => command.includes('deploy-state.json') && command.includes('base64 -d'))).toBe(true);
+    expect(commands.some((command) => command.includes('ln -sfn') && command.includes('2026-01-01T00-00-00-000Z'))).toBe(false);
+  });
+
   it('reloads workers after health and before the Caddy flip', async () => {
     const executor = new FakeRemoteExecutor();
     executor
@@ -142,7 +180,7 @@ describe('blue-green deploy (orchestrator)', () => {
       .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', stderr: '', exitCode: 0 })
       .when((cmd) => cmd.includes('pm2 jlist'), {
         stdout: JSON.stringify([
-          { name: 'app-blue', pm2_env: { status: 'online', restart_time: 0 } },
+          { name: 'app-green', pm2_env: { status: 'online', restart_time: 0 } },
           { name: 'app-worker', pm2_env: { status: 'online', restart_time: 0 } },
         ]),
         stderr: '',
@@ -167,5 +205,21 @@ describe('blue-green deploy (orchestrator)', () => {
     expect(curlIdx).toBeGreaterThan(webStartIdx);
     expect(workersIdx).toBeGreaterThan(curlIdx);
     expect(caddyIdx).toBeGreaterThan(workersIdx);
+  });
+
+  it('uses the PM2 recreate path when zero downtime is explicitly disabled', async () => {
+    const executor = new FakeRemoteExecutor();
+    baseStubs(executor).when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 12', stderr: '', exitCode: 0 });
+    const orchestrator = await buildOrchestrator(executor, bgConfig({
+      zeroDowntime: false,
+      healthCheck: { enabled: false, path: '/health', timeout: 30, retries: 1, startupDelay: 0 },
+    }));
+
+    await orchestrator.deploy({ cwd: '/test', skipBuild: false });
+
+    const commands = executor.getHistory().map((entry) => entry.command);
+    expect(commands.some((command) => command.includes('ecosystem.config.cjs') && command.includes('pm2 start'))).toBe(true);
+    expect(commands.some((command) => command.includes('ecosystem.web.cjs'))).toBe(false);
+    expect(commands.some((command) => command.includes('deploy-state.json'))).toBe(false);
   });
 });

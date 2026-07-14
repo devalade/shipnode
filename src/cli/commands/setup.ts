@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
+import { Result, type Result as ResultType } from 'better-result';
 import { Listr } from 'listr2';
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
@@ -13,6 +14,7 @@ import {
   buildRedisProbeCommand,
 } from '../../infrastructure/provisioning/commands.js';
 import { loadUsersYml, saveUsersYml, syncUsers, upsertUser } from './user.js';
+import { Pm2StartupError } from '../../shared/result-errors.js';
 
 const DEPLOY_USER = 'deploy';
 
@@ -92,13 +94,17 @@ function asUser(user: string | null, cmd: string): string {
   return `sudo -u "${user}" bash -lc '${escaped}'`;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
 export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
   const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
   // When a deploy user was bootstrapped, install mise/node/pm2 into their home
   // so PM2 processes run as that user and `pm2-<user>.service` matches. Without
   // this, everything lands in root's home and deploy has no pm2 on their PATH.
-  const targetHome = ownerUser ? `/home/${ownerUser}` : '$HOME';
+  const effectiveUser = ownerUser ?? config.ssh.user;
   const hasApps = config.apps.length > 0;
   const hasAccessories = Object.keys(config.accessories ?? {}).length > 0;
 
@@ -169,17 +175,16 @@ export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, own
             // shims tools it manages itself), so we resolve pm2's real path via
             // `mise exec node@X -- which pm2` and pass that to `env PATH=... pm2`.
             title: `Configure systemd startup (${ownerUser ?? '$USER'})`,
-            task: () => executor.execOrThrow(
-              (ownerUser
-                ? `PM2_BIN=$(sudo -u "${ownerUser}" bash -lc '${mise}; mise exec "node@${nodeVersion}" -- which pm2'); ` +
-                  `[ -n "$PM2_BIN" ] && env PATH="$(dirname "$PM2_BIN"):$PATH" "$PM2_BIN" startup systemd -u "${ownerUser}" --hp "${targetHome}" || true`
-                : `${mise}; mise exec "node@${nodeVersion}" -- pm2 startup systemd -u $USER --hp $HOME || true`) +
-              ` && ` +
-              asUser(
+            task: async () => {
+              const result = await configurePm2Startup(
+                executor,
+                effectiveUser,
                 ownerUser,
-                `${mise}; mise exec "node@${nodeVersion}" -- pm2 save --force || true`,
-              ),
-            ),
+                nodeVersion,
+                mise,
+              );
+              if (result.isErr()) throw result.error;
+            },
           },
         ], { concurrent: false }),
       }] : []),
@@ -259,11 +264,10 @@ export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, own
             title: `Create release structure at ${config.remotePath}`,
             task: () => executor.execOrThrow(
               'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
-              `$SUDO mkdir -p "${config.remotePath}" && ` +
-              (ownerUser
-                ? `$SUDO chown "${ownerUser}:${ownerUser}" "${config.remotePath}" && ` +
-                  `sudo -u "${ownerUser}" mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`
-                : `mkdir -p "${config.remotePath}/releases" "${config.remotePath}/shared" "${config.remotePath}/.shipnode"`),
+              `OWNER=${shellQuote(effectiveUser)}; GROUP=$(id -gn "$OWNER"); ` +
+              `$SUDO install -d -m 0755 -o "$OWNER" -g "$GROUP" ` +
+              `${shellQuote(config.remotePath)} ${shellQuote(`${config.remotePath}/releases`)} ` +
+              `${shellQuote(`${config.remotePath}/shared`)} ${shellQuote(`${config.remotePath}/.shipnode`)}`,
             ),
           },
           ...(config.apps.some((app) => app.domain) ? [{
@@ -281,4 +285,37 @@ export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, own
     ],
     { rendererOptions: { collapseErrors: false } },
   );
+}
+
+async function configurePm2Startup(
+  executor: RemoteExecutor,
+  effectiveUser: string,
+  runAsUser: string | null,
+  nodeVersion: string,
+  mise: string,
+): Promise<ResultType<void, Pm2StartupError>> {
+  const resolvePm2 = runAsUser
+    ? `sudo -u "${runAsUser}" bash -lc '${mise}; mise exec "node@${nodeVersion}" -- which pm2'`
+    : `${mise}; mise exec "node@${nodeVersion}" -- which pm2`;
+  const savePm2 = asUser(
+    runAsUser,
+    `${mise}; mise exec "node@${nodeVersion}" -- pm2 save --force`,
+  );
+  const unit = `pm2-${effectiveUser}.service`;
+  const command =
+    'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
+    `OWNER=${shellQuote(effectiveUser)}; HOME_DIR=$(getent passwd "$OWNER" | cut -d: -f6); ` +
+    `PM2_BIN=$(${resolvePm2}); ` +
+    `[ -n "$HOME_DIR" ] && [ -x "$PM2_BIN" ] && ` +
+    `$SUDO env PATH="$(dirname "$PM2_BIN"):$PATH" "$PM2_BIN" startup systemd -u "$OWNER" --hp "$HOME_DIR" && ` +
+    `$SUDO test -f ${shellQuote(`/etc/systemd/system/${unit}`)} && ` +
+    `$SUDO systemctl is-enabled --quiet ${shellQuote(unit)} && ` +
+    savePm2;
+
+  const result = await executor.exec(command);
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr || result.stdout).trim() || `command exited with ${result.exitCode}`;
+    return Result.err(new Pm2StartupError({ user: effectiveUser, detail }));
+  }
+  return Result.ok(undefined);
 }

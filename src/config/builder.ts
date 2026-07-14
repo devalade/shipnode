@@ -142,6 +142,12 @@ export class ShipnodeBuilder {
     return this;
   }
 
+  /** Disable the automatic blue-green strategy for a backend served by Caddy. */
+  noZeroDowntime(): this {
+    this.config.zeroDowntime = false;
+    return this;
+  }
+
   sharedDirs(dirs: string[]): this {
     this.config.sharedDirs = dirs;
     return this;
@@ -362,6 +368,12 @@ export class ShipnodeAppBuilder {
   zeroDowntime(altPort?: number): this {
     this.state.zeroDowntime = true;
     if (altPort !== undefined) this.state.altPort = altPort;
+    return this;
+  }
+
+  /** Disable the automatic blue-green strategy for this backend served by Caddy. */
+  noZeroDowntime(): this {
+    this.state.zeroDowntime = false;
     return this;
   }
 

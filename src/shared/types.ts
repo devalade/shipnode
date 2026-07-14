@@ -161,7 +161,8 @@ export interface ShipnodeApp {
   envFile: string;
   keepReleases: number;
   /**
-   * Zero-downtime (blue-green) releases for a backend web app. When true the
+   * Zero-downtime (blue-green) releases for a backend web app. Defaults to true
+   * when the backend has a domain and a PM2 web port. When true the
    * new release boots on the idle colour's port while the old colour keeps
    * serving; Caddy's upstream is flipped only after the health check passes.
    * Requires one pm2 app with a port. See docs/adr and blue-green.ts.

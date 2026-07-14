@@ -6,7 +6,7 @@ import { HealthCheckService } from '../../services/health.service.js';
 import { CaddyService } from '../../services/caddy.service.js';
 import { AccessoryService } from '../../services/accessory.service.js';
 import { DeployError } from '../../shared/errors.js';
-import { getWebApp, getPm2Name } from '../pm2/apps.js';
+import { getPm2Name } from '../pm2/apps.js';
 import {
   readDeployState,
   writeDeployState,
@@ -71,6 +71,7 @@ export class DeployOrchestrator {
 
     let previousReleasePath: string | null = null;
     let symlinkSwitched = false;
+    let trafficSwitched = false;
 
     try {
       previousReleasePath = await releases.getCurrentReleasePath();
@@ -131,11 +132,15 @@ export class DeployOrchestrator {
       if (target) {
         await this.caddy.configureBackend(app, target.port);
         await this.caddy.reload();
+        trafficSwitched = true;
         await writeDeployState(this.executor, appPath, {
           activeColor: target.color,
           bluePort: target.bluePort,
           greenPort: target.greenPort,
         });
+        if (strategy.afterTrafficSwitch) {
+          await strategy.afterTrafficSwitch(startCtx);
+        }
         console.log(chalk.dim(`  blue-green: traffic now on ${target.color} (port ${target.port})`));
       }
 
@@ -159,7 +164,7 @@ export class DeployOrchestrator {
       const duration = Math.round((Date.now() - deployStart) / 1000);
       const message = error instanceof Error ? error.message : String(error);
 
-      if (symlinkSwitched && previousReleasePath) {
+      if (symlinkSwitched && previousReleasePath && !trafficSwitched) {
         try {
           await releases.switchSymlink(previousReleasePath);
           console.log(chalk.dim(`  reverted current → ${previousReleasePath.split('/').pop()}`));
@@ -193,7 +198,7 @@ export class DeployOrchestrator {
    */
   private async resolveDeployTarget(app: ShipnodeApp, appPath: string): Promise<DeployTarget | undefined> {
     if (app.appType !== 'backend' || !app.zeroDowntime) return undefined;
-    const webApp = getWebApp({ ...this.config, apps: [app] } as ShipnodeConfig);
+    const webApp = app.pm2?.apps.find((pm2App) => pm2App.port !== undefined);
     if (!webApp?.port) return undefined;
 
     const state = await readDeployState(this.executor, appPath);

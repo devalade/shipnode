@@ -198,11 +198,17 @@ export class BackendStrategy implements DeploymentStrategy {
     cdPath: string,
     mise: string,
   ): Promise<void> {
-    const target = ctx.deployTarget!;
-    const pm2 = this.app.pm2!;
+    const target = ctx.deployTarget;
+    const pm2 = this.app.pm2;
+    if (!target || !pm2) {
+      throw new Error('Blue-green start requires a deploy target and PM2 configuration');
+    }
     const namespace = pm2.apps[0].name;
     // Guaranteed by schema: zeroDowntime requires a web app (one pm2 app with a port).
-    const webApp = pm2.apps.find((a) => a.port !== undefined)!;
+    const webApp = pm2.apps.find((app) => app.port !== undefined);
+    if (!webApp) {
+      throw new Error('Blue-green start requires one PM2 app with a port');
+    }
     const workers = pm2.apps.filter((a) => a.port === undefined);
     const coloredName = coloredWebName(namespace, webApp.name, target.color);
 
@@ -221,12 +227,6 @@ export class BackendStrategy implements DeploymentStrategy {
 
     await this.relinkPackages(ctx, pkgManager, cdPath, mise);
 
-    // On the first blue-green deploy, the pre-existing uncoloured web process
-    // (recreate path, or pre-blue-green) still holds the web (== blue) port.
-    // Delete it by name so the target colour can bind.
-    const legacyCleanup = target.previousColor === null
-      ? `{ mise exec -- pm2 delete "${getPm2Name(namespace, webApp.name)}" 2>/dev/null || true; } && `
-      : '';
     // Reap any stale same-colour instance (from two deploys ago; serving nothing),
     // then guard the target port against a genuine foreign conflict.
     const reapTarget = `{ mise exec -- pm2 delete "${coloredName}" 2>/dev/null || true; } && `;
@@ -234,7 +234,6 @@ export class BackendStrategy implements DeploymentStrategy {
 
     await ctx.executor.execOrThrow(
       `cd "${cdPath}" && ${mise} && ` +
-      legacyCleanup +
       reapTarget +
       portGuard +
       `mise exec -- pm2 start "${webRuntimePath}" --update-env && ` +
@@ -259,6 +258,23 @@ export class BackendStrategy implements DeploymentStrategy {
     await ctx.executor.execOrThrow(
       `cd "${cdPath}" && ${mise} && ` +
       `{ mise exec -- pm2 reload "${workersRuntimePath}" --update-env 2>/dev/null || mise exec -- pm2 start "${workersRuntimePath}" --update-env; } && ` +
+      `mise exec -- pm2 save`,
+    );
+  }
+
+  /** Remove a pre-blue-green process only once Caddy serves the green release. */
+  async afterTrafficSwitch(ctx: StrategyContext): Promise<void> {
+    if (!this.app.zeroDowntime || !ctx.deployTarget || !this.app.pm2) return;
+    if (ctx.deployTarget.previousColor !== null) return;
+
+    const namespace = this.app.pm2.apps[0].name;
+    const webApp = this.app.pm2.apps.find((app) => app.port !== undefined);
+    if (!webApp) return;
+
+    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    await ctx.executor.execOrThrow(
+      `${mise} && ` +
+      `{ mise exec -- pm2 delete "${getPm2Name(namespace, webApp.name)}" 2>/dev/null || true; } && ` +
       `mise exec -- pm2 save`,
     );
   }

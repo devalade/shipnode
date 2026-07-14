@@ -86,6 +86,42 @@ export class ReleaseRollbackError extends TaggedError('ReleaseRollbackError')<{
   }
 }
 
+export class Pm2StartupError extends TaggedError('Pm2StartupError')<{
+  user: string;
+  detail: string;
+  message: string;
+}>() {
+  constructor(args: { user: string; detail: string }) {
+    super({
+      ...args,
+      message: `Failed to configure PM2 startup for '${args.user}': ${args.detail}`,
+    });
+  }
+}
+
+export class SshAuthenticationUnavailableError extends TaggedError('SshAuthenticationUnavailableError')<{
+  message: string;
+}>() {
+  constructor() {
+    super({
+      message: 'No SSH auth method found. Set identityFile, run ssh-add, or place a key in ~/.ssh/',
+    });
+  }
+}
+
+export class SshIdentityFileUnreadableError extends TaggedError('SshIdentityFileUnreadableError')<{
+  path: string;
+  cause: unknown;
+  message: string;
+}>() {
+  constructor(args: { path: string; cause: unknown }) {
+    super({
+      ...args,
+      message: `SSH identity file is not readable: ${args.path}`,
+    });
+  }
+}
+
 export type ServerTargetError =
   | MissingServerTargetError
   | UnknownServerTargetError;

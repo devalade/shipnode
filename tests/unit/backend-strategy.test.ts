@@ -502,7 +502,7 @@ describe('BackendStrategy.startApp — blue-green', () => {
   }
 
   it('writes a coloured web ecosystem on the target port and starts it', async () => {
-    const strategy = makeStrategy(makeConfig({ zeroDowntime: true }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ zeroDowntime: true, domain: 'api.example.com' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget() }));
 
@@ -518,7 +518,7 @@ describe('BackendStrategy.startApp — blue-green', () => {
   });
 
   it('does not delete the legacy uncoloured process on a non-first deploy', async () => {
-    const strategy = makeStrategy(makeConfig({ zeroDowntime: true }), '/local/project');
+    const strategy = makeStrategy(makeConfig({ zeroDowntime: true, domain: 'api.example.com' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget({ previousColor: 'blue' }) }));
 
@@ -526,14 +526,19 @@ describe('BackendStrategy.startApp — blue-green', () => {
     expect(start).not.toContain('pm2 delete "myapp"');
   });
 
-  it('deletes the legacy uncoloured process on the first blue-green deploy', async () => {
-    const strategy = makeStrategy(makeConfig({ zeroDowntime: true }), '/local/project');
+  it('keeps the legacy process until traffic has switched, then removes it', async () => {
+    const strategy = makeStrategy(makeConfig({ zeroDowntime: true, domain: 'api.example.com' }), '/local/project');
     const executor = new FakeRemoteExecutor();
-    await strategy.startApp!(makeCtx(executor, { deployTarget: bgTarget({ color: 'blue', port: 3000, previousColor: null }) }));
+    const ctx = makeCtx(executor, { deployTarget: bgTarget({ color: 'green', port: 3001, previousColor: null }) });
+    await strategy.startApp!(ctx);
 
     const start = executor.getHistory().map((h) => h.command).find((c) => c.includes('pm2 start') && c.includes('ecosystem.web.cjs'))!;
-    // frees the web (== blue) port held by the pre-blue-green process
-    expect(start).toContain('pm2 delete "myapp"');
+    expect(start).not.toContain('pm2 delete "myapp"');
+
+    await strategy.afterTrafficSwitch!(ctx);
+    const cleanup = executor.getLastCommand()?.command;
+    expect(cleanup).toContain('pm2 delete "myapp"');
+    expect(cleanup).toContain('pm2 save');
   });
 
   it('keeps workers in a single set written at start, reloaded only in afterHealthy', async () => {
@@ -542,6 +547,7 @@ describe('BackendStrategy.startApp — blue-green', () => {
       ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
       remotePath: '/var/www/app',
       zeroDowntime: true,
+      domain: 'api.example.com',
       pm2: { apps: [{ name: 'api', port: 3000 }, { name: 'worker', command: 'node dist/worker.js' }] },
       pkgManager: 'npm',
     });

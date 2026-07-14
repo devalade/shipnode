@@ -1,5 +1,5 @@
-import { resolve } from 'path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { relative, resolve, sep } from 'path';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { pathExists, ensureDir } from 'fs-extra';
 import { execa } from 'execa';
 import { loadConfig } from '../../config/loader.js';
@@ -56,20 +56,34 @@ async function hasBuildScript(cwd: string): Promise<boolean> {
   if (!(await pathExists(pkgPath))) return false;
   try {
     const raw = await readFile(pkgPath, 'utf8');
-    const pkg = JSON.parse(raw) as { scripts?: Record<string, string> };
-    return Boolean(pkg.scripts?.build);
+    const pkg: unknown = JSON.parse(raw);
+    if (typeof pkg !== 'object' || pkg === null || !('scripts' in pkg)) return false;
+    const scripts = pkg.scripts;
+    return typeof scripts === 'object' && scripts !== null && 'build' in scripts;
   } catch {
     return false;
   }
 }
 
-function generateWorkflow(pm: PkgManagerInfo, withBuild: boolean): string {
+function yamlSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function generateWorkflow(
+  pm: PkgManagerInfo,
+  withBuild: boolean,
+  packageSpec: string,
+  deployDirectory?: string,
+): string {
   const setupPmStep = pm.setupAction
     ? `      - name: Setup ${pm.id}\n        uses: ${pm.setupAction}\n\n`
     : '';
 
   const buildStep = withBuild
     ? `\n      - name: Build\n        run: ${pm.id} run build\n`
+    : '';
+  const deployWorkingDirectory = deployDirectory
+    ? `\n        working-directory: ${yamlSingleQuoted(deployDirectory)}`
     : '';
 
   return `name: Deploy via Shipnode
@@ -109,25 +123,29 @@ ${buildStep}
           echo "\${{ secrets.SHIPNODE_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
 
       - name: Install Shipnode
-        run: npm install -g shipnode
+        run: npm install -g ${packageSpec}
 
       - name: Deploy
-        run: shipnode deploy
+        run: shipnode deploy${deployWorkingDirectory}
 `;
 }
 
 // ── cmdCiGithub ───────────────────────────────────────────────────────────────
 
 export async function cmdCiGithub(cwd: string): Promise<void> {
-  const pm = await detectPkgManager(cwd);
-  const withBuild = await hasBuildScript(cwd);
+  const canonicalCwd = await realpath(cwd);
+  const repositoryRoot = await resolveRepositoryRoot(canonicalCwd);
+  const deployDirectory = relative(repositoryRoot, canonicalCwd).split(sep).join('/') || undefined;
+  const pm = await detectPkgManager(repositoryRoot);
+  const withBuild = await hasBuildScript(repositoryRoot);
+  const packageSpec = await currentPackageSpec();
 
   ui.info(`Detected package manager: ${pm.id}`);
   if (withBuild) {
     ui.info('Found scripts.build in package.json — build step will be included.');
   }
 
-  const workflowDir = resolve(cwd, '.github', 'workflows');
+  const workflowDir = resolve(repositoryRoot, '.github', 'workflows');
   const workflowPath = resolve(workflowDir, 'shipnode-deploy.yml');
 
   if (await pathExists(workflowPath)) {
@@ -139,7 +157,7 @@ export async function cmdCiGithub(cwd: string): Promise<void> {
   }
 
   await ensureDir(workflowDir);
-  const content = generateWorkflow(pm, withBuild);
+  const content = generateWorkflow(pm, withBuild, packageSpec, deployDirectory);
   await writeFile(workflowPath, content, 'utf8');
 
   ui.success(`Workflow written to .github/workflows/shipnode-deploy.yml`);
@@ -153,6 +171,32 @@ export async function cmdCiGithub(cwd: string): Promise<void> {
   console.log('');
   console.log('  Note: Host, user, and port are read from shipnode.config.ts (committed to repo).');
   console.log('  Only the private key must be kept as a secret.');
+}
+
+async function resolveRepositoryRoot(cwd: string): Promise<string> {
+  try {
+    const result = await execa('git', ['rev-parse', '--show-toplevel'], { cwd });
+    const root = result.stdout.trim();
+    return root || cwd;
+  } catch {
+    return cwd;
+  }
+}
+
+async function currentPackageSpec(): Promise<string> {
+  const raw = await readFile(new URL('../../../package.json', import.meta.url), 'utf8');
+  const metadata: unknown = JSON.parse(raw);
+  if (
+    typeof metadata !== 'object' ||
+    metadata === null ||
+    !('name' in metadata) ||
+    !('version' in metadata) ||
+    typeof metadata.name !== 'string' ||
+    typeof metadata.version !== 'string'
+  ) {
+    throw new Error('Shipnode package metadata is missing name or version');
+  }
+  return `${metadata.name}@${metadata.version}`;
 }
 
 // ── cmdCiEnvSync ──────────────────────────────────────────────────────────────

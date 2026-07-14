@@ -97,12 +97,12 @@ export async function cmdHarden(cwd: string, options: { config?: string }): Prom
 
       ui.heading('Fail2ban');
       const f2b = (await executor.exec(sec.fail2banCheckActiveCommand())).stdout;
-      if (!f2b.includes('ACTIVE')) {
+      if (!sec.isFail2banActive(f2b)) {
         ui.warn('Fail2ban not active.');
         if (await confirm('Install and configure fail2ban?')) {
-          await executor.exec(sec.fail2banInstallCommand());
-          await executor.exec(sec.fail2banApplyConfigCommand());
-          await executor.exec(sec.fail2banEnableCommand());
+          await executor.execOrThrow(sec.fail2banInstallCommand());
+          await executor.execOrThrow(sec.fail2banApplyConfigCommand());
+          await executor.execOrThrow(sec.fail2banEnableCommand());
           ui.success('Fail2ban installed');
           changes.push('Fail2ban: installed, sshd jail enabled');
         }

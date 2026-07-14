@@ -51,7 +51,8 @@ function checkLocal(config: ShipnodeConfig): void {
   }
 }
 
-async function checkRemote(
+/** Run remote dependency diagnostics through the same executor used by the CLI. */
+export async function checkRemote(
   config: ShipnodeConfig,
   executor: { exec: (cmd: string, opts?: { timeout?: number }) => Promise<{ stdout: string; exitCode: number }> },
 ): Promise<void> {
@@ -62,9 +63,11 @@ async function checkRemote(
   const needsCaddy = config.apps.some((app) => app.domain);
   const needsDocker = Object.keys(config.accessories ?? {}).length > 0;
 
+  const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
+  const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
   const checks = [
-    ...(needsNode ? [{ name: 'Node', cmd: 'node --version' }] : []),
-    ...(needsPm2 ? [{ name: 'PM2', cmd: 'pm2 --version' }] : []),
+    ...(needsNode ? [{ name: 'Node', cmd: `${mise}; mise exec "node@${nodeVersion}" -- node --version` }] : []),
+    ...(needsPm2 ? [{ name: 'PM2', cmd: `${mise}; mise exec "node@${nodeVersion}" -- pm2 --version` }] : []),
     ...(needsCaddy ? [{ name: 'Caddy', cmd: 'caddy version' }] : []),
     ...(needsDocker ? [{ name: 'Docker', cmd: 'docker --version' }] : []),
     { name: 'rsync', cmd: 'rsync --version' },
@@ -95,9 +98,11 @@ async function checkRemote(
   }
 }
 
-async function checkSecurity(
+/** Run the security audit and write each complete diagnostic section to `write`. */
+export async function checkSecurity(
   config: { remotePath: string },
   executor: { exec: (cmd: string) => Promise<{ stdout: string }> },
+  write: (output: string) => void = console.log,
 ): Promise<void> {
   ui.info('Running security audit...');
 
@@ -105,19 +110,23 @@ async function checkSecurity(
     'sudo grep -E "^(PermitRootLogin|PasswordAuthentication|Port)" /etc/ssh/sshd_config 2>/dev/null || echo "not found"',
   );
   ui.info('SSH Configuration:');
-  console.log(`  ${sshdResult.stdout.replace(/\n/g, '\n  ')}`);
+  write(indentDiagnosticOutput(sshdResult.stdout));
 
   const firewallResult = await executor.exec(
     'sudo ufw status 2>/dev/null || sudo iptables -L -n 2>/dev/null || echo "no firewall detected"',
   );
   ui.info('Firewall Status:');
-  console.log(`  ${firewallResult.stdout.split('\n').slice(0, 5).join('\n  ')}`);
+  write(indentDiagnosticOutput(firewallResult.stdout));
 
   const fail2banResult = await executor.exec('sudo fail2ban-client status 2>/dev/null || echo "fail2ban not installed"');
   ui.info('Fail2ban:');
-  console.log(`  ${fail2banResult.stdout.split('\n')[0]}`);
+  write(`  ${fail2banResult.stdout.split('\n')[0]}`);
 
   const permResult = await executor.exec(`stat -c "%a %U:%G" "${config.remotePath}/shared/.env" 2>/dev/null || echo "no .env found"`);
   ui.info('Env file permissions:');
-  console.log(`  ${permResult.stdout}`);
+  write(`  ${permResult.stdout}`);
+}
+
+function indentDiagnosticOutput(output: string): string {
+  return `  ${output.replace(/\n/g, '\n  ')}`;
 }

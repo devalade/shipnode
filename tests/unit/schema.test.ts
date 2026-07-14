@@ -115,6 +115,50 @@ describe('ShipnodeConfigSchema', () => {
     });
 
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.apps[0].zeroDowntime).toBe(true);
+    }
+  });
+
+  it('keeps blue-green disabled for apps without a Caddy backend', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      apps: [
+        { name: 'worker', appType: 'backend', pm2: { apps: [{ name: 'worker', command: 'node worker.js' }] } },
+        { name: 'web', appType: 'frontend', domain: 'example.com' },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.apps.map((app) => app.zeroDowntime)).toEqual([false, false]);
+    }
+  });
+
+  it('accepts zeroDowntime false as an explicit raw-config opt-out', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      domain: 'api.example.com',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      zeroDowntime: false,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.apps[0].zeroDowntime).toBe(false);
+    }
+  });
+
+  it('rejects forced blue-green without a Caddy domain', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      zeroDowntime: true,
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it('applies health check defaults', () => {

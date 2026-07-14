@@ -143,7 +143,7 @@ export const ShipnodeAppSchema = z.object({
   healthCheck: HealthCheckConfigSchema,
   envFile: z.string().default('.env'),
   keepReleases: z.number().int().min(1).default(5),
-  zeroDowntime: z.boolean().default(false),
+  zeroDowntime: z.boolean().optional(),
   altPort: z.number().int().positive().optional(),
   sharedDirs: z.array(z.string()).optional(),
   sharedFiles: z.array(z.string()).optional(),
@@ -163,9 +163,11 @@ export const ShipnodeAppSchema = z.object({
 ).refine(
   (cfg) => {
     if (!cfg.zeroDowntime) return true;
-    return cfg.appType === 'backend' && (cfg.pm2?.apps.some((a) => a.port !== undefined) ?? false);
+    return cfg.appType === 'backend' &&
+      cfg.domain !== undefined &&
+      (cfg.pm2?.apps.some((a) => a.port !== undefined) ?? false);
   },
-  { message: 'zeroDowntime requires a backend web app: one pm2.apps entry must declare a port', path: ['zeroDowntime'] },
+  { message: 'zeroDowntime requires a backend web app behind Caddy: set a domain and one pm2 port', path: ['zeroDowntime'] },
 ).refine(
   (cfg) => {
     if (!cfg.zeroDowntime || cfg.altPort === undefined) return true;
@@ -173,7 +175,14 @@ export const ShipnodeAppSchema = z.object({
     return webPort === undefined || cfg.altPort !== webPort;
   },
   { message: 'altPort must differ from the web app port (blue and green need distinct ports)', path: ['altPort'] },
-);
+).transform((cfg) => ({
+  ...cfg,
+  zeroDowntime: cfg.zeroDowntime ?? (
+      cfg.appType === 'backend' &&
+      cfg.domain !== undefined &&
+      (cfg.pm2?.apps.some((app) => app.port !== undefined) ?? false)
+    ),
+}));
 
 // A z.preprocess wrapper synthesizes `apps[0]` from the legacy top-level fields when
 // the input doesn't carry `apps`. This lets every 2.x config (including the existing

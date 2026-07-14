@@ -66,8 +66,13 @@ export async function readDeployState(
   const raw = result.stdout.trim();
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as Partial<DeployState>;
+    const parsed: unknown = JSON.parse(raw);
     if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'activeColor' in parsed &&
+      'bluePort' in parsed &&
+      'greenPort' in parsed &&
       (parsed.activeColor === 'blue' || parsed.activeColor === 'green') &&
       typeof parsed.bluePort === 'number' &&
       typeof parsed.greenPort === 'number'
@@ -95,8 +100,9 @@ export async function writeDeployState(
 /**
  * Decide which colour/port the incoming release targets.
  *
- * First deploy (no state): target blue on the web port; the green port comes
- * from `altPort`. There is nothing to keep or roll back to.
+ * First deploy (no state): target green on the alternate port. This preserves
+ * a pre-blue-green, uncoloured process on the configured web (blue) port until
+ * Caddy has switched traffic to the new release.
  * Otherwise: target the idle colour (opposite of the active one).
  */
 export function resolveTarget(
@@ -106,8 +112,8 @@ export function resolveTarget(
 ): DeployTarget {
   if (!state) {
     return {
-      color: 'blue',
-      port: webPort,
+      color: 'green',
+      port: altPort,
       previousColor: null,
       previousPort: null,
       bluePort: webPort,

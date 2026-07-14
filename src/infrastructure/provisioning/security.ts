@@ -44,7 +44,12 @@ export function ufwConfigureCommands(): string[] {
 }
 
 export function fail2banCheckActiveCommand(): string {
-  return `command -v fail2ban-server &>/dev/null && systemctl is-active fail2ban && echo "ACTIVE" || echo "NOT_ACTIVE"`;
+  return `command -v fail2ban-server &>/dev/null && systemctl is-active --quiet fail2ban && echo "ACTIVE" || echo "NOT_ACTIVE"`;
+}
+
+/** Match the probe protocol exactly; incidental output must not look healthy. */
+export function isFail2banActive(output: string): boolean {
+  return output.trim() === 'ACTIVE';
 }
 
 export function fail2banInstallCommand(): string {
