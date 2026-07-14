@@ -4,7 +4,7 @@ Backend web apps behind Caddy (a domain plus a PM2 web port) use blue-green rele
 
 ## Mechanism
 
-Two ports, named **blue** and **green**. Blue is the web app's configured `port`; green is `altPort` (default `port + 1`). Exactly one colour is *active* at a time — Caddy's `reverse_proxy` upstream points at it. The active colour and the port pair are persisted on the host in `<appPath>/.shipnode/deploy-state.json`.
+Two ports, named **blue** and **green**. Blue is the web app's configured `port`; green is `altPort`. By default, green uses a less commonly occupied port offset by 10,000 (`3000 → 13000`); for blue ports above 55535, Shipnode subtracts 10,000 to remain within the TCP port range. Exactly one colour is *active* at a time — Caddy's `reverse_proxy` upstream points at it. The active colour and the port pair are persisted on the host in `<appPath>/.shipnode/deploy-state.json`.
 
 Each deploy:
 

@@ -23,9 +23,13 @@ describe('blue-green helpers', () => {
     expect(portFor('green', state)).toBe(3001);
   });
 
-  it('resolveAltPort defaults to web port + 1', () => {
-    expect(resolveAltPort(3000)).toBe(3001);
+  it('resolveAltPort defaults to an uncommon port 10,000 above the web port', () => {
+    expect(resolveAltPort(3000)).toBe(13000);
     expect(resolveAltPort(3000, 4000)).toBe(4000);
+  });
+
+  it('resolveAltPort stays within the valid TCP port range', () => {
+    expect(resolveAltPort(60_000)).toBe(50_000);
   });
 
   it('coloredWebName suffixes the pm2 name', () => {

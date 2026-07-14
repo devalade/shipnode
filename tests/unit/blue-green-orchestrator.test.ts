@@ -72,13 +72,13 @@ describe('blue-green deploy (orchestrator)', () => {
     const webEco = cmds.find((c) => c.includes('ecosystem.web.config.cjs') && c.includes('echo'));
     expect(webEco).toBeDefined();
     expect(webEco).toContain('app-green');
-    expect(webEco).toContain('PORT: 3001');
+    expect(webEco).toContain('PORT: 13000');
 
-    const curl = cmds.find((c) => c.includes('curl') && c.includes('localhost:3001/health'));
+    const curl = cmds.find((c) => c.includes('curl') && c.includes('localhost:13000/health'));
     expect(curl).toBeDefined();
 
-    // Caddy flipped to port 3000 and reloaded, then state persisted — in that order
-    const caddyIdx = cmds.findIndex((c) => c.includes('reverse_proxy localhost:3001') && c.includes('tee'));
+    // Caddy flipped to the green port and reloaded, then state persisted — in that order
+    const caddyIdx = cmds.findIndex((c) => c.includes('reverse_proxy localhost:13000') && c.includes('tee'));
     const reloadIdx = cmds.findIndex((c) => c.includes('systemctl reload caddy'));
     const stateIdx = cmds.findIndex((c) => c.includes('deploy-state.json') && c.includes('base64 -d'));
     const cleanupIdx = cmds.findIndex((c) => c.includes('pm2 delete "app"'));

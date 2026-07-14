@@ -32,7 +32,7 @@ describe('DeployOrchestrator — multi-app', () => {
       // lock
       .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
       // health check on the backend
-      .when((cmd) => cmd.includes('curl') && cmd.includes('localhost:3001'), { stdout: '200 42', exitCode: 0 })
+      .when((cmd) => cmd.includes('curl') && cmd.includes('localhost:13000'), { stdout: '200 42', exitCode: 0 })
       // pm2 jlist — both apps must be online
       .when((cmd) => cmd.includes('pm2 jlist'), {
         stdout: JSON.stringify([
@@ -96,7 +96,7 @@ describe('DeployOrchestrator — multi-app', () => {
     expect(webMkdir.length).toBeGreaterThan(0);
 
     // Health check ran for the backend (frontend has none)
-    const health = history.filter((h) => h.command.includes('curl') && h.command.includes('localhost:3001'));
+    const health = history.filter((h) => h.command.includes('curl') && h.command.includes('localhost:13000'));
     expect(health.length).toBeGreaterThan(0);
   });
 });

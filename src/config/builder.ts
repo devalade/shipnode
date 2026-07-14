@@ -134,7 +134,7 @@ export class ShipnodeBuilder {
 
   /**
    * Enable zero-downtime (blue-green) releases for the web app. Optional
-   * `altPort` sets the green port (defaults to web port + 1).
+   * `altPort` sets the green port (defaults to an uncommon port offset by 10,000).
    */
   zeroDowntime(altPort?: number): this {
     this.config.zeroDowntime = true;
@@ -363,7 +363,7 @@ export class ShipnodeAppBuilder {
 
   /**
    * Enable zero-downtime (blue-green) releases for this web app. Optional
-   * `altPort` sets the green port (defaults to web port + 1).
+   * `altPort` sets the green port (defaults to an uncommon port offset by 10,000).
    */
   zeroDowntime(altPort?: number): this {
     this.state.zeroDowntime = true;

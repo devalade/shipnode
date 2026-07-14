@@ -170,8 +170,8 @@ export interface ShipnodeApp {
   zeroDowntime: boolean;
   /**
    * The second port used by blue-green. Blue = the web app's port, green =
-   * `altPort` (defaults to web port + 1). Both colours may be resident at once,
-   * so this port must be free on the host.
+   * `altPort` (defaults to an uncommon port offset by 10,000). Both colours may
+   * be resident at once, so this port must be free on the host.
    */
   altPort?: number;
   sharedDirs?: string[];

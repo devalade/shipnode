@@ -44,9 +44,20 @@ export function portFor(color: DeployColor, state: DeployState): number {
   return color === 'blue' ? state.bluePort : state.greenPort;
 }
 
-/** The green port: explicit `altPort`, else web port + 1. */
+const ALT_PORT_OFFSET = 10_000;
+const MAX_TCP_PORT = 65_535;
+
+/**
+ * Resolve the green port.
+ *
+ * An explicit `altPort` wins. Otherwise the default is 10,000 above the web
+ * port, or 10,000 below it near the top of the TCP port range.
+ */
 export function resolveAltPort(webPort: number, altPort?: number): number {
-  return altPort ?? webPort + 1;
+  if (altPort !== undefined) return altPort;
+  return webPort <= MAX_TCP_PORT - ALT_PORT_OFFSET
+    ? webPort + ALT_PORT_OFFSET
+    : webPort - ALT_PORT_OFFSET;
 }
 
 /** PM2 process name for the web app of a given colour (`api-blue`, `api-green`). */

@@ -468,7 +468,7 @@ export default shipnode
 
 Backends with a domain and a PM2 web port use blue-green releases automatically. Shipnode starts the new web process on the idle port, checks it, and reloads Caddy only after it is healthy. Apps without a domain and worker-only apps keep the PM2 recreate path. Use `.noZeroDowntime()` to opt out explicitly; raw configuration may set `zeroDowntime: false`.
 
-Blue-green keeps the previous and current web processes resident, so budget about **2× the web process memory**. On an eligible Caddy backend, `.zeroDowntime(altPort?)` remains available to force the mode and choose the alternate port (default: web port + 1).
+Blue-green keeps the previous and current web processes resident, so budget about **2× the web process memory**. On an eligible Caddy backend, `.zeroDowntime(altPort?)` remains available to force the mode and choose the alternate port. By default, Shipnode uses a less commonly occupied port offset by 10,000 (`3000 → 13000`); near the top of the TCP range it subtracts 10,000 instead.
 
 Every app still uses a Capistrano-style release structure:
 

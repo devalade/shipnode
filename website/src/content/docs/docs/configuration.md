@@ -123,7 +123,7 @@ Registry passwords are read from environment variables on the remote host. If `R
 | `.postDeploy(fn)` | Run a function on the server after a healthy release. |
 | `.build()` | Required terminal call. Returns the resolved config. |
 
-Backend apps with both `.domain(...)` and a PM2 web `.port(...)` use blue-green deploys by default. They temporarily need about 2× the web process memory while both colours are resident. Backends without a domain and worker-only apps use PM2 recreate. Raw configs can opt out with `zeroDowntime: false`.
+Backend apps with both `.domain(...)` and a PM2 web `.port(...)` use blue-green deploys by default. The alternate port defaults to a less commonly occupied value offset by 10,000 (`3000 → 13000`), with a subtraction near the top of the TCP range. They temporarily need about 2× the web process memory while both colours are resident. Backends without a domain and worker-only apps use PM2 recreate. Raw configs can opt out with `zeroDowntime: false`.
 
 ## Aliases
 
