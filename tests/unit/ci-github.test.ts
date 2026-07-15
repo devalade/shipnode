@@ -22,6 +22,23 @@ async function readWorkflow(root: string): Promise<string> {
   return readFile(join(root, '.github', 'workflows', 'shipnode-deploy.yml'), 'utf8');
 }
 
+async function currentPackageSpec(): Promise<string> {
+  const metadata: unknown = JSON.parse(
+    await readFile(join(process.cwd(), 'package.json'), 'utf8'),
+  );
+  if (
+    typeof metadata !== 'object' ||
+    metadata === null ||
+    !('name' in metadata) ||
+    !('version' in metadata) ||
+    typeof metadata.name !== 'string' ||
+    typeof metadata.version !== 'string'
+  ) {
+    throw new Error('Invalid package metadata in test fixture');
+  }
+  return `${metadata.name}@${metadata.version}`;
+}
+
 afterEach(async () => {
   process.exitCode = undefined;
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -37,7 +54,7 @@ describe('ci github', () => {
 
     const workflow = await readWorkflow(root);
     expect(() => load(workflow)).not.toThrow();
-    expect(workflow).toContain('npm install -g @devalade/shipnode@3.2.0-alpha.0');
+    expect(workflow).toContain(`npm install -g ${await currentPackageSpec()}`);
     expect(workflow).not.toContain('paths:');
     expect(workflow).not.toContain('working-directory:');
     expect(workflow).not.toContain('- name: Build');
