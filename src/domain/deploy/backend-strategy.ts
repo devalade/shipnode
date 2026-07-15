@@ -8,6 +8,7 @@ import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
 import { DeployError } from '../../shared/errors.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
+import { runWithDotenv } from './dotenv.js';
 
 function escapeSingleQuotes(s: string): string {
   return s.replace(/'/g, "\\'");
@@ -23,20 +24,6 @@ function parseCommand(command: string | undefined, pkgManager: string): { script
   if (!command) return { script: pkgManager, args: 'start' };
   const parts = command.trim().split(/\s+/);
   return { script: parts[0], args: parts.slice(1).join(' ') };
-}
-
-/**
- * Shell snippet that sources the workDir-local `.env` into the current shell
- * so subsequent && commands inherit the variables. Returns empty string when
- * the project has no envFile so callers can interpolate it unconditionally.
- *
- * Used during install, build, and post-symlink relink. The PM2 wrapper takes
- * the same approach (see generateAppBlock) but sources `<shared>/<envFile>`
- * directly — it doesn't depend on the workDir symlink.
- */
-function sourceEnvCommand(envFile: string | undefined): string {
-  if (!envFile) return '';
-  return `set -a && . ./.env && set +a`;
 }
 
 export class BackendStrategy implements DeploymentStrategy {
@@ -98,11 +85,6 @@ export class BackendStrategy implements DeploymentStrategy {
         `{ echo ${shellSingleQuote(missingEnvMessage)} >&2; exit 1; }`,
       );
       commands.push(`ln -sf "${this.appPath}/shared/${this.app.envFile}" .env`);
-      // Source it so install/build see env vars (private-registry tokens in
-      // `.npmrc` via `${TOKEN}`, build-time secrets, etc.). Affects this shell
-      // chain only; the PM2 wrapper sources independently at process start.
-      const sourceCmd = sourceEnvCommand(this.app.envFile);
-      if (sourceCmd) commands.push(sourceCmd);
     }
 
     // Ensure third-party package managers are available on the remote
@@ -114,10 +96,10 @@ export class BackendStrategy implements DeploymentStrategy {
       commands.push(`command -v bun &>/dev/null || npm install -g bun`);
     }
 
-    commands.push(installCmd);
+    const envDependentCommands = [installCmd];
 
     if (!ctx.skipBuild) {
-      commands.push(`if [ -f package.json ] && jq -e '.scripts.build' package.json >/dev/null 2>&1; then ${runCmd} build; fi`);
+      envDependentCommands.push(`if [ -f package.json ] && jq -e '.scripts.build' package.json >/dev/null 2>&1; then ${runCmd} build; fi`);
     }
 
     // Symlink `.env` into compiled-output directories so frameworks whose env
@@ -128,7 +110,9 @@ export class BackendStrategy implements DeploymentStrategy {
     //   3. obvious monorepo layouts: `apps/*/build`, `packages/*/build`, dist twins
     // We never traverse into node_modules and never overwrite an existing
     // `.env` file.
-    commands.push(this.getEnvSymlinkCommand(ctx.workDir));
+    envDependentCommands.push(this.getEnvSymlinkCommand(ctx.workDir));
+
+    commands.push(runWithDotenv(this.app.envFile ? '.env' : undefined, envDependentCommands.join(' && ')));
 
     const installResult = await ctx.executor.exec(commands.join(' && '));
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
@@ -311,12 +295,8 @@ export class BackendStrategy implements DeploymentStrategy {
   ): Promise<void> {
     const baseInstall = this.workspace.installCommand ?? getInstallCommand(pkgManager);
     const relinkInstall = this.workspace.installCommand ? baseInstall : `${baseInstall} --prefer-offline`;
-    // Source env before relinking — private-registry tokens in `.npmrc` use
-    // env-var interpolation.
-    const sourceCmd = sourceEnvCommand(this.app.envFile);
-    const sourceStep = sourceCmd ? `${sourceCmd} && ` : '';
     const installResult = await ctx.executor.exec(
-      `cd "${cdPath}" && ${mise} && ${sourceStep}${relinkInstall}`,
+      `cd "${cdPath}" && ${mise} && ${runWithDotenv(this.app.envFile ? '.env' : undefined, relinkInstall)}`,
     );
     this.assertNoBuildScriptsIgnored(pkgManager, installResult);
     if (installResult.exitCode !== 0) {
@@ -393,16 +373,9 @@ ${appBlocks.join(',\n')}
 
     if (useWrapper) {
       const tail = origArgs ? `${origScript} ${origArgs}` : origScript;
-      // Sourcing the dotenv file happens inside the PM2-launched shell, so it
-      // can overwrite inline PM2 values such as the blue-green port. Re-apply
-      // the ecosystem's explicit values afterwards to preserve their normal
-      // precedence over the shared environment.
-      const explicitEnv = Object.entries(env)
-        .map(([key, value]) => `${key}=${shellSingleQuote(String(value))}`)
-        .join(' ');
-      const inner = `set -a && . '${escapeSingleQuotes(envFilePath)}' && set +a && export ${explicitEnv} && exec ${tail}`;
+      const runner = runWithDotenv(envFilePath, `exec ${tail}`, env);
       scriptLine = `script: 'bash',`;
-      argsLine = `\n      args: ['-c', '${escapeSingleQuotes(inner)}'],`;
+      argsLine = `\n      args: ['-c', '${escapeSingleQuotes(runner)}'],`;
     } else {
       scriptLine = `script: '${escapeSingleQuotes(origScript)}',`;
       argsLine = origArgs ? `\n      args: '${escapeSingleQuotes(origArgs)}',` : '';

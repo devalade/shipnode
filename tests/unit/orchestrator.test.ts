@@ -65,7 +65,7 @@ describe('DeployOrchestrator', () => {
     expect(lockRelease.length).toBeGreaterThan(0);
   });
 
-  it('sources .env before user preDeploy commands when envFile is configured', async () => {
+  it('loads .env with Node before user preDeploy commands when envFile is configured', async () => {
     const executor = new FakeRemoteExecutor();
     let captured: string | undefined;
     const config = makeConfig({
@@ -106,10 +106,11 @@ describe('DeployOrchestrator', () => {
     await orchestrator.deploy({ cwd: '/test', skipBuild: false });
 
     expect(captured).toBeDefined();
-    const sourceIdx = captured!.search(/set -a && \. "[^"]*\/\.env" && set \+a/);
+    const sourceIdx = captured!.indexOf('node -e');
     const userIdx = captured!.indexOf('node ace.js migration:run');
     expect(sourceIdx).toBeGreaterThan(-1);
     expect(userIdx).toBeGreaterThan(sourceIdx);
+    expect(captured).not.toContain('set -a');
   });
 
   it('runs hooks from <workDir>/<appRoot> when appRoot is configured', async () => {

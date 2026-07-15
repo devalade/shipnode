@@ -233,16 +233,17 @@ describe('BackendStrategy.setupEnvironment', () => {
     expect(cmd).toContain('"dist"');
   });
 
-  it('sources .env before install so private-registry tokens (npmrc ${VAR}) resolve', async () => {
+  it('loads .env with Node before install so private-registry tokens (npmrc ${VAR}) resolve', async () => {
     const strategy = makeStrategy(makeConfig({ pkgManager: 'pnpm' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.setupEnvironment!(makeCtx(executor));
 
     const cmd = executor.getLastCommand()!.command;
-    const sourceIdx = cmd.indexOf('set -a && . ./.env && set +a');
+    const sourceIdx = cmd.indexOf('node -e');
     const installIdx = cmd.indexOf('pnpm install');
     expect(sourceIdx).toBeGreaterThan(-1);
     expect(installIdx).toBeGreaterThan(sourceIdx);
+    expect(cmd).not.toContain('set -a');
   });
 
   it('links the shared env using the configured envFile name, not a hardcoded .env', async () => {
@@ -426,7 +427,7 @@ describe('BackendStrategy.startApp', () => {
     await expect(strategy.startApp!(makeCtx(executor))).rejects.toThrow('pnpm approve-builds');
   });
 
-  it('drops the env_file ecosystem entry in favor of a bash -c env wrapper (ADR-0003)', async () => {
+  it('drops the env_file ecosystem entry in favor of a Node dotenv wrapper (ADR-0003)', async () => {
     const strategy = makeStrategy(makeConfig({ envFile: '.env.production' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     await strategy.startApp!(makeCtx(executor));
@@ -435,11 +436,11 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).not.toContain('env_file:');
     expect(writeCmd).toContain(`script: '"'"'bash'"'"',`);
     expect(writeCmd).toContain('shared/.env.production');
-    expect(writeCmd).toContain('set -a');
-    expect(writeCmd).toContain('export NODE_ENV=');
-    expect(writeCmd).toContain('PORT=');
+    expect(writeCmd).toContain('node -e');
+    expect(writeCmd).not.toContain('set -a');
+    expect(writeCmd).toContain('base64url');
+    expect(writeCmd).toContain('NODE_ENV');
     expect(writeCmd).toContain('3000');
-    expect(writeCmd.indexOf('export NODE_ENV=')).toBeGreaterThan(writeCmd.indexOf('set +a'));
     expect(writeCmd).toContain('exec');
   });
 

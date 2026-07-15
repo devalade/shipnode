@@ -18,6 +18,7 @@ import {
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
 import { BackendStrategy } from './backend-strategy.js';
 import { FrontendStrategy } from './frontend-strategy.js';
+import { runWithDotenv } from './dotenv.js';
 
 export class DeployOrchestrator {
   constructor(
@@ -241,9 +242,6 @@ export class DeployOrchestrator {
 
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
     const hookCwd = app.appRoot ? `${workDir}/${app.appRoot}` : workDir;
-    const envSource = app.envFile
-      ? `set -a && . "${workDir}/.env" && set +a && `
-      : '';
     const prefix = chalk.dim('  │ ');
 
     const onData = (chunk: string): void => {
@@ -257,7 +255,7 @@ export class DeployOrchestrator {
       env: 'production',
       exec: async (cmd: string): Promise<ExecResult> => {
         const result = await this.executor.exec(
-          `cd "${hookCwd}" && ${mise} && ${envSource}${cmd}`,
+          `cd "${hookCwd}" && ${mise} && ${runWithDotenv(app.envFile ? `${workDir}/.env` : undefined, cmd)}`,
           { onData },
         );
         if (result.exitCode !== 0) {
