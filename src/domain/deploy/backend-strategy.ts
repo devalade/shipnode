@@ -89,6 +89,14 @@ export class BackendStrategy implements DeploymentStrategy {
     if (this.app.envFile) {
       // Use the configured env filename in the shared path; the local workDir
       // alias stays `.env` (the well-known name framework loaders look for).
+      const sharedEnvPath = `${this.appPath}/shared/${this.app.envFile}`;
+      const missingEnvMessage =
+        `Remote environment file is missing for app ${this.app.name}. ` +
+        `Run: shipnode env --app ${this.app.name}`;
+      commands.push(
+        `[ -f ${shellSingleQuote(sharedEnvPath)} ] || ` +
+        `{ echo ${shellSingleQuote(missingEnvMessage)} >&2; exit 1; }`,
+      );
       commands.push(`ln -sf "${this.appPath}/shared/${this.app.envFile}" .env`);
       // Source it so install/build see env vars (private-registry tokens in
       // `.npmrc` via `${TOKEN}`, build-time secrets, etc.). Affects this shell

@@ -52,7 +52,7 @@ ${chalk.bold('CLOUDFLARE')}
 
 ${chalk.bold('CI/CD')}
   ${chalk.green('ci github')}         Generate GitHub Actions deploy workflow
-  ${chalk.green('ci env-sync')}       Sync .env and config to GitHub secrets
+  ${chalk.green('ci env-sync')}       Sync one dotenv file to a GitHub Environment
 
 ${chalk.bold('CONFIGURATION')}
   ${chalk.green('config show')}       Show resolved configuration
@@ -71,6 +71,8 @@ ${chalk.bold('OPTIONS')}
   --tty                Force interactive TTY (run only)
   --security           Run security audit (doctor only)
   --all                Skip confirmation (ci env-sync only)
+  --environment <name> GitHub deployment environment (CI commands)
+  --sync-env           Upload app env before CI deploy (ci github only)
   --config <path>      Use a specific config file
 
 ${chalk.bold('EXAMPLES')}
@@ -90,7 +92,11 @@ ${chalk.bold('EXAMPLES')}
   shipnode env && shipnode restart
 
   ${chalk.dim('# Set up GitHub Actions CI')}
-  shipnode ci github && shipnode ci env-sync
+  shipnode ci github
+
+  ${chalk.dim('# Opt in to GitHub-managed application env')}
+  shipnode ci env-sync --app api --environment production --all
+  shipnode ci github --app api --environment production --sync-env
 
   ${chalk.dim('# Harden server security')}
   shipnode harden

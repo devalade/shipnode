@@ -111,6 +111,7 @@ program
   .command('env')
   .description('Upload local .env file to the server')
   .option('--file <path>', 'Path to .env file to upload (default: .env from config)')
+  .option('--no-reload', 'Upload without reloading running PM2 processes')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdEnv(process.cwd(), opts));
@@ -185,11 +186,20 @@ const ci = program.command('ci').description('CI/CD integration');
 
 ci.command('github')
   .description('Generate GitHub Actions deploy workflow')
-  .action(() => cmdCiGithub(process.cwd()));
+  .option('--app <name>', 'Target a specific app')
+  .option('--config <path>', 'Use a specific config file')
+  .option('--environment <name>', 'GitHub Environment name', 'production')
+  .option('--sync-env', 'Upload an environment-scoped dotenv secret before deploying')
+  .action((opts) => cmdCiGithub(process.cwd(), opts));
 
 ci.command('env-sync')
-  .description('Sync .env and config to GitHub repository secrets')
-  .option('--all', 'Sync all .env variables without confirmation')
+  .description('Sync a complete dotenv file to a GitHub Environment secret')
+  .option('--all', 'Skip confirmation')
+  .option('--app <name>', 'Target a specific app')
+  .option('--config <path>', 'Use a specific config file')
+  .option('--environment <name>', 'GitHub Environment name', 'production')
+  .option('--file <path>', 'Path to the dotenv file (default: app envFile)')
+  .option('--dry-run', 'Show the target without changing GitHub secrets')
   .action((opts) => cmdCiEnvSync(process.cwd(), opts));
 
 // ── Config ────────────────────────────────────────────────────────

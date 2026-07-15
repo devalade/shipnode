@@ -1,9 +1,21 @@
 import { relative, resolve, sep } from 'path';
 import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { pathExists, ensureDir } from 'fs-extra';
-import { execa } from 'execa';
+import { ExecaError, execa } from 'execa';
+import { Result, type Result as ResultType } from 'better-result';
 import { loadConfig } from '../../config/loader.js';
-import { getActiveApp } from '../../domain/workspace.js';
+import {
+  CiAppTargetRequiredError,
+  CiConfigLoadError,
+  CiEnvironmentFileNotFoundError,
+  CiEnvironmentFileReadError,
+  CiEnvironmentNameInvalidError,
+  CiEnvironmentSecretTooLargeError,
+  GitHubAuthenticationRequiredError,
+  GitHubCliUnavailableError,
+  GitHubSecretUpdateError,
+  UnknownAppError,
+} from '../../shared/result-errors.js';
 import { confirm } from '../prompt.js';
 import { ui } from '../ui.js';
 
@@ -51,39 +63,129 @@ async function detectPkgManager(cwd: string): Promise<PkgManagerInfo> {
   };
 }
 
-async function hasBuildScript(cwd: string): Promise<boolean> {
-  const pkgPath = resolve(cwd, 'package.json');
-  if (!(await pathExists(pkgPath))) return false;
-  try {
-    const raw = await readFile(pkgPath, 'utf8');
-    const pkg: unknown = JSON.parse(raw);
-    if (typeof pkg !== 'object' || pkg === null || !('scripts' in pkg)) return false;
-    const scripts = pkg.scripts;
-    return typeof scripts === 'object' && scripts !== null && 'build' in scripts;
-  } catch {
-    return false;
-  }
-}
-
 function yamlSingleQuoted(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function shellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function githubSecretSegment(value: string): string {
+  return value
+    .toUpperCase()
+    .replace(/_/g, '_UNDERSCORE_')
+    .replace(/-/g, '_DASH_')
+    .replace(/[^A-Z0-9_]/g, '_');
+}
+
+function concurrencySegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+}
+
+function parseGitHubEnvironmentName(
+  value: string | undefined,
+): ResultType<string, CiEnvironmentNameInvalidError> {
+  const environment = value ?? 'production';
+  if (!environment.trim() || environment !== environment.trim() || /[\u0000-\u001F\u007F]/.test(environment)) {
+    return Result.err(new CiEnvironmentNameInvalidError());
+  }
+  return Result.ok(environment);
+}
+
+interface CiGithubOptions {
+  app?: string;
+  config?: string;
+  environment?: string;
+  syncEnv?: boolean;
+}
+
+interface WorkflowEnvironmentTarget {
+  readonly appName: string;
+  readonly envFile: string;
+  readonly nodeVersion: string;
+}
+
+function renderCommandOptions(options: CiGithubOptions): string {
+  return [
+    ...(options.config ? ['--config', shellSingleQuoted(options.config)] : []),
+    ...(options.app ? ['--app', shellSingleQuoted(options.app)] : []),
+  ].join(' ');
+}
+
+async function resolveWorkflowEnvironmentTarget(
+  cwd: string,
+  options: CiGithubOptions,
+): Promise<ResultType<WorkflowEnvironmentTarget, CiAppSelectionError>> {
+  const configResult = await Result.tryPromise({
+    try: () => loadConfig(cwd, options.config),
+    catch: () => new CiConfigLoadError(),
+  });
+  if (configResult.isErr()) return configResult;
+
+  if (!options.app && configResult.value.apps.length > 1) {
+    return Result.err(new CiAppTargetRequiredError());
+  }
+
+  const app = options.app
+    ? configResult.value.apps.find((candidate) => candidate.name === options.app)
+    : configResult.value.apps[0];
+  if (!app) {
+    return Result.err(new UnknownAppError({ name: options.app ?? '(default)' }));
+  }
+
+  return Result.ok({
+    appName: app.name,
+    envFile: app.envFile,
+    nodeVersion: configResult.value.nodeVersion === 'lts' ? '24' : configResult.value.nodeVersion,
+  });
+}
+
 function generateWorkflow(
   pm: PkgManagerInfo,
-  withBuild: boolean,
   packageSpec: string,
   deployDirectory?: string,
+  options: CiGithubOptions = {},
+  envFile?: string,
+  nodeVersion = '20',
 ): string {
+  const environment = options.environment ?? 'production';
+  const concurrencySuffix = options.app
+    ? `${concurrencySegment(environment)}-${concurrencySegment(options.app)}`
+    : concurrencySegment(environment);
   const setupPmStep = pm.setupAction
     ? `      - name: Setup ${pm.id}\n        uses: ${pm.setupAction}\n\n`
     : '';
 
-  const buildStep = withBuild
-    ? `\n      - name: Build\n        run: ${pm.id} run build\n`
-    : '';
-  const deployWorkingDirectory = deployDirectory
+  const stepWorkingDirectory = deployDirectory
     ? `\n        working-directory: ${yamlSingleQuoted(deployDirectory)}`
+    : '';
+  const commandOptions = renderCommandOptions(options);
+  const envSyncSteps = options.syncEnv && envFile && options.app
+    ? (() => {
+      const secretName = `SHIPNODE_ENV_${githubSecretSegment(environment)}_${githubSecretSegment(options.app)}`;
+      const quotedEnvFile = shellSingleQuoted(envFile);
+      return `
+      - name: Materialize application environment
+        env:
+          SHIPNODE_ENV_FILE: \${{ secrets.${secretName} }}
+        run: |
+          [ -n "$SHIPNODE_ENV_FILE" ] || { echo "Missing GitHub Environment secret: ${secretName}" >&2; exit 1; }
+          umask 077
+          mkdir -p "$(dirname ${quotedEnvFile})"
+          printf '%s' "$SHIPNODE_ENV_FILE" > ${quotedEnvFile}${stepWorkingDirectory}
+
+      - name: Upload application environment
+        run: shipnode env${commandOptions ? ` ${commandOptions}` : ''} --file ${quotedEnvFile} --no-reload${stepWorkingDirectory}
+`;
+    })()
+    : '';
+  const cleanupStep = options.syncEnv && envFile
+    ? `
+      - name: Remove materialized environment
+        if: always()
+        run: rm -f ${shellSingleQuoted(envFile)}${stepWorkingDirectory}
+`
     : '';
 
   return `name: Deploy via Shipnode
@@ -95,9 +197,18 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: shipnode-${concurrencySuffix}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${yamlSingleQuoted(environment)}
 
     steps:
       - name: Checkout
@@ -106,12 +217,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${yamlSingleQuoted(nodeVersion)}
           cache: '${pm.cacheKey}'
 
 ${setupPmStep}      - name: Install dependencies
         run: ${pm.installCmd}
-${buildStep}
+
       - name: Setup SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -124,26 +235,63 @@ ${buildStep}
 
       - name: Install Shipnode
         run: npm install -g ${packageSpec}
+${envSyncSteps}
 
       - name: Deploy
-        run: shipnode deploy${deployWorkingDirectory}
+        run: shipnode deploy${commandOptions ? ` ${commandOptions}` : ''}${stepWorkingDirectory}
+${cleanupStep}
 `;
 }
 
 // ── cmdCiGithub ───────────────────────────────────────────────────────────────
 
-export async function cmdCiGithub(cwd: string): Promise<void> {
+export async function cmdCiGithub(
+  cwd: string,
+  options: CiGithubOptions = {},
+): Promise<void> {
+  const environment = parseGitHubEnvironmentName(options.environment);
+  if (environment.isErr()) {
+    ui.error(environment.error.message);
+    process.exitCode = 1;
+    return;
+  }
+  options = { ...options, environment: environment.value };
+
   const canonicalCwd = await realpath(cwd);
   const repositoryRoot = await resolveRepositoryRoot(canonicalCwd);
   const deployDirectory = relative(repositoryRoot, canonicalCwd).split(sep).join('/') || undefined;
   const pm = await detectPkgManager(repositoryRoot);
-  const withBuild = await hasBuildScript(repositoryRoot);
   const packageSpec = await currentPackageSpec();
+  let workflowOptions = options;
+  let envFile: string | undefined;
+  let nodeVersion = '20';
+  if (options.syncEnv) {
+    const target = await resolveWorkflowEnvironmentTarget(canonicalCwd, options);
+    if (target.isErr()) {
+      ui.error(target.error.message);
+      process.exitCode = 1;
+      return;
+    }
+    workflowOptions = { ...options, app: target.value.appName };
+    envFile = target.value.envFile;
+    nodeVersion = target.value.nodeVersion;
+  } else {
+    const configFile = resolve(canonicalCwd, options.config ?? 'shipnode.config.ts');
+    if (await pathExists(configFile)) {
+      const configResult = await Result.tryPromise({
+        try: () => loadConfig(canonicalCwd, options.config),
+        catch: () => new CiConfigLoadError(),
+      });
+      if (configResult.isErr()) {
+        ui.error(configResult.error.message);
+        process.exitCode = 1;
+        return;
+      }
+      nodeVersion = configResult.value.nodeVersion === 'lts' ? '24' : configResult.value.nodeVersion;
+    }
+  }
 
   ui.info(`Detected package manager: ${pm.id}`);
-  if (withBuild) {
-    ui.info('Found scripts.build in package.json — build step will be included.');
-  }
 
   const workflowDir = resolve(repositoryRoot, '.github', 'workflows');
   const workflowPath = resolve(workflowDir, 'shipnode-deploy.yml');
@@ -157,20 +305,37 @@ export async function cmdCiGithub(cwd: string): Promise<void> {
   }
 
   await ensureDir(workflowDir);
-  const content = generateWorkflow(pm, withBuild, packageSpec, deployDirectory);
+  const content = generateWorkflow(
+    pm,
+    packageSpec,
+    deployDirectory,
+    workflowOptions,
+    envFile,
+    nodeVersion,
+  );
   await writeFile(workflowPath, content, 'utf8');
 
   ui.success(`Workflow written to .github/workflows/shipnode-deploy.yml`);
   ui.heading('Required GitHub Secrets');
-  console.log('  Add the following secrets in your GitHub repository settings:');
-  console.log('  (Settings → Secrets and variables → Actions → New repository secret)');
+  console.log('  Repository Actions secrets:');
   console.log('');
   console.log('  SHIPNODE_SSH_KEY        Your SSH private key for server access');
   console.log('  SHIPNODE_KNOWN_HOSTS    Known hosts entry for your server');
-  console.log('                          (run: ssh-keyscan -H YOUR_HOST)');
+  console.log('                          (capture outside CI and verify the host fingerprint)');
+  if (workflowOptions.syncEnv && workflowOptions.app) {
+    const environment = workflowOptions.environment ?? 'production';
+    const secretName = `SHIPNODE_ENV_${githubSecretSegment(environment)}_${githubSecretSegment(workflowOptions.app)}`;
+    console.log('');
+    console.log(`  GitHub Environment secret (${environment}):`);
+    console.log(`  ${secretName.padEnd(25)} Complete dotenv file for ${workflowOptions.app}`);
+  }
   console.log('');
   console.log('  Note: Host, user, and port are read from shipnode.config.ts (committed to repo).');
-  console.log('  Only the private key must be kept as a secret.');
+  console.log(
+    workflowOptions.syncEnv
+      ? '  Application env is scoped to the selected GitHub Environment.'
+      : '  Application env remains on the VPS and is not copied through GitHub.',
+  );
 }
 
 async function resolveRepositoryRoot(cwd: string): Promise<string> {
@@ -201,105 +366,176 @@ async function currentPackageSpec(): Promise<string> {
 
 // ── cmdCiEnvSync ──────────────────────────────────────────────────────────────
 
-interface EnvVar {
-  key: string;
-  value: string;
+interface CiEnvSyncOptions {
+  all?: boolean;
+  app?: string;
+  config?: string;
+  environment?: string;
+  file?: string;
+  dryRun?: boolean;
 }
 
-function parseEnvFile(content: string): EnvVar[] {
-  const vars: EnvVar[] = [];
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    const value = trimmed.slice(eqIdx + 1).trim();
-    if (key) vars.push({ key, value });
+interface PreparedEnvironmentSecret {
+  readonly appName: string;
+  readonly content: string;
+  readonly environment: string;
+  readonly filePath: string;
+  readonly secretName: string;
+}
+
+const GITHUB_SECRET_MAX_BYTES = 48 * 1024;
+
+type CiAppSelectionError =
+  | CiConfigLoadError
+  | CiAppTargetRequiredError
+  | UnknownAppError;
+
+type CiEnvironmentPreparationError =
+  | CiAppSelectionError
+  | CiEnvironmentFileNotFoundError
+  | CiEnvironmentFileReadError
+  | CiEnvironmentSecretTooLargeError;
+
+type GitHubSecretSetError =
+  | GitHubCliUnavailableError
+  | GitHubAuthenticationRequiredError
+  | GitHubSecretUpdateError;
+
+function classifyGitHubSecretFailure(
+  cause: unknown,
+  secretName: string,
+  environment: string,
+): GitHubSecretSetError {
+  if (cause instanceof ExecaError && cause.code === 'ENOENT') {
+    return new GitHubCliUnavailableError();
   }
-  return vars;
+
+  const diagnostic = cause instanceof ExecaError
+    ? `${cause.stderr ?? ''} ${cause.shortMessage ?? ''}`.toLowerCase()
+    : '';
+  if (
+    diagnostic.includes('gh auth login') ||
+    diagnostic.includes('not logged') ||
+    diagnostic.includes('authentication')
+  ) {
+    return new GitHubAuthenticationRequiredError();
+  }
+
+  return new GitHubSecretUpdateError({ secretName, environment });
 }
 
-async function setGhSecret(key: string, value: string): Promise<boolean> {
-  try {
-    await execa('gh', ['secret', 'set', key, '--body', value]);
-    return true;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes('command not found') || msg.includes('ENOENT')) {
-      throw new Error(
-        'GitHub CLI (gh) not found. Install it from https://cli.github.com/ and authenticate with `gh auth login`.',
+async function prepareEnvironmentSecret(
+  cwd: string,
+  options: CiEnvSyncOptions,
+): Promise<ResultType<PreparedEnvironmentSecret, CiEnvironmentPreparationError>> {
+  const configResult = await Result.tryPromise({
+    try: () => loadConfig(cwd, options.config),
+    catch: () => new CiConfigLoadError(),
+  });
+  if (configResult.isErr()) return configResult;
+
+  if (!options.app && configResult.value.apps.length > 1) {
+    return Result.err(new CiAppTargetRequiredError());
+  }
+
+  const app = options.app
+    ? configResult.value.apps.find((candidate) => candidate.name === options.app)
+    : configResult.value.apps[0];
+  if (!app) {
+    return Result.err(new UnknownAppError({ name: options.app ?? '(default)' }));
+  }
+
+  const environment = options.environment ?? 'production';
+  const filePath = options.file ?? app.envFile;
+  const absoluteFilePath = resolve(cwd, filePath);
+  if (!(await pathExists(absoluteFilePath))) {
+    return Result.err(new CiEnvironmentFileNotFoundError({ path: filePath }));
+  }
+
+  const contentResult = await Result.tryPromise({
+    try: () => readFile(absoluteFilePath, 'utf8'),
+    catch: (cause) => new CiEnvironmentFileReadError({ path: filePath, cause }),
+  });
+  if (contentResult.isErr()) return contentResult;
+  const contentBytes = Buffer.byteLength(contentResult.value, 'utf8');
+  if (contentBytes > GITHUB_SECRET_MAX_BYTES) {
+    return Result.err(new CiEnvironmentSecretTooLargeError({
+      actualBytes: contentBytes,
+      maximumBytes: GITHUB_SECRET_MAX_BYTES,
+    }));
+  }
+
+  return Result.ok({
+    appName: app.name,
+    content: contentResult.value,
+    environment,
+    filePath,
+    secretName: `SHIPNODE_ENV_${githubSecretSegment(environment)}_${githubSecretSegment(app.name)}`,
+  });
+}
+
+async function setGitHubEnvironmentSecret(
+  prepared: PreparedEnvironmentSecret,
+): Promise<ResultType<void, GitHubSecretSetError>> {
+  return Result.tryPromise({
+    try: async () => {
+      await execa(
+        'gh',
+        ['secret', 'set', prepared.secretName, '--env', prepared.environment],
+        { input: prepared.content },
       );
-    }
-    return false;
-  }
+    },
+    catch: (cause) => classifyGitHubSecretFailure(
+      cause,
+      prepared.secretName,
+      prepared.environment,
+    ),
+  });
 }
 
 export async function cmdCiEnvSync(
   cwd: string,
-  options: { all?: boolean },
+  options: CiEnvSyncOptions,
 ): Promise<void> {
-  const config = await loadConfig(cwd, undefined);
-  const app = getActiveApp(config);
+  const environment = parseGitHubEnvironmentName(options.environment);
+  if (environment.isErr()) {
+    ui.error(environment.error.message);
+    process.exitCode = 1;
+    return;
+  }
+  options = { ...options, environment: environment.value };
 
-  const envPath = resolve(cwd, app.envFile);
-  if (!(await pathExists(envPath))) {
-    ui.error(`Env file not found: ${app.envFile}`);
-    process.exit(1);
+  const prepared = await prepareEnvironmentSecret(cwd, options);
+  if (prepared.isErr()) {
+    ui.error(prepared.error.message);
+    process.exitCode = 1;
+    return;
   }
 
-  const content = await readFile(envPath, 'utf8');
-  const envVars = parseEnvFile(content);
+  ui.info(`Source: ${prepared.value.filePath}`);
+  ui.info(`App: ${prepared.value.appName}`);
+  ui.info(`GitHub Environment: ${prepared.value.environment}`);
+  ui.info(`Secret: ${prepared.value.secretName}`);
 
-  if (envVars.length === 0) {
-    ui.warn('No variables found in env file.');
-  } else if (!options.all) {
-    console.log('\nVariables to sync from env file:');
-    for (const { key } of envVars) {
-      console.log(`  ${key}`);
-    }
-    console.log('');
-    const proceed = await confirm(`Sync ${envVars.length} variable(s) to GitHub Secrets?`);
+  if (options.dryRun) {
+    ui.success('Dry run complete — no GitHub secret was changed.');
+    return;
+  }
+
+  if (!options.all) {
+    const proceed = await confirm(`Sync the complete environment file to ${prepared.value.secretName}?`);
     if (!proceed) {
       ui.info('Sync cancelled.');
       return;
     }
   }
 
-  let set = 0;
-  let failed = 0;
-
-  // Sync env file vars
-  for (const { key, value } of envVars) {
-    const ok = await setGhSecret(key, value);
-    if (ok) {
-      ui.success(`Set: ${key}`);
-      set++;
-    } else {
-      ui.warn(`Failed: ${key}`);
-      failed++;
-    }
+  const result = await setGitHubEnvironmentSecret(prepared.value);
+  if (result.isErr()) {
+    ui.error(result.error.message);
+    process.exitCode = 1;
+    return;
   }
 
-  // Sync Shipnode connection vars from config
-  const shipnodeSecrets: EnvVar[] = [
-    { key: 'SHIPNODE_SSH_HOST', value: config.ssh.host },
-    { key: 'SHIPNODE_SSH_USER', value: config.ssh.user },
-    { key: 'SHIPNODE_SSH_PORT', value: String(config.ssh.port) },
-  ];
-
-  ui.info('Syncing Shipnode connection secrets...');
-  for (const { key, value } of shipnodeSecrets) {
-    const ok = await setGhSecret(key, value);
-    if (ok) {
-      ui.success(`Set: ${key}`);
-      set++;
-    } else {
-      ui.warn(`Failed: ${key}`);
-      failed++;
-    }
-  }
-
-  ui.heading('Sync Summary');
-  ui.info(`Set: ${set}  Skipped: 0  Failed: ${failed}`);
+  ui.success(`Set ${prepared.value.secretName} in ${prepared.value.environment}.`);
 }

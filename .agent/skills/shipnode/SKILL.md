@@ -90,6 +90,10 @@ Target one app: `shipnode deploy --app api`, `shipnode logs --app web`. `rollbac
 3. `shipnode env` (per app if multi-app: `--app api`)
 4. `shipnode deploy`
 
+### CI/CD
+
+Runtime env stays on the VPS by default: upload it with `shipnode env`, then generate a code-only workflow with `shipnode ci github`. To opt one app into GitHub-managed env, run `shipnode ci env-sync --app api --environment production`, then generate with the matching `--app api --environment production --sync-env` flags. Shipnode stores the complete dotenv file as one Environment secret and uploads it with `--no-reload` immediately before deployment.
+
 ### Releases
 Every deploy uses release dirs + atomic `current` symlink. Failed deploys revert `current` (when a previous release exists) and record `status: 'failed'`.
 

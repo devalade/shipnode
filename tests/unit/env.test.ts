@@ -1,29 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
+import { uploadEnvironmentFile } from '../../src/cli/commands/env.js';
 
 describe('env upload — executor contract', () => {
-  it('uploads via base64 to avoid binary/quoting issues', async () => {
+  it('atomically uploads via base64 with restrictive permissions', async () => {
     const executor = new FakeRemoteExecutor();
-    executor
-      .when((cmd) => cmd.includes('mkdir'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('base64'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('chmod'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('current'), { stdout: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('pm2'), { stdout: 'stopped', exitCode: 0 });
-
-    // Simulate the base64 upload sequence used by cmdEnv
     const content = 'DB_HOST=localhost\nDB_PORT=5432\n';
-    const b64 = Buffer.from(content).toString('base64');
     const remotePath = '/var/www/app/shared/.env';
 
-    await executor.exec(`mkdir -p "/var/www/app/shared"`);
-    await executor.exec(`echo "${b64}" | base64 -d > "${remotePath}"`);
-    await executor.exec(`chmod 600 "${remotePath}"`);
+    await uploadEnvironmentFile(executor, remotePath, Buffer.from(content));
 
     const history = executor.getHistory();
-    expect(history.some((h) => h.command.includes('mkdir'))).toBe(true);
-    expect(history.some((h) => h.command.includes('base64') && h.command.includes('.env'))).toBe(true);
-    expect(history.some((h) => h.command.includes('chmod 600'))).toBe(true);
+    expect(history).toHaveLength(2);
+    expect(history[0].command).toContain('mkdir -p');
+    expect(history[1].command).toContain('mktemp');
+    expect(history[1].command).toContain('base64 -d > "$tmp"');
+    expect(history[1].command).toContain('chmod 600 "$tmp"');
+    expect(history[1].command).toContain(`mv -f "$tmp" '${remotePath}'`);
   });
 
   it('uploads to shared/<envFile name>, not a hardcoded shared/.env', async () => {

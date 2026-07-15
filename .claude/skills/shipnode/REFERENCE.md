@@ -77,8 +77,8 @@ Most commands accept `--config <path>` and `--app <name>` (multi-app). `rollback
 ### CI/CD
 | Command | Description |
 |---|---|
-| `ci github` | Write `.github/workflows/shipnode-deploy.yml` |
-| `ci env-sync [--all]` | Push .env → GitHub repo secrets |
+| `ci github [--app name] [--environment name] [--sync-env]` | Write the deploy workflow; app env stays server-managed unless opted in |
+| `ci env-sync [--app name] [--environment name] [--file path] [--dry-run] [--all]` | Store one complete dotenv file as a GitHub Environment secret |
 
 ### Config
 | Command | Description |

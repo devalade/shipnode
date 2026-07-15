@@ -4,10 +4,34 @@ import { resolve } from 'path';
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import { getDeploymentName } from '../../domain/pm2/apps.js';
+import type { RemoteExecutor } from '../../domain/remote/executor.js';
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+/** Atomically replace a remote environment file without exposing its raw content to shell parsing. */
+export async function uploadEnvironmentFile(
+  executor: RemoteExecutor,
+  remotePath: string,
+  content: Buffer,
+): Promise<void> {
+  const b64 = content.toString('base64');
+  await executor.execOrThrow(`mkdir -p "$(dirname ${shellSingleQuote(remotePath)})"`);
+  const temporaryEnv = `${remotePath}.shipnode.XXXXXX`;
+  await executor.execOrThrow([
+    `tmp=$(mktemp ${shellSingleQuote(temporaryEnv)})`,
+    `trap 'rm -f "$tmp"' EXIT`,
+    `printf '%s' ${shellSingleQuote(b64)} | base64 -d > "$tmp"`,
+    'chmod 600 "$tmp"',
+    `mv -f "$tmp" ${shellSingleQuote(remotePath)}`,
+    'trap - EXIT',
+  ].join(' && '));
+}
 
 export async function cmdEnv(
   cwd: string,
-  options: { file?: string; config?: string; app?: string },
+  options: { file?: string; config?: string; app?: string; reload?: boolean },
 ): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
@@ -29,16 +53,10 @@ export async function cmdEnv(
         ui.info(`Uploading ${envFile} for app '${app.name}'...`);
 
         const content = await readFile(localEnvPath);
-        const b64 = content.toString('base64');
         const appPath = `${config.remotePath}/${app.name}`;
         const sharedEnv = `${appPath}/shared/${app.envFile}`;
         const sharedEnvAlias = `${appPath}/shared/.env`;
-        // Ensure the parent dir of sharedEnv exists — when envFile is nested
-        // (e.g. apps/backend/.env.production) `mkdir -p shared` isn't enough
-        // and the base64 redirect below fails silently.
-        await executor.execOrThrow(`mkdir -p "$(dirname "${sharedEnv}")"`);
-        await executor.execOrThrow(`echo "${b64}" | base64 -d > "${sharedEnv}"`);
-        await executor.execOrThrow(`chmod 600 "${sharedEnv}"`);
+        await uploadEnvironmentFile(executor, sharedEnv, content);
         if (app.envFile !== '.env') {
           await executor.execOrThrow(`ln -sf "${sharedEnv}" "${sharedEnvAlias}"`);
         }
@@ -51,6 +69,11 @@ export async function cmdEnv(
         );
         if (linkResult.stdout === 'linked') {
           ui.success('Linked shared .env to current release');
+        }
+
+        if (options.reload === false) {
+          ui.info(`Environment uploaded for '${app.name}' without reloading its running processes.`);
+          continue;
         }
 
         const namespace = getDeploymentName({ ...config, apps: [app] } as any);

@@ -122,6 +122,95 @@ export class SshIdentityFileUnreadableError extends TaggedError('SshIdentityFile
   }
 }
 
+export class CiConfigLoadError extends TaggedError('CiConfigLoadError')<{
+  message: string;
+}>() {
+  constructor() {
+    super({ message: 'Unable to load Shipnode configuration. Run `shipnode config validate` for details.' });
+  }
+}
+
+export class CiAppTargetRequiredError extends TaggedError('CiAppTargetRequiredError')<{
+  message: string;
+}>() {
+  constructor() {
+    super({ message: 'An app target is required for CI environment sync in a multi-app workspace. Pass `--app <name>`.' });
+  }
+}
+
+export class CiEnvironmentNameInvalidError extends TaggedError('CiEnvironmentNameInvalidError')<{
+  message: string;
+}>() {
+  constructor() {
+    super({ message: 'GitHub Environment name must be non-empty and cannot contain control characters.' });
+  }
+}
+
+export class CiEnvironmentFileNotFoundError extends TaggedError('CiEnvironmentFileNotFoundError')<{
+  path: string;
+  message: string;
+}>() {
+  constructor(args: { path: string }) {
+    super({ ...args, message: `Environment file not found: ${args.path}` });
+  }
+}
+
+export class CiEnvironmentFileReadError extends TaggedError('CiEnvironmentFileReadError')<{
+  path: string;
+  cause: unknown;
+  message: string;
+}>() {
+  constructor(args: { path: string; cause: unknown }) {
+    super({ ...args, message: `Unable to read environment file: ${args.path}` });
+  }
+}
+
+export class CiEnvironmentSecretTooLargeError extends TaggedError('CiEnvironmentSecretTooLargeError')<{
+  actualBytes: number;
+  maximumBytes: number;
+  message: string;
+}>() {
+  constructor(args: { actualBytes: number; maximumBytes: number }) {
+    super({
+      ...args,
+      message:
+        `Environment file is ${args.actualBytes} bytes; GitHub secrets are limited to ` +
+        `${args.maximumBytes} bytes. Keep the environment server-managed or use an external secret store.`,
+    });
+  }
+}
+
+export class GitHubCliUnavailableError extends TaggedError('GitHubCliUnavailableError')<{
+  message: string;
+}>() {
+  constructor() {
+    super({
+      message: 'GitHub CLI (gh) was not found. Install it from https://cli.github.com/ and run `gh auth login`.',
+    });
+  }
+}
+
+export class GitHubAuthenticationRequiredError extends TaggedError('GitHubAuthenticationRequiredError')<{
+  message: string;
+}>() {
+  constructor() {
+    super({ message: 'GitHub CLI is not authenticated. Run `gh auth login` and try again.' });
+  }
+}
+
+export class GitHubSecretUpdateError extends TaggedError('GitHubSecretUpdateError')<{
+  secretName: string;
+  environment: string;
+  message: string;
+}>() {
+  constructor(args: { secretName: string; environment: string }) {
+    super({
+      ...args,
+      message: `Failed to update GitHub Environment secret ${args.secretName} in ${args.environment}.`,
+    });
+  }
+}
+
 export type ServerTargetError =
   | MissingServerTargetError
   | UnknownServerTargetError;

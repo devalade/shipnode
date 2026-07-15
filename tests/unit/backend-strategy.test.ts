@@ -198,6 +198,18 @@ describe('BackendStrategy.setupEnvironment', () => {
     expect(cmd).toContain('shared/.env');
   });
 
+  it('fails with an actionable preflight when the remote environment file is missing', async () => {
+    const config = makeConfig({ envFile: '.env.production' });
+    const strategy = makeStrategy(config, '/local/project');
+    const executor = new FakeRemoteExecutor();
+    await strategy.setupEnvironment!(makeCtx(executor, { config }));
+
+    const cmd = executor.getLastCommand()!.command;
+    expect(cmd).toContain("[ -f '/var/www/app/myapp/shared/.env.production' ]");
+    expect(cmd).toContain('Remote environment file is missing for app myapp. Run: shipnode env --app myapp');
+    expect(cmd.indexOf('Remote environment file is missing')).toBeLessThan(cmd.indexOf('ln -sf'));
+  });
+
   it('symlinks .env into appRoot/build when appRoot is configured (monorepo)', async () => {
     const config = makeConfig({ appRoot: 'apps/backend' });
     const strategy = makeStrategy(config, '/local/project');

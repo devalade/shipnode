@@ -167,10 +167,9 @@ Generate a ready-to-use GitHub Actions workflow:
 
 ```bash
 npx shipnode ci github
-npx shipnode ci env-sync --all
 ```
 
-This drops `.github/workflows/deploy.yml` and pushes your `.env` keys to GitHub repository secrets. See the [CI/CD guide](/docs/ci-cd/) for the secrets it expects.
+This writes `.github/workflows/shipnode-deploy.yml`. Application env remains on the VPS by default. To opt into GitHub-managed env for one app, run `ci env-sync --app <name> --environment production --all`, then generate with the matching `--app`, `--environment`, and `--sync-env` flags. See the [CI/CD guide](/docs/ci-cd/) for the security trade-offs and required secrets.
 
 ## 9. Harden the server (recommended)
 

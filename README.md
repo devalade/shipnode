@@ -425,9 +425,15 @@ Falls back to installing `cloudflared` from the upstream GitHub `.deb` if `pkg.c
 ### CI/CD
 
 ```bash
-shipnode ci github             # Generate .github/workflows/shipnode-deploy.yml
-shipnode ci env-sync           # Push .env vars to GitHub repository secrets
+shipnode ci github             # Generate a server-managed-env deploy workflow
+shipnode env --app api         # Upload runtime env directly to the VPS (default)
+
+# Opt in to GitHub-managed env for one app/environment
+shipnode ci env-sync --app api --environment production --all
+shipnode ci github --app api --environment production --sync-env
 ```
+
+The default workflow deploys code without copying application secrets through GitHub. With `--sync-env`, Shipnode stores the complete dotenv file as one GitHub Environment secret, uploads it with `--no-reload`, deploys, then removes the runner copy. Production and staging use distinct environments and secret names.
 
 ### Configuration
 
