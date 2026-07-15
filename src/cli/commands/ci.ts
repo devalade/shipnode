@@ -214,13 +214,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Node.js
+${setupPmStep}      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: ${yamlSingleQuoted(nodeVersion)}
           cache: '${pm.cacheKey}'
 
-${setupPmStep}      - name: Install dependencies
+      - name: Install dependencies
         run: ${pm.installCmd}
 
       - name: Setup SSH agent

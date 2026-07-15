@@ -59,6 +59,9 @@ describe('ci github', () => {
     expect(workflow).toContain('uses: actions/checkout@v6');
     expect(workflow).toContain('uses: actions/setup-node@v6');
     expect(workflow).toContain('uses: pnpm/action-setup@v6');
+    expect(workflow.indexOf('uses: pnpm/action-setup@v6')).toBeLessThan(
+      workflow.indexOf('uses: actions/setup-node@v6'),
+    );
     expect(workflow).not.toContain('paths:');
     expect(workflow).not.toContain('working-directory:');
     expect(workflow).not.toContain('- name: Build');
