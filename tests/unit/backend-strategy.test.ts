@@ -436,9 +436,9 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).not.toContain('env_file:');
     expect(writeCmd).toContain(`script: '"'"'bash'"'"',`);
     expect(writeCmd).toContain('shared/.env.production');
-    expect(writeCmd).toContain('node -e');
+    expect(writeCmd).toContain('base64 --decode');
     expect(writeCmd).not.toContain('set -a');
-    expect(writeCmd).toContain('base64url');
+    expect(writeCmd).toContain('base64 --decode');
     expect(writeCmd).toContain('NODE_ENV');
     expect(writeCmd).toContain('3000');
     expect(writeCmd).toContain('exec');

@@ -106,7 +106,7 @@ describe('DeployOrchestrator', () => {
     await orchestrator.deploy({ cwd: '/test', skipBuild: false });
 
     expect(captured).toBeDefined();
-    const sourceIdx = captured!.indexOf('node -e');
+    const sourceIdx = captured!.indexOf('base64 --decode');
     const userIdx = captured!.indexOf('node ace.js migration:run');
     expect(sourceIdx).toBeGreaterThan(-1);
     expect(userIdx).toBeGreaterThan(sourceIdx);

@@ -19,7 +19,8 @@ export function runWithDotenv(
 ): string {
   if (!envFile) return command;
 
+  const encodedRunner = Buffer.from(dotenvRunner).toString('base64');
   const encodedEnvironment = Buffer.from(JSON.stringify(explicitEnvironment)).toString('base64url');
-  return `node -e ${shellSingleQuote(dotenvRunner)} -- ` +
+  return `node -e "$(printf '%s' ${shellSingleQuote(encodedRunner)} | base64 --decode)" -- ` +
     `${shellSingleQuote(envFile)} ${shellSingleQuote(encodedEnvironment)} bash -c ${shellSingleQuote(command)}`;
 }
