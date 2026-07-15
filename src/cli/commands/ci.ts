@@ -35,7 +35,7 @@ async function detectPkgManager(cwd: string): Promise<PkgManagerInfo> {
     return {
       id: 'pnpm',
       cacheKey: 'pnpm',
-      setupAction: 'pnpm/action-setup@v4',
+      setupAction: 'pnpm/action-setup@v6',
       installCmd: 'pnpm install --frozen-lockfile',
     };
   }
@@ -212,10 +212,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${yamlSingleQuoted(nodeVersion)}
           cache: '${pm.cacheKey}'

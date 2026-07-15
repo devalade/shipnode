@@ -49,12 +49,16 @@ describe('ci github', () => {
     const root = await temporaryDirectory('shipnode-ci-');
     await initialiseGitRepository(root);
     await writeFile(join(root, 'package.json'), JSON.stringify({ scripts: { build: 'tsc' } }));
+    await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
 
     await cmdCiGithub(root);
 
     const workflow = await readWorkflow(root);
     expect(() => load(workflow)).not.toThrow();
     expect(workflow).toContain(`npm install -g ${await currentPackageSpec()}`);
+    expect(workflow).toContain('uses: actions/checkout@v6');
+    expect(workflow).toContain('uses: actions/setup-node@v6');
+    expect(workflow).toContain('uses: pnpm/action-setup@v6');
     expect(workflow).not.toContain('paths:');
     expect(workflow).not.toContain('working-directory:');
     expect(workflow).not.toContain('- name: Build');
