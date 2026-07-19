@@ -123,6 +123,13 @@ async function rollbackBlueGreen(
   appPath: string,
   stepsBack: number,
 ): Promise<void> {
+  if (app.blueGreenRetention === 'none') {
+    throw new Error(
+      'Instant blue-green rollback is disabled because blueGreenRetention is "none". ' +
+      'Redeploy the desired release instead.',
+    );
+  }
+
   if (stepsBack !== 1) {
     throw new Error(
       `Blue-green rollback only supports one step (the live previous colour). ` +

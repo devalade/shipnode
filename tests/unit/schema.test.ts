@@ -53,6 +53,26 @@ describe('ShipnodeConfigSchema', () => {
     }
   });
 
+  it('maps accessory volumes to directories', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      apps: [{ name: 'api', appType: 'backend', dependsOn: ['pocketbase'] }],
+      accessories: {
+        pocketbase: {
+          image: 'ghcr.io/muchobien/pocketbase:0.28.4',
+          volumes: ['pb_data:/pb_data'],
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.accessories?.pocketbase?.directories).toEqual(['pb_data:/pb_data']);
+      expect((result.data.accessories?.pocketbase as { volumes?: unknown }).volumes).toBeUndefined();
+    }
+  });
+
   it('rejects invalid SSH host', () => {
     const result = ShipnodeConfigSchema.safeParse({
       app: 'backend',
@@ -117,6 +137,23 @@ describe('ShipnodeConfigSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.apps[0].zeroDowntime).toBe(true);
+      expect(result.data.apps[0].blueGreenRetention).toBe('rollback');
+    }
+  });
+
+  it('accepts memory-saving blue-green retention', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      domain: 'api.example.com',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      blueGreenRetention: 'none',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.apps[0].blueGreenRetention).toBe('none');
     }
   });
 

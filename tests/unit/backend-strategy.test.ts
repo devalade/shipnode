@@ -543,7 +543,7 @@ describe('BackendStrategy.startApp — blue-green', () => {
     expect(start).not.toContain('pm2 delete "myapp"');
   });
 
-  it('keeps the legacy process until traffic has switched, then removes it', async () => {
+  it('keeps the legacy process until traffic has switched, then removes it by exact name', async () => {
     const strategy = makeStrategy(makeConfig({ zeroDowntime: true, domain: 'api.example.com' }), '/local/project');
     const executor = new FakeRemoteExecutor();
     const ctx = makeCtx(executor, { deployTarget: bgTarget({ color: 'green', port: 3001, previousColor: null }) });
@@ -554,7 +554,29 @@ describe('BackendStrategy.startApp — blue-green', () => {
 
     await strategy.afterTrafficSwitch!(ctx);
     const cleanup = executor.getLastCommand()?.command;
-    expect(cleanup).toContain('pm2 delete "myapp"');
+    // Must not use `pm2 delete "myapp"` — that matches namespace and kills myapp-green.
+    expect(cleanup).not.toMatch(/pm2 delete "myapp"/);
+    expect(cleanup).toContain('--arg n "myapp"');
+    expect(cleanup).toContain('select(.name == $n)');
+    expect(cleanup).toContain('pm2 delete "$id"');
+    expect(cleanup).toContain('pm2 save');
+  });
+
+  it('reclaims the inactive colour after traffic switches when retention is none', async () => {
+    const strategy = makeStrategy(makeConfig({
+      zeroDowntime: true,
+      domain: 'api.example.com',
+      blueGreenRetention: 'none',
+    }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    const ctx = makeCtx(executor, { deployTarget: bgTarget({ color: 'green', previousColor: 'blue' }) });
+
+    await strategy.afterTrafficSwitch!(ctx);
+
+    const cleanup = executor.getLastCommand()?.command;
+    expect(cleanup).toContain('--arg n "myapp-blue"');
+    expect(cleanup).toContain('select(.name == $n)');
+    expect(cleanup).toContain('pm2 delete "$id"');
     expect(cleanup).toContain('pm2 save');
   });
 

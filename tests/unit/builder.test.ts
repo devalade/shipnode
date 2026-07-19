@@ -18,6 +18,7 @@ describe('ShipnodeBuilder', () => {
       .worker({ name: 'mailer', command: 'node dist/mailer.js', instances: 1, maxMemory: '512M', env: { Q: 'mail' } })
       .domain('api.example.com')
       .keepReleases(10)
+      .blueGreenRetention('none')
       .sharedDirs(['storage', 'uploads'])
       .sharedFiles(['.htpasswd'])
       .healthCheck('/healthz', { timeout: 60, retries: 5, startupDelay: 10 })
@@ -45,6 +46,7 @@ describe('ShipnodeBuilder', () => {
     expect(config.apps[0].pm2?.apps[1]).toMatchObject({ name: 'mailer', command: 'node dist/mailer.js', instances: 1, maxMemory: '512M', env: { Q: 'mail' } });
     expect(config.apps[0].domain).toBe('api.example.com');
     expect(config.apps[0].keepReleases).toBe(10);
+    expect(config.apps[0].blueGreenRetention).toBe('none');
     expect(config.apps[0].sharedDirs).toEqual(['storage', 'uploads']);
     expect(config.apps[0].sharedFiles).toEqual(['.htpasswd']);
     expect(config.apps[0].healthCheck).toEqual({ enabled: true, path: '/healthz', timeout: 60, retries: 5, startupDelay: 10 });

@@ -1,4 +1,5 @@
 export type AppType = 'backend' | 'frontend';
+export type BlueGreenRetention = 'rollback' | 'none';
 
 export type PkgManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
 
@@ -60,7 +61,13 @@ export interface AccessoryConfig {
   image: string;
   on?: string;
   port?: string | string[];
+  /** Docker `-v` mounts (`named:/path` or `/host:/container`). */
   directories?: string[];
+  /**
+   * Alias for `directories` (Compose-style name). Prefer `directories`.
+   * If both are set, `directories` wins.
+   */
+  volumes?: string[];
   networks?: string[];
   command?: string | string[];
   labels?: Record<string, string>;
@@ -168,6 +175,12 @@ export interface ShipnodeApp {
    * Requires one pm2 app with a port. See docs/adr and blue-green.ts.
    */
   zeroDowntime: boolean;
+  /**
+   * What to do with the previously active web process after a successful
+   * blue-green switch. `rollback` keeps it available for an instant rollback;
+   * `none` stops it immediately to reclaim its memory.
+   */
+  blueGreenRetention: BlueGreenRetention;
   /**
    * The second port used by blue-green. Blue = the web app's port, green =
    * `altPort` (defaults to an uncommon port offset by 10,000). Both colours may

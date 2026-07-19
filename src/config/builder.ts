@@ -39,6 +39,7 @@ type BuilderState = {
   envFile?: string;
   buildDir?: string;
   zeroDowntime?: boolean;
+  blueGreenRetention?: ShipnodeApp['blueGreenRetention'];
   altPort?: number;
   sharedDirs?: string[];
   sharedFiles?: string[];
@@ -145,6 +146,12 @@ export class ShipnodeBuilder {
   /** Disable the automatic blue-green strategy for a backend served by Caddy. */
   noZeroDowntime(): this {
     this.config.zeroDowntime = false;
+    return this;
+  }
+
+  /** Reclaim the inactive web process after a successful blue-green switch. */
+  blueGreenRetention(retention: ShipnodeApp['blueGreenRetention']): this {
+    this.config.blueGreenRetention = retention;
     return this;
   }
 
@@ -374,6 +381,12 @@ export class ShipnodeAppBuilder {
   /** Disable the automatic blue-green strategy for this backend served by Caddy. */
   noZeroDowntime(): this {
     this.state.zeroDowntime = false;
+    return this;
+  }
+
+  /** Reclaim the inactive web process after a successful blue-green switch. */
+  blueGreenRetention(retention: ShipnodeApp['blueGreenRetention']): this {
+    this.state.blueGreenRetention = retention;
     return this;
   }
 

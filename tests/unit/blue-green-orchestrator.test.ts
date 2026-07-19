@@ -45,7 +45,7 @@ function baseStubs(executor: FakeRemoteExecutor): FakeRemoteExecutor {
   return executor
     .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', stderr: '', exitCode: 0 })
     .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', stderr: '', exitCode: 0 })
-    .when((cmd) => cmd.includes('pm2 jlist'), {
+    .when((cmd) => cmd.includes('pm2 jlist') && !cmd.includes('select(.name == $n)'), {
       // health status check looks for the coloured web name; report both online
       stdout: JSON.stringify([
         { name: 'app-blue', pm2_env: { status: 'online', restart_time: 0 } },
@@ -81,7 +81,7 @@ describe('blue-green deploy (orchestrator)', () => {
     const caddyIdx = cmds.findIndex((c) => c.includes('reverse_proxy localhost:13000') && c.includes('tee'));
     const reloadIdx = cmds.findIndex((c) => c.includes('systemctl reload caddy'));
     const stateIdx = cmds.findIndex((c) => c.includes('deploy-state.json') && c.includes('base64 -d'));
-    const cleanupIdx = cmds.findIndex((c) => c.includes('pm2 delete "app"'));
+    const cleanupIdx = cmds.findIndex((c) => c.includes('--arg n "app"') && c.includes('pm2 delete "$id"'));
     const curlIdx = cmds.findIndex((c) => c.includes('curl') && c.includes('/health'));
     expect(caddyIdx).toBeGreaterThan(curlIdx);
     expect(reloadIdx).toBeGreaterThan(caddyIdx);
@@ -106,6 +106,24 @@ describe('blue-green deploy (orchestrator)', () => {
     expect(webEco).toContain('PORT: 3001');
     expect(cmds.some((c) => c.includes('curl') && c.includes('localhost:3001/health'))).toBe(true);
     expect(cmds.some((c) => c.includes('reverse_proxy localhost:3001') && c.includes('tee'))).toBe(true);
+  });
+
+  it('reclaims the inactive colour only after Caddy switches traffic when retention is none', async () => {
+    const executor = new FakeRemoteExecutor();
+    const state: DeployState = { activeColor: 'blue', bluePort: 3000, greenPort: 3001 };
+    baseStubs(executor)
+      .when((cmd) => cmd.includes('deploy-state.json') && cmd.includes('cat'), { stdout: JSON.stringify(state), stderr: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 12', stderr: '', exitCode: 0 });
+    const orchestrator = await buildOrchestrator(executor, bgConfig({ blueGreenRetention: 'none' }));
+
+    await orchestrator.deploy({ cwd: '/test', skipBuild: false });
+
+    const commands = executor.getHistory().map((entry) => entry.command);
+    const caddyIdx = commands.findIndex((command) => command.includes('systemctl reload caddy'));
+    const stateIdx = commands.findIndex((command) => command.includes('deploy-state.json') && command.includes('base64 -d'));
+    const cleanupIdx = commands.findIndex((command) => command.includes('--arg n "app-blue"') && command.includes('pm2 delete "$id"'));
+    expect(cleanupIdx).toBeGreaterThan(stateIdx);
+    expect(stateIdx).toBeGreaterThan(caddyIdx);
   });
 
   it('second switch (green active) reuses blue only after the first migration cleaned it', async () => {
@@ -141,7 +159,7 @@ describe('blue-green deploy (orchestrator)', () => {
     const cmds = executor.getHistory().map((h) => h.command);
     expect(cmds.some((c) => c.includes('systemctl reload caddy'))).toBe(false);
     expect(cmds.some((c) => c.includes('deploy-state.json') && c.includes('base64 -d'))).toBe(false);
-    expect(cmds.some((c) => c.includes('pm2 delete "app"'))).toBe(false);
+    expect(cmds.some((c) => c.includes('--arg n "app"') && c.includes('pm2 delete "$id"'))).toBe(false);
     // current reverted to the previous release
     expect(cmds.some((c) => c.includes('ln -sfn') && c.includes('2026-01-01T00-00-00-000Z'))).toBe(true);
     // failed release recorded
@@ -162,7 +180,7 @@ describe('blue-green deploy (orchestrator)', () => {
         exitCode: 0,
       })
       .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 12', stderr: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('pm2 delete "app"'), { stdout: '', stderr: 'pm2 save failed', exitCode: 1 });
+      .when((cmd) => cmd.includes('--arg n "app"') && cmd.includes('pm2 delete "$id"'), { stdout: '', stderr: 'pm2 save failed', exitCode: 1 });
     const orchestrator = await buildOrchestrator(executor, bgConfig());
 
     await expect(orchestrator.deploy({ cwd: '/test', skipBuild: false })).rejects.toThrow('pm2 save failed');
@@ -178,7 +196,7 @@ describe('blue-green deploy (orchestrator)', () => {
     executor
       .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', stderr: '', exitCode: 0 })
       .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', stderr: '', exitCode: 0 })
-      .when((cmd) => cmd.includes('pm2 jlist'), {
+      .when((cmd) => cmd.includes('pm2 jlist') && !cmd.includes('select(.name == $n)'), {
         stdout: JSON.stringify([
           { name: 'app-green', pm2_env: { status: 'online', restart_time: 0 } },
           { name: 'app-worker', pm2_env: { status: 'online', restart_time: 0 } },

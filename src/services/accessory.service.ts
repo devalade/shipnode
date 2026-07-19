@@ -26,13 +26,19 @@ function namedVolumeFromMount(mount: string): string | undefined {
   return source;
 }
 
+/** Prefer `directories`; fall back to Compose-style `volumes`. */
+export function accessoryMounts(accessory: AccessoryConfig): string[] {
+  return accessory.directories ?? accessory.volumes ?? [];
+}
+
 export function buildAccessoryRunCommand(
   name: string,
   accessory: AccessoryConfig,
   workspaceRegistry?: RegistryConfig,
 ): string {
+  const mounts = accessoryMounts(accessory);
   const ports = arrayOf(accessory.port).map((port) => `-p ${shellQuote(port)}`);
-  const volumes = (accessory.directories ?? []).map((dir) => `-v ${shellQuote(dir)}`);
+  const volumes = mounts.map((dir) => `-v ${shellQuote(dir)}`);
   const networks = (accessory.networks ?? []).map((network) => `--network ${shellQuote(network)}`);
   const env = Object.entries(accessory.env ?? {}).map(([key, value]) => `-e ${shellQuote(`${key}=${value}`)}`);
   const labels = Object.entries(accessory.labels ?? {}).map(([key, value]) => `--label ${shellQuote(`${key}=${value}`)}`);
@@ -54,7 +60,7 @@ export function buildAccessoryRunCommand(
   const containerName = `shipnode-${name}`;
   const registry = accessory.registry ?? workspaceRegistry;
   const login = registry ? `${registryLoginCommand(registry)} && ` : '';
-  const namedVolumes = (accessory.directories ?? []).flatMap((mount) => {
+  const namedVolumes = mounts.flatMap((mount) => {
     const volume = namedVolumeFromMount(mount);
     return volume === undefined ? [] : [volume];
   });

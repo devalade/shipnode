@@ -53,6 +53,29 @@ describe('buildAccessoryRunCommand', () => {
     expect(cmd).toContain("'redis:7' 'redis-server' '--appendonly' 'yes'");
   });
 
+  it('accepts Compose-style volumes as an alias for directories', () => {
+    const cmd = buildAccessoryRunCommand('pocketbase', {
+      image: 'ghcr.io/muchobien/pocketbase:0.28.4',
+      port: '8090:8090',
+      volumes: ['pb_data:/pb_data', './pb_migrations:/pb_migrations'],
+    });
+
+    expect(cmd).toContain("-v 'pb_data:/pb_data'");
+    expect(cmd).toContain("-v './pb_migrations:/pb_migrations'");
+    expect(cmd).toContain("sudo docker volume inspect 'pb_data'");
+  });
+
+  it('prefers directories when both directories and volumes are set', () => {
+    const cmd = buildAccessoryRunCommand('redis', {
+      image: 'redis:7',
+      directories: ['from-directories:/data'],
+      volumes: ['from-volumes:/data'],
+    });
+
+    expect(cmd).toContain("-v 'from-directories:/data'");
+    expect(cmd).not.toContain('from-volumes');
+  });
+
   it('fails with a clear message when registry password env is missing remotely', () => {
     const cmd = buildAccessoryRunCommand('redis', {
       image: 'ghcr.io/acme/redis:7',

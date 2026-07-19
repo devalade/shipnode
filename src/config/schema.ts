@@ -17,27 +17,39 @@ export const RegistryConfigSchema = z.object({
   passwordEnv: z.string().min(1, 'Registry passwordEnv is required'),
 });
 
-export const AccessoryConfigSchema = z.object({
-  image: z.string().min(1, 'Accessory image is required'),
-  on: z.string().min(1).optional(),
-  port: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
-  directories: z.array(z.string().min(1)).optional(),
-  networks: z.array(z.string().min(1)).optional(),
-  command: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
-  labels: z.record(z.string().min(1), z.string()).optional(),
-  restart: z.enum(['no', 'always', 'unless-stopped', 'on-failure']).optional(),
-  resources: z.object({
-    memory: z.string().min(1).optional(),
-    memoryReservation: z.string().min(1).optional(),
-    cpus: z.string().min(1).optional(),
-  }).optional(),
-  stopTimeout: z.number().int().min(1).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  registry: RegistryConfigSchema.optional(),
-  healthCheck: z.object({
-    command: z.string().min(1, 'Accessory health check command is required'),
-  }).optional(),
-});
+export const AccessoryConfigSchema = z.preprocess(
+  (raw) => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw;
+    const obj = { ...(raw as Record<string, unknown>) };
+    // Compose-style `volumes` → shipnode `directories` (directories wins if both set).
+    if (obj.directories === undefined && obj.volumes !== undefined) {
+      obj.directories = obj.volumes;
+    }
+    delete obj.volumes;
+    return obj;
+  },
+  z.object({
+    image: z.string().min(1, 'Accessory image is required'),
+    on: z.string().min(1).optional(),
+    port: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+    directories: z.array(z.string().min(1)).optional(),
+    networks: z.array(z.string().min(1)).optional(),
+    command: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+    labels: z.record(z.string().min(1), z.string()).optional(),
+    restart: z.enum(['no', 'always', 'unless-stopped', 'on-failure']).optional(),
+    resources: z.object({
+      memory: z.string().min(1).optional(),
+      memoryReservation: z.string().min(1).optional(),
+      cpus: z.string().min(1).optional(),
+    }).optional(),
+    stopTimeout: z.number().int().min(1).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    registry: RegistryConfigSchema.optional(),
+    healthCheck: z.object({
+      command: z.string().min(1, 'Accessory health check command is required'),
+    }).optional(),
+  }),
+);
 
 export const Pm2AppSchema = z.object({
   name: z.string().refine(isValidPm2Name, 'PM2 app name must be alphanumeric, dash, or underscore (max 64 chars)'),
@@ -144,6 +156,7 @@ export const ShipnodeAppSchema = z.object({
   envFile: z.string().default('.env'),
   keepReleases: z.number().int().min(1).default(5),
   zeroDowntime: z.boolean().optional(),
+  blueGreenRetention: z.enum(['rollback', 'none']).default('rollback'),
   altPort: z.number().int().positive().optional(),
   sharedDirs: z.array(z.string()).optional(),
   sharedFiles: z.array(z.string()).optional(),
@@ -298,6 +311,7 @@ export const ShipnodeConfigSchema = z.preprocess(
         envFile: obj.envFile,
         keepReleases: obj.keepReleases,
         zeroDowntime: obj.zeroDowntime,
+        blueGreenRetention: obj.blueGreenRetention,
         altPort: obj.altPort,
         sharedDirs: obj.sharedDirs,
         sharedFiles: obj.sharedFiles,

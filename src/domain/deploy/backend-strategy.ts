@@ -258,19 +258,34 @@ export class BackendStrategy implements DeploymentStrategy {
     );
   }
 
-  /** Remove a pre-blue-green process only once Caddy serves the green release. */
+  /** Remove processes that are safe to stop only once Caddy serves the new colour. */
   async afterTrafficSwitch(ctx: StrategyContext): Promise<void> {
     if (!this.app.zeroDowntime || !ctx.deployTarget || !this.app.pm2) return;
-    if (ctx.deployTarget.previousColor !== null) return;
 
     const namespace = this.app.pm2.apps[0].name;
     const webApp = this.app.pm2.apps.find((app) => app.port !== undefined);
     if (!webApp) return;
 
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    // First deploy: drop a pre-blue-green uncoloured process (name === namespace).
+    // Later deploys with retention "none": drop the idle coloured sibling.
+    const previousName = ctx.deployTarget.previousColor === null
+      ? getPm2Name(namespace, webApp.name)
+      : this.app.blueGreenRetention === 'none'
+        ? coloredWebName(namespace, webApp.name, ctx.deployTarget.previousColor)
+        : undefined;
+    if (previousName === undefined) return;
+
+    // `pm2 delete <name>` also matches namespace, so `pm2 delete hub` would kill
+    // `hub-green`. Resolve to pm_id by exact process name instead (jq is part of setup).
+    const deleteExact =
+      `id=$(mise exec -- pm2 jlist 2>/dev/null | jq -r --arg n "${previousName}" ` +
+      `'.[] | select(.name == $n) | .pm_id' | head -n1) && ` +
+      `{ [ -n "$id" ] && mise exec -- pm2 delete "$id" || true; }`;
+
     await ctx.executor.execOrThrow(
       `${mise} && ` +
-      `{ mise exec -- pm2 delete "${getPm2Name(namespace, webApp.name)}" 2>/dev/null || true; } && ` +
+      `{ ${deleteExact}; } && ` +
       `mise exec -- pm2 save`,
     );
   }

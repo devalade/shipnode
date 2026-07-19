@@ -1,4 +1,4 @@
-import type { ShipnodeConfig, Pm2App, Pm2Config, ShipnodeApp } from '../shared/types.js';
+import type { BlueGreenRetention, ShipnodeConfig, Pm2App, Pm2Config, ShipnodeApp } from '../shared/types.js';
 import { ShipnodeConfigSchema } from './schema.js';
 
 // Loose input shape: also accepts the pre-multi-process `pm2: { name, instances, maxMemory }`
@@ -35,6 +35,7 @@ type AssembleInput = {
   envFile?: string;
   keepReleases?: number;
   zeroDowntime?: boolean;
+  blueGreenRetention?: BlueGreenRetention;
   altPort?: number;
   sharedDirs?: string[];
   sharedFiles?: string[];

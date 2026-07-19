@@ -6,6 +6,7 @@ import { LoggingExecutor } from '../../infrastructure/ssh/logging-executor.js';
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import type { AccessoryConfig, ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
+import { accessoryMounts } from '../../services/accessory.service.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
 import { configForAppResult, configForServer, getServerTargets, resolveServerName, resolveServerNameResult } from '../../domain/servers.js';
 import { generateBackendCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
@@ -239,7 +240,8 @@ function renderAccessoryPlan(
   ];
 
   if (ports.length > 0) rows.push(['Ports', ports.join(', ')]);
-  if (accessory.directories?.length) rows.push(['Volumes', accessory.directories.join(', ')]);
+  const mounts = accessoryMounts(accessory);
+  if (mounts.length > 0) rows.push(['Volumes', mounts.join(', ')]);
   if (accessory.networks?.length) rows.push(['Networks', accessory.networks.join(', ')]);
   if (accessory.command) rows.push(['Command', Array.isArray(accessory.command) ? accessory.command.join(' ') : accessory.command]);
   if (accessory.labels && Object.keys(accessory.labels).length > 0) rows.push(['Labels', Object.entries(accessory.labels).map(([key, value]) => `${key}=${value}`).join(', ')]);
@@ -249,7 +251,7 @@ function renderAccessoryPlan(
   if (registry) rows.push(['Registry', `${registry.server} (${registry.passwordEnv})`]);
   if (accessory.healthCheck) rows.push(['Health check', accessory.healthCheck.command]);
 
-  const hasVolumeSetup = (accessory.directories ?? []).some((mount) => {
+  const hasVolumeSetup = mounts.some((mount) => {
     const [source] = mount.split(':');
     return source !== undefined && source !== '' && !source.startsWith('/') && !source.startsWith('.') && !source.startsWith('~');
   });
