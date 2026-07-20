@@ -27,38 +27,55 @@ export class CloudflareOrchestrator {
     const zoneId = await this.api.getZoneId(cf.zone);
     const tunnelName = cf.tunnelName ?? `shipnode-${this.config.ssh.host.replace(/\./g, '-')}`;
 
-    // Reuse an existing tunnel by name if present. We can only mint credentials
-    // when we create the tunnel (Cloudflare doesn't echo the secret again), so
-    // if it already exists we assume credentials are already on the host and
-    // just refresh config + DNS. A brand-new host reusing an old tunnel name
-    // will need `cloudflared tunnel delete` first — flagged loudly.
-    const existing = await this.api.findTunnel(accountId, tunnelName);
+    // Prefer the tunnel already running on this host. Creating a new tunnel (or
+    // picking a same-named API tunnel) while leaving the old credentials path
+    // in config.yml produces a silent id/creds mismatch and takes every app
+    // offline. Only mint a new tunnel when the host has no usable config.
+    const hostTunnel = await this.readHostTunnel();
     let tunnelId: string;
-    if (existing) {
-      tunnelId = existing.id;
-      const credsExists = await this.executor.exec(
-        `test -f "/etc/cloudflared/${tunnelId}.json" && echo YES || echo NO`,
+    let tunnel: Tunnel;
+
+    if (hostTunnel?.id && hostTunnel.credentialsPath) {
+      const credsOk = await this.executor.exec(
+        `test -f "${hostTunnel.credentialsPath}" && echo YES || echo NO`,
       );
-      if (credsExists.stdout.trim() !== 'YES') {
+      if (credsOk.stdout.trim() !== 'YES') {
         throw new Error(
-          `Tunnel "${tunnelName}" already exists (id ${tunnelId}) but its credentials file is not on this host. ` +
-          `Delete the tunnel in the Cloudflare dashboard (or via API) and re-run \`shipnode cloudflare init\`, ` +
-          `or copy /etc/cloudflared/${tunnelId}.json from the host that owns it.`,
+          `Host config references tunnel ${hostTunnel.id} but credentials ` +
+          `${hostTunnel.credentialsPath} are missing. Restore the credentials ` +
+          `file or delete /etc/cloudflared/config.yml and re-run init.`,
         );
       }
+      tunnelId = hostTunnel.id;
+      tunnel = hostTunnel;
+      tunnel.name = tunnelName;
     } else {
-      const secret = randomBytes(32).toString('base64');
-      const created: CfTunnel = await this.api.createTunnel(accountId, tunnelName, secret);
-      tunnelId = created.id;
-      await this.writeCredentials(tunnelId, tunnelName, accountId, secret);
+      const existing = await this.api.findTunnel(accountId, tunnelName);
+      if (existing) {
+        tunnelId = existing.id;
+        const credsExists = await this.executor.exec(
+          `test -f "/etc/cloudflared/${tunnelId}.json" && echo YES || echo NO`,
+        );
+        if (credsExists.stdout.trim() !== 'YES') {
+          throw new Error(
+            `Tunnel "${tunnelName}" already exists (id ${tunnelId}) but its credentials file is not on this host. ` +
+            `Delete the tunnel in the Cloudflare dashboard (or via API) and re-run \`shipnode cloudflare init\`, ` +
+            `or copy /etc/cloudflared/${tunnelId}.json from the host that owns it.`,
+          );
+        }
+      } else {
+        const secret = randomBytes(32).toString('base64');
+        const created: CfTunnel = await this.api.createTunnel(accountId, tunnelName, secret);
+        tunnelId = created.id;
+        await this.writeCredentials(tunnelId, tunnelName, accountId, secret);
+      }
+      tunnel = new Tunnel(tunnelName, tunnelId, `/etc/cloudflared/${tunnelId}.json`);
     }
-
-    const tunnel = new Tunnel(tunnelName, tunnelId, `/etc/cloudflared/${tunnelId}.json`);
 
     for (const app of this.config.apps) {
       const webApp = app.pm2?.apps.find((a) => a.port !== undefined);
       if (app.domain && webApp) {
-        tunnel.addIngress(app.domain, `http://localhost:${webApp.port}`);
+        this.addAppIngress(tunnel, app.domain, webApp.port!, Boolean(app.zeroDowntime));
         await this.api.upsertDnsRecord(zoneId, {
           type: 'CNAME',
           name: app.domain,
@@ -77,6 +94,10 @@ export class CloudflareOrchestrator {
         proxied: true,
       });
     }
+
+    // Credentials path must always match the tunnel id we advertise in DNS.
+    tunnel.id = tunnelId;
+    tunnel.credentialsPath = `/etc/cloudflared/${tunnelId}.json`;
 
     await this.writeConfig(tunnel);
     await this.installAndStartService();
@@ -183,12 +204,44 @@ export class CloudflareOrchestrator {
     );
   }
 
+  /**
+   * Blue-green apps flip Caddy's upstream between colours. Pointing the tunnel
+   * at a fixed app port would pin traffic to one colour and break rollouts.
+   * Route those hostnames through local Caddy (TLS) with the public Host header.
+   */
+  private addAppIngress(
+    tunnel: Tunnel,
+    domain: string,
+    port: number,
+    zeroDowntime: boolean,
+  ): void {
+    if (zeroDowntime) {
+      tunnel.addIngress(domain, 'https://localhost:443', {
+        noTLSVerify: true,
+        originServerName: domain,
+        httpHostHeader: domain,
+      });
+      return;
+    }
+    tunnel.addIngress(domain, `http://localhost:${port}`);
+  }
+
+  private async readHostTunnel(): Promise<Tunnel | null> {
+    const existing = await this.executor.exec(
+      `cat /etc/cloudflared/config.yml 2>/dev/null || echo ""`,
+    );
+    const yaml = existing.stdout.trim();
+    if (!yaml) return null;
+    return Tunnel.fromYaml(yaml);
+  }
+
   private async writeConfig(tunnel: Tunnel): Promise<void> {
     const yaml = tunnel.toYaml();
     const b64 = Buffer.from(yaml).toString('base64');
     await this.executor.execOrThrow(
       `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
       `$SUDO mkdir -p /etc/cloudflared && ` +
+      `$SUDO cp /etc/cloudflared/config.yml "/etc/cloudflared/config.yml.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true; ` +
       `printf '%s' '${b64}' | base64 -d | $SUDO tee /etc/cloudflared/config.yml > /dev/null`,
     );
   }
@@ -206,6 +259,11 @@ export class CloudflareOrchestrator {
     await this.executor.execOrThrow(
       `SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ` +
       `$SUDO systemctl enable cloudflared 2>/dev/null; ` +
+      // Type=notify + fresh QUIC handshake can exceed the default 15s start
+      // timeout on a busy host; bump before restart so init doesn't false-fail.
+      `$SUDO mkdir -p /etc/systemd/system/cloudflared.service.d && ` +
+      `printf '%s\n' '[Service]' 'TimeoutStartSec=60' | $SUDO tee /etc/systemd/system/cloudflared.service.d/timeout.conf > /dev/null && ` +
+      `$SUDO systemctl daemon-reload && ` +
       `$SUDO systemctl restart cloudflared`,
     );
   }

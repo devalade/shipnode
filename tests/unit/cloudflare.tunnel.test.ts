@@ -12,6 +12,19 @@ ingress:
   - service: http_status:404
 `;
 
+const caddyYaml = `tunnel: abc123
+credentials-file: /etc/cloudflared/abc123.json
+
+ingress:
+  - hostname: app.example.com
+    service: https://localhost:443
+    originRequest:
+      noTLSVerify: true
+      originServerName: app.example.com
+      httpHostHeader: app.example.com
+  - service: http_status:404
+`;
+
 describe('Tunnel', () => {
   it('round-trips YAML', () => {
     const tunnel = Tunnel.fromYaml(sampleYaml);
@@ -24,6 +37,21 @@ describe('Tunnel', () => {
 
     const output = tunnel.toYaml();
     expect(output).toBe(sampleYaml);
+  });
+
+  it('round-trips Caddy-fronted originRequest blocks', () => {
+    const tunnel = Tunnel.fromYaml(caddyYaml);
+    expect(tunnel.ingress).toHaveLength(1);
+    expect(tunnel.ingress[0]).toEqual({
+      hostname: 'app.example.com',
+      service: 'https://localhost:443',
+      originRequest: {
+        noTLSVerify: true,
+        originServerName: 'app.example.com',
+        httpHostHeader: 'app.example.com',
+      },
+    });
+    expect(tunnel.toYaml()).toBe(caddyYaml);
   });
 
   it('adds an ingress entry', () => {
