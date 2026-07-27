@@ -7,11 +7,19 @@ export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb';
 
 export interface SqliteDatabaseConfig {
   type: 'sqlite';
+  /**
+   * Which server hosts this database. Provisioning (`shipnode setup`) only runs
+   * on that server; every other server's scoped config drops the field. Omitted,
+   * it resolves the same way an app's `on` does — `default`, or the sole server.
+   */
+  on?: string;
   name: string;
 }
 
 export interface NetworkDatabaseConfig {
   type: 'postgres' | 'mysql' | 'mongodb';
+  /** Which server hosts this database. See {@link SqliteDatabaseConfig.on}. */
+  on?: string;
   host: string;
   port: number;
   name: string;
@@ -96,6 +104,8 @@ export interface HealthCheckConfig {
 export type DatabaseConfig = SqliteDatabaseConfig | NetworkDatabaseConfig;
 
 export interface RedisConfig {
+  /** Which server hosts Redis. See {@link SqliteDatabaseConfig.on}. */
+  on?: string;
   host: string;
   port: number;
   password?: string;

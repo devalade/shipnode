@@ -49,8 +49,69 @@ export function getServerTargetResult(
   return Result.ok({ name, ssh });
 }
 
+/**
+ * Which servers must be visited before which, derived from `dependsOn`.
+ *
+ * Maps a server to the set of *other* servers it needs first. An app declaring
+ * `dependsOn: ['postgres']` where postgres lives elsewhere means that
+ * accessory's host has to be up before this one is deployed and health-checked.
+ * Same-server dependencies impose no ordering — the orchestrator already
+ * starts a server's own accessories before its apps.
+ */
+function serverPrerequisites(config: ShipnodeConfig): Map<string, Set<string>> {
+  const needs = new Map<string, Set<string>>();
+
+  for (const app of config.apps) {
+    const appServer = resolveServerName(config, app.on);
+    for (const name of app.dependsOn ?? []) {
+      const accessory = config.accessories?.[name];
+      if (!accessory) continue;
+      const accessoryServer = resolveServerName(config, accessory.on);
+      if (accessoryServer === appServer) continue;
+
+      const existing = needs.get(appServer) ?? new Set<string>();
+      existing.add(accessoryServer);
+      needs.set(appServer, existing);
+    }
+  }
+
+  return needs;
+}
+
+/**
+ * Every server, ordered so that a server hosting an accessory comes before the
+ * servers whose apps depend on it.
+ *
+ * Declaration order is the tiebreak, so a workspace without cross-server
+ * `dependsOn` is traversed exactly as written. Without this, ordering is purely
+ * the order of the `servers` literal: declare the app server first and its
+ * health check runs before the database it needs has been started.
+ *
+ * A dependency cycle is not an error — two servers can legitimately host
+ * accessories the other's apps consume. Cycle members fall back to declaration
+ * order rather than throwing.
+ */
 export function getServerTargets(config: ShipnodeConfig): ServerTarget[] {
-  return Object.entries(config.servers).map(([name, ssh]) => ({ name, ssh }));
+  const declared = Object.entries(config.servers).map(([name, ssh]) => ({ name, ssh }));
+  const needs = serverPrerequisites(config);
+  if (needs.size === 0) return declared;
+
+  const ordered: ServerTarget[] = [];
+  const placed = new Set<string>();
+  const remaining = [...declared];
+
+  while (remaining.length > 0) {
+    const ready = remaining.findIndex((target) =>
+      [...(needs.get(target.name) ?? [])].every((dep) => placed.has(dep) || !config.servers[dep]),
+    );
+    // -1 means everything left is in a cycle; take the first to stay deterministic.
+    const [next] = remaining.splice(ready === -1 ? 0 : ready, 1);
+    if (!next) break;
+    ordered.push(next);
+    placed.add(next.name);
+  }
+
+  return ordered;
 }
 
 export function getAppsForServer(config: ShipnodeConfig, serverName: string): ShipnodeApp[] {
@@ -63,6 +124,20 @@ export function getAccessoriesForServer(config: ShipnodeConfig, serverName: stri
   return Object.fromEntries(entries);
 }
 
+/**
+ * Managed services are provisioned on exactly one server. Returning the config
+ * verbatim would hand `database`/`redis` to every scoped config, and `setup`
+ * would then install Postgres once per host — same user, same database name.
+ */
+function serviceForServer<T extends { on?: string }>(
+  config: ShipnodeConfig,
+  service: T | undefined,
+  serverName: string,
+): T | undefined {
+  if (!service) return undefined;
+  return resolveServerName(config, service.on) === serverName ? service : undefined;
+}
+
 export function configForServer(config: ShipnodeConfig, serverName: string): ShipnodeConfig {
   const ssh = getServerTarget(config, serverName).ssh;
   return {
@@ -70,6 +145,8 @@ export function configForServer(config: ShipnodeConfig, serverName: string): Shi
     ssh,
     apps: getAppsForServer(config, serverName),
     accessories: getAccessoriesForServer(config, serverName),
+    database: serviceForServer(config, config.database, serverName),
+    redis: serviceForServer(config, config.redis, serverName),
   };
 }
 

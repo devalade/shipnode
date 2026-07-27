@@ -9,10 +9,20 @@ const CFD_INGRESS_TARGET = '.cfargotunnel.com';
 export class CloudflareOrchestrator {
   private api: CloudflareApi;
 
+  /**
+   * `config` must be scoped to the host `executor` is connected to (see
+   * `configForServer`). Every app in it gets a DNS record pointing at *this*
+   * host's tunnel, so handing it the whole workspace in a multi-server setup
+   * repoints other servers' domains at the wrong tunnel.
+   *
+   * `manageSshHostname` is false for every server but one: `cloudflare.sshHostname`
+   * is a single workspace-level name and only one tunnel can own it.
+   */
   constructor(
     private executor: RemoteExecutor,
     private config: ShipnodeConfig,
     apiToken: string,
+    private options: { manageSshHostname?: boolean } = {},
   ) {
     this.api = new CloudflareApi(apiToken);
   }
@@ -85,7 +95,7 @@ export class CloudflareOrchestrator {
       }
     }
 
-    if (cf.sshHostname) {
+    if (cf.sshHostname && this.options.manageSshHostname !== false) {
       tunnel.addIngress(cf.sshHostname, 'ssh://localhost:22');
       await this.api.upsertDnsRecord(zoneId, {
         type: 'CNAME',

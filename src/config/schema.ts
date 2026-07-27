@@ -79,6 +79,7 @@ export const HealthCheckConfigSchema = z.object({
 }).default({});
 
 const networkDbFields = {
+  on: z.string().min(1).optional(),
   host: z.string().min(1, 'Database host is required'),
   port: z.number().int().min(1).max(65535),
   name: z.string().min(1, 'Database name is required'),
@@ -87,13 +88,18 @@ const networkDbFields = {
 };
 
 export const DatabaseConfigSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('sqlite'), name: z.string().min(1, 'SQLite file path is required') }),
+  z.object({
+    type: z.literal('sqlite'),
+    on: z.string().min(1).optional(),
+    name: z.string().min(1, 'SQLite file path is required'),
+  }),
   z.object({ type: z.literal('postgres'), ...networkDbFields }),
   z.object({ type: z.literal('mysql'), ...networkDbFields }),
   z.object({ type: z.literal('mongodb'), ...networkDbFields }),
 ]).optional();
 
 export const RedisConfigSchema = z.object({
+  on: z.string().min(1).optional(),
   host: z.string().default('localhost'),
   port: z.number().int().min(1).max(65535).default(6379),
   password: z.string().optional(),
@@ -264,6 +270,8 @@ const ShipnodeConfigBaseSchema = z.object({
   Object.entries(cfg.accessories ?? {}).forEach(([name, accessory]) => {
     validateTarget(accessory.on, ['accessories', name, 'on']);
   });
+  if (cfg.database) validateTarget(cfg.database.on, ['database', 'on']);
+  if (cfg.redis) validateTarget(cfg.redis.on, ['redis', 'on']);
   const accessoryNames = new Set(Object.keys(cfg.accessories ?? {}));
   cfg.apps.forEach((app, index) => {
     for (const name of app.dependsOn ?? []) {

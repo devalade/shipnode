@@ -52,6 +52,11 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
     return;
   }
 
+  // The per-server config the callback receives only carries that server's own
+  // accessories, so cross-server dependencies are invisible from inside it.
+  // Dependency warnings have to be resolved against the whole workspace.
+  const workspaceConfig = config;
+
   await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor, serverName }) => {
@@ -65,6 +70,12 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
       const names = deployConfig.apps.map((a) => a.name).join(', ');
       const label = names || Object.keys(deployConfig.accessories ?? {}).join(', ');
       ui.step(`Deploying ${chalk.bold(label)} → ${serverName} (${config.ssh.user}@${config.ssh.host})`);
+
+      for (const deployingApp of deployConfig.apps) {
+        for (const warning of renderDependencyWarnings(workspaceConfig, deployingApp)) {
+          ui.warn(warning);
+        }
+      }
 
       const deployer = new DeployService(new LoggingExecutor(executor), deployConfig);
       await deployer.execute(cwd, options.skipBuild ?? false);
