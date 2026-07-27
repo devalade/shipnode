@@ -28,9 +28,19 @@ The alternative was rewriting the site config and reloading Caddy, which the blu
 
 `generateBackendCaddyfile` emits `api.example.com { reverse_proxy localhost:3000 }`. Put that on five boxes and all five race Let's Encrypt for a certificate on the same name.
 
-A fleet replica instead serves `http://<privateHost>:<fleet.port>` — plain HTTP on the private network, no ACME, no domain. **TLS terminates at your load balancer**, which is how a managed LB is normally run. Pass-through TLS, where each replica holds the certificate, is out of scope; the plan says so rather than half-supporting it.
+A fleet replica instead serves plain HTTP, no ACME, no certificate. **TLS terminates at your load balancer**, which is how a managed LB is normally run. Pass-through TLS, where each replica holds the certificate, is out of scope; the plan says so rather than half-supporting it.
 
 This is why every server in a fleet must declare `privateHost`. The schema enforces it.
+
+The replica's site answers to **two** addresses, and the reason is worth recording because the first implementation got it wrong:
+
+```
+http://10.0.0.11:80, http://api.example.com:80 { … }
+```
+
+Two different `Host` headers arrive on that port. The load balancer's health check dials the replica directly, so it sends the private address. Forwarded client traffic carries whatever the *client* asked for, which is the app's domain — load balancers pass the original `Host` through. Binding only the private address produced a fleet where the health check passed on every replica and every real request fell through to whatever else held port 80; on a stock install that is Caddy's welcome page, served with a cheerful `200`.
+
+The `http://` scheme on the domain is load-bearing. Without it Caddy would try to provision a certificate for that name, which is the ACME race this whole section exists to avoid. Declaring the domain does not claim it — serving it over TLS would.
 
 ## Blue-green within a replica, rolling across replicas
 

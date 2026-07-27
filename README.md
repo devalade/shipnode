@@ -250,7 +250,9 @@ export default shipnode
 
 > **`drainWait` is the setting that matters.** Shipnode drains instantly; your load balancer only notices on its next health check, after its failure threshold. Shipnode cannot see either value, so you declare how long to wait. Set it below your LB's *interval × unhealthy-threshold* and the roll will drop requests. Verify it once by `curl`ing the LB in a loop during a deploy and confirming zero non-200s.
 
-Replicas serve plain HTTP on the private network and never claim the domain — five replicas all requesting a certificate for the same name would race Let's Encrypt. **TLS terminates at your load balancer.**
+Replicas serve plain HTTP and never request a certificate — five replicas all asking for the same name would race Let's Encrypt. **TLS terminates at your load balancer.**
+
+> **Give a fleet app a `.domain()`.** Your load balancer forwards the client's `Host` header, so each replica has to recognise it. Shipnode configures the replica to answer on both its `privateHost` (for the LB's health check) and the domain (for forwarded traffic) — over plain HTTP, so no replica ever requests a certificate. Without a domain, only requests addressed to the private IP reach your app.
 
 Each replica installs and builds, so a three-replica roll takes roughly three times a single deploy. `shipnode ci github` sizes the workflow timeout accordingly.
 
