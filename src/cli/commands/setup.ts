@@ -21,6 +21,7 @@ const DEPLOY_USER = 'deploy';
 interface SetupOptions {
   config?: string;
   noDeployUser?: boolean;
+  on?: string;
 }
 
 export async function cmdSetup(cwd: string, options: SetupOptions): Promise<void> {
@@ -45,7 +46,7 @@ export async function cmdSetup(cwd: string, options: SetupOptions): Promise<void
         ui.outro('Server ready — run: shipnode deploy');
       }
     },
-    { configPath: options.config, includeEmpty: true },
+    { configPath: options.config, includeEmpty: true, serverName: options.on },
   );
 }
 

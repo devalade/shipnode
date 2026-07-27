@@ -64,6 +64,7 @@ program
   .command('setup')
   .description('Setup a new server with required dependencies')
   .option('--no-deploy-user', 'Skip creating the deploy user (advanced)')
+  .option('--on <server>', 'Provision one server instead of every server in the workspace')
   .option('--config <path>', 'Use a specific config file')
   // Commander turns `--no-deploy-user` into `deployUser: false`, not
   // `noDeployUser: true`, so passing opts straight through silently ignored the

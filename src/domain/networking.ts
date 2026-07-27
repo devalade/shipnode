@@ -87,6 +87,16 @@ export interface FirewallRule {
   port: number;
   from?: string;
   comment: string;
+  /**
+   * Whether the listener is a Docker published port.
+   *
+   * Docker inserts its own ACCEPT rules into the FORWARD path, which are
+   * evaluated before ufw's — so `ufw allow from X to any port 5432` does not
+   * restrict a container's port at all, and the port stays open to everything.
+   * Rules flagged here get an additional DOCKER-USER entry, the one chain Docker
+   * guarantees to consult first.
+   */
+  docker?: boolean;
 }
 
 /** The host-side port of a Docker `-p` mapping, if it publishes one. */
@@ -128,7 +138,7 @@ export function fleetFirewallRules(config: ShipnodeConfig, serverName: string): 
     if (app.fleet.port === 80 || app.fleet.port === 443) continue;
     add({
       port: app.fleet.port,
-      comment: `${app.name} replica port (load balancer ingress)`,
+      comment: `shipnode ${app.name} replica port`,
     });
   }
 
@@ -155,7 +165,7 @@ export function fleetFirewallRules(config: ShipnodeConfig, serverName: string): 
 
     for (const port of ports) {
       for (const from of consumers) {
-        add({ port, from, comment: `${name} for ${serverName}'s dependants` });
+        add({ port, from, comment: `shipnode ${name} accessory`, docker: true });
       }
     }
   }

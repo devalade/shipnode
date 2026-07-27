@@ -51,8 +51,20 @@ export function ufwConfigureCommands(extra: FirewallRule[] = []): string[] {
   ];
 }
 
+/**
+ * ufw rejects a rule outright — `ERROR: Invalid syntax` — when the comment
+ * contains a quote or an apostrophe, however the shell quotes it. Comments are
+ * built from app, accessory and server names, so this has to be defended rather
+ * than merely avoided in the strings shipnode happens to generate today. A
+ * rejected rule is the worst failure mode available: `ufw --force enable` still
+ * succeeds, so the firewall comes up hard with the hole never opened.
+ */
+export function sanitizeUfwComment(comment: string): string {
+  return comment.replace(/['"\\`$]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 export function ufwAllowRule(rule: FirewallRule): string {
-  const comment = `comment ${JSON.stringify(rule.comment)}`;
+  const comment = `comment "${sanitizeUfwComment(rule.comment)}"`;
   return rule.from === undefined
     ? `ufw allow ${rule.port}/tcp ${comment}`
     : `ufw allow from ${rule.from} to any port ${rule.port} proto tcp ${comment}`;
@@ -94,4 +106,62 @@ export function fail2banApplyConfigCommand(): string {
 
 export function fail2banEnableCommand(): string {
   return `${SUDO}; $SUDO systemctl enable fail2ban && $SUDO systemctl restart fail2ban`;
+}
+
+/**
+ * Restrict Docker-published ports, which ufw cannot.
+ *
+ * Docker writes its own ACCEPT rules into the FORWARD path when it publishes a
+ * port. Those are consulted before ufw's chain, so a container port stays open
+ * to the whole network no matter what `ufw allow from ...` says — the rule is
+ * accepted, appears in `ufw status`, and does nothing. An accessory is always a
+ * container, so every accessory rule needs this.
+ *
+ * DOCKER-USER is the one chain Docker promises to evaluate first and never
+ * rewrite. Allowed sources RETURN (falling through to Docker's own ACCEPT);
+ * everything else for that port is dropped.
+ *
+ * Ordering is why the DROP is inserted before the RETURNs: each `-I ... 1`
+ * pushes the previous entry down, so inserting DROP first leaves it last.
+ * Appending it with `-A` would place it after the RETURN that Docker keeps at
+ * the end of the chain, where it would never be reached.
+ */
+export function dockerUserRules(rules: FirewallRule[]): string[] {
+  const docker = rules.filter((rule) => rule.docker);
+  if (docker.length === 0) return [];
+
+  const ports = [...new Set(docker.map((rule) => rule.port))];
+  const commands: string[] = [`${SUDO}`];
+
+  for (const port of ports) {
+    const sources = docker
+      .filter((rule) => rule.port === port && rule.from !== undefined)
+      .map((rule) => rule.from!);
+    if (sources.length === 0) continue;
+
+    // Re-running harden must not stack duplicates, so delete each rule we are
+    // about to add first. `|| true` because a missing rule is the normal case.
+    for (const source of sources) {
+      commands.push(`$SUDO iptables -D DOCKER-USER -p tcp --dport ${port} -s ${source} -j RETURN 2>/dev/null || true`);
+    }
+    commands.push(`$SUDO iptables -D DOCKER-USER -p tcp --dport ${port} -j DROP 2>/dev/null || true`);
+
+    commands.push(`$SUDO iptables -I DOCKER-USER 1 -p tcp --dport ${port} -j DROP`);
+    for (const source of [...sources].reverse()) {
+      commands.push(`$SUDO iptables -I DOCKER-USER 1 -p tcp --dport ${port} -s ${source} -j RETURN`);
+    }
+  }
+
+  if (commands.length === 1) return [];
+
+  // iptables rules are lost on reboot, and a firewall that silently stops
+  // applying is worse than one that was never configured.
+  commands.push(
+    'command -v netfilter-persistent >/dev/null 2>&1 || ' +
+    '{ DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq iptables-persistent >/dev/null 2>&1 || true; }',
+    '$SUDO netfilter-persistent save >/dev/null 2>&1 || ' +
+    'echo "shipnode: could not persist iptables rules; they will be lost on reboot" >&2',
+  );
+
+  return [commands.join('; ')];
 }

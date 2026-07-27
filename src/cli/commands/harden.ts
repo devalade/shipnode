@@ -113,6 +113,17 @@ export async function cmdHarden(cwd: string, options: { config?: string; on?: st
         for (const rule of extra) {
           ui.info(`  allowed ${rule.port}/tcp${rule.from ? ` from ${rule.from}` : ''} — ${rule.comment}`);
         }
+
+        // Accessory ports are Docker's, and Docker's own FORWARD rules are
+        // consulted before ufw's — so the rules above are accepted, appear in
+        // `ufw status`, and restrict nothing. DOCKER-USER is what actually holds.
+        const dockerRules = sec.dockerUserRules(extra);
+        for (const cmd of dockerRules) {
+          await executor.exec(cmd);
+        }
+        if (dockerRules.length > 0) {
+          changes.push('DOCKER-USER: container ports restricted to their declared consumers');
+        }
       }
 
       // List installed pm2 systemd units so we can spot stale ones from a previous

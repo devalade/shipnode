@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ShipnodeConfigSchema } from '../../src/config/schema.js';
 import { accessoryHostVar, fleetFirewallRules, isLoopbackOnly } from '../../src/domain/networking.js';
-import { ufwConfigureCommands } from '../../src/infrastructure/provisioning/security.js';
+import { dockerUserRules, sanitizeUfwComment, ufwAllowRule, ufwConfigureCommands } from '../../src/infrastructure/provisioning/security.js';
 import type { ShipnodeConfig } from '../../src/shared/types.js';
 
 function workspace(overrides: Record<string, unknown> = {}): unknown {
@@ -65,8 +65,8 @@ describe('fleetFirewallRules', () => {
     const rules = fleetFirewallRules(parsed(), 'db-1');
 
     expect(rules).toEqual([
-      { port: 5432, from: '10.0.0.11', comment: "postgres for db-1's dependants" },
-      { port: 5432, from: '10.0.0.12', comment: "postgres for db-1's dependants" },
+      { port: 5432, from: '10.0.0.11', comment: 'shipnode postgres accessory', docker: true },
+      { port: 5432, from: '10.0.0.12', comment: 'shipnode postgres accessory', docker: true },
     ]);
   });
 
@@ -104,7 +104,7 @@ describe('fleetFirewallRules', () => {
 
     expect(rules).toContainEqual({
       port: 8080,
-      comment: 'api replica port (load balancer ingress)',
+      comment: 'shipnode api replica port',
     });
   });
 
@@ -211,5 +211,68 @@ describe('cross-server accessory addressing', () => {
     }));
 
     expect(parsed.success).toBe(true);
+  });
+});
+
+describe('sanitizeUfwComment', () => {
+  it('strips the characters ufw rejects a rule for', () => {
+    // ufw answers `ERROR: Invalid syntax` and adds nothing, however the shell
+    // quotes it — while `ufw --force enable` still succeeds. The firewall comes
+    // up hard with the hole never opened, which is the worst available outcome.
+    expect(sanitizeUfwComment("postgres for db-1's dependants")).toBe('postgres for db-1 s dependants');
+    expect(sanitizeUfwComment('a "quoted" name')).toBe('a quoted name');
+    expect(sanitizeUfwComment('back\\slash and `tick` and $var')).toBe('back slash and tick and var');
+  });
+
+  it('caps length, since comments come from user-controlled names', () => {
+    expect(sanitizeUfwComment('x'.repeat(500))).toHaveLength(200);
+  });
+
+  it('produces a rule ufw can parse for every generated comment', () => {
+    const rule = ufwAllowRule({ port: 5432, from: '10.0.0.11', comment: "it's \"fine\"" });
+
+    expect(rule).toBe('ufw allow from 10.0.0.11 to any port 5432 proto tcp comment "it s fine"');
+  });
+});
+
+describe('dockerUserRules', () => {
+  const accessory = (from: string) => ({ port: 5432, from, comment: 'pg', docker: true });
+
+  it('drops after the allowed sources, never before', () => {
+    // Each `-I ... 1` pushes the previous entry down, so the DROP must be
+    // inserted first to end up last. Insert it after and it shadows every
+    // RETURN, cutting the accessory off from the replicas that need it.
+    const [script] = dockerUserRules([accessory('10.0.0.11'), accessory('10.0.0.12')]);
+
+    const drop = script.indexOf('-I DOCKER-USER 1 -p tcp --dport 5432 -j DROP');
+    const first = script.indexOf('-I DOCKER-USER 1 -p tcp --dport 5432 -s 10.0.0.11 -j RETURN');
+    expect(drop).toBeGreaterThan(-1);
+    expect(first).toBeGreaterThan(drop);
+  });
+
+  it('never appends, which would land after Docker own trailing RETURN', () => {
+    const [script] = dockerUserRules([accessory('10.0.0.11')]);
+
+    expect(script).not.toContain('-A DOCKER-USER');
+  });
+
+  it('deletes before inserting, so re-running harden does not stack duplicates', () => {
+    const [script] = dockerUserRules([accessory('10.0.0.11')]);
+
+    const del = script.indexOf('-D DOCKER-USER -p tcp --dport 5432 -s 10.0.0.11 -j RETURN');
+    const ins = script.indexOf('-I DOCKER-USER 1 -p tcp --dport 5432 -s 10.0.0.11 -j RETURN');
+    expect(del).toBeGreaterThan(-1);
+    expect(ins).toBeGreaterThan(del);
+  });
+
+  it('persists the rules, which iptables loses on reboot', () => {
+    const [script] = dockerUserRules([accessory('10.0.0.11')]);
+
+    expect(script).toContain('netfilter-persistent save');
+  });
+
+  it('emits nothing for a host-listening port, which ufw already covers', () => {
+    expect(dockerUserRules([{ port: 8080, comment: 'replica port' }])).toEqual([]);
+    expect(dockerUserRules([])).toEqual([]);
   });
 });
