@@ -25,6 +25,28 @@ export function newReleaseId(): string {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+/**
+ * What this replica is responsible for beyond deploying itself.
+ *
+ * `first`/`last` are positions in *this roll*: `beforeFleet` fires on the first
+ * replica and `afterFleet` on the last, so a migration runs once for the roll
+ * rather than once per server.
+ *
+ * `primary` is a property of the *server*, not the roll — it is the first server
+ * the app is declared on, whatever `--on` narrowed this run to. `placement:
+ * 'primary'` processes start only there, so re-deploying a single replica can
+ * never bring up a second copy of a scheduler.
+ *
+ * All three default to true: a single-server deploy is the whole fleet.
+ */
+export interface ReplicaRole {
+  first: boolean;
+  last: boolean;
+  primary: boolean;
+}
+
+const SOLE_REPLICA: ReplicaRole = { first: true, last: true, primary: true };
+
 export class DeployOrchestrator {
   constructor(
     private config: ShipnodeConfig,
@@ -40,7 +62,13 @@ export class DeployOrchestrator {
    * directory name. Without it each replica mints its own timestamp and there
    * is no way to tell a converged fleet from a half-rolled one.
    */
-  async deploy(options: { cwd: string; skipBuild: boolean; gitCommit?: string; releaseId?: string }): Promise<void> {
+  async deploy(options: {
+    cwd: string;
+    skipBuild: boolean;
+    gitCommit?: string;
+    releaseId?: string;
+    fleetRole?: ReplicaRole;
+  }): Promise<void> {
     const cwd = options.cwd;
 
     await this.lock.acquire();
@@ -73,8 +101,9 @@ export class DeployOrchestrator {
   private async deployApp(
     app: ShipnodeApp,
     strategy: DeploymentStrategy,
-    options: { cwd: string; skipBuild: boolean; gitCommit?: string; releaseId?: string },
+    options: { cwd: string; skipBuild: boolean; gitCommit?: string; releaseId?: string; fleetRole?: ReplicaRole },
   ): Promise<void> {
+    const fleetRole = options.fleetRole ?? SOLE_REPLICA;
     const deployStart = Date.now();
     const timestamp = options.releaseId ?? newReleaseId();
     const appPath = `${this.config.remotePath}/${app.name}`;
@@ -96,6 +125,7 @@ export class DeployOrchestrator {
         workDir: releasePath,
         cwd: options.cwd,
         skipBuild: options.skipBuild,
+        primaryReplica: fleetRole.primary,
       };
 
       await strategy.stage(ctx);
@@ -104,6 +134,11 @@ export class DeployOrchestrator {
         await strategy.setupEnvironment(ctx);
       }
 
+      // Fleet-wide work first: the new release is staged everywhere it needs to
+      // be readable from, but nothing is live yet, so a migration here runs
+      // against the old code still serving traffic — the expand half of
+      // expand/contract.
+      if (fleetRole.first) await this.runHook(app, 'beforeFleet', releasePath);
       await this.runHook(app, 'preDeploy', releasePath);
       await releases.switchSymlink(releasePath);
       symlinkSwitched = true;
@@ -170,6 +205,10 @@ export class DeployOrchestrator {
       });
 
       await this.runHook(app, 'postDeploy', releasePath);
+      // The roll reached its final replica, so every server is now on this
+      // release (this one is still drained). Safe to drop what the old code
+      // needed — the contract half.
+      if (fleetRole.last) await this.runHook(app, 'afterFleet', releasePath);
       await releases.cleanupOldReleases();
     } catch (error) {
       const duration = Math.round((Date.now() - deployStart) / 1000);
@@ -244,7 +283,7 @@ export class DeployOrchestrator {
 
   private async runHook(
     app: ShipnodeApp,
-    hookName: 'preDeploy' | 'postDeploy',
+    hookName: keyof NonNullable<ShipnodeApp['hooks']>,
     workDir: string,
   ): Promise<void> {
     const hook = app.hooks?.[hookName];

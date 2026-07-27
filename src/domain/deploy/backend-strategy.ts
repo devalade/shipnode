@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import { execa } from 'execa';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
@@ -115,8 +116,28 @@ export class BackendStrategy implements DeploymentStrategy {
     }
   }
 
+  /**
+   * The pm2 processes this replica is supposed to run.
+   *
+   * `placement: 'primary'` pins a process to one server — a scheduler running on
+   * three replicas fires every job three times — so on every other replica it is
+   * filtered out. This is the only place that decision is made; the namespace is
+   * still taken from the full declared list so `pm2 list` grouping matches
+   * across replicas.
+   */
+  private placedApps(ctx: StrategyContext): Pm2App[] {
+    const apps = this.app.pm2?.apps ?? [];
+    if (ctx.primaryReplica !== false) return apps;
+    return apps.filter((app) => app.placement !== 'primary');
+  }
+
   async startApp(ctx: StrategyContext): Promise<void> {
     if (!this.app.pm2) return;
+
+    if (this.placedApps(ctx).length === 0) {
+      console.log(chalk.dim(`  every pm2 process is placement: 'primary' — nothing to start on this replica`));
+      return;
+    }
 
     const pkgManager = await this.resolvePkgManager();
     const cdPath = `${this.appPath}/current`;
@@ -141,7 +162,7 @@ export class BackendStrategy implements DeploymentStrategy {
     cdPath: string,
     mise: string,
   ): Promise<void> {
-    const ecosystemContent = this.generateEcosystemFile(pkgManager);
+    const ecosystemContent = this.generateEcosystemForApps(this.placedApps(ctx), pkgManager);
     // Ecosystem lives inside the release directory (per-release snapshot, ADR-0001).
     // PM2 references it via the `current` symlink so it always resolves to the active release.
     const ecosystemWritePath = `${ctx.workDir}/ecosystem.config.cjs`;
@@ -198,7 +219,7 @@ export class BackendStrategy implements DeploymentStrategy {
     if (!webApp) {
       throw new Error('Blue-green start requires one PM2 app with a port');
     }
-    const workers = pm2.apps.filter((a) => a.port === undefined);
+    const workers = this.placedApps(ctx).filter((a) => a.port === undefined);
     const coloredName = coloredWebName(namespace, webApp.name, target.color);
 
     // Web ecosystem: just the web app, coloured name, target-colour port.
@@ -237,7 +258,7 @@ export class BackendStrategy implements DeploymentStrategy {
   async afterHealthy(ctx: StrategyContext): Promise<void> {
     if (!this.app.zeroDowntime || !ctx.deployTarget || !this.app.pm2) return;
 
-    const workers = this.app.pm2.apps.filter((a) => a.port === undefined);
+    const workers = this.placedApps(ctx).filter((a) => a.port === undefined);
     if (workers.length === 0) return;
 
     const cdPath = `${this.appPath}/current`;
@@ -311,11 +332,6 @@ export class BackendStrategy implements DeploymentStrategy {
       const detail = (installResult.stderr || installResult.stdout).trim();
       throw new DeployError(detail || 'Package relink failed', 'start');
     }
-  }
-
-  private generateEcosystemFile(pkgManager: string): string {
-    if (!this.app.pm2) return '';
-    return this.generateEcosystemForApps(this.app.pm2.apps, pkgManager);
   }
 
   /**

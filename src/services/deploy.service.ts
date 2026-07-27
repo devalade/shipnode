@@ -5,7 +5,7 @@ import { DeployLock } from '../domain/release/manager.js';
 import { HealthCheckService } from '../services/health.service.js';
 import { CaddyService } from '../services/caddy.service.js';
 import { AccessoryService } from '../services/accessory.service.js';
-import { DeployOrchestrator } from '../domain/deploy/orchestrator.js';
+import { DeployOrchestrator, type ReplicaRole } from '../domain/deploy/orchestrator.js';
 
 export class DeployService {
   private orchestrator: DeployOrchestrator;
@@ -29,7 +29,12 @@ export class DeployService {
     );
   }
 
-  async execute(cwd: string, skipBuild = false, releaseId?: string): Promise<void> {
+  async execute(
+    cwd: string,
+    skipBuild = false,
+    releaseId?: string,
+    fleetRole?: ReplicaRole,
+  ): Promise<void> {
     const gitCommit = await getGitCommit(cwd);
 
     await this.orchestrator.deploy({
@@ -37,6 +42,7 @@ export class DeployService {
       skipBuild,
       gitCommit,
       releaseId,
+      fleetRole,
     });
   }
 }

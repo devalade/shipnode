@@ -77,7 +77,19 @@ export interface Pm2App {
   maxMemory?: string;
   port?: number;
   env?: Record<string, string>;
+  /**
+   * Where this process runs across a fleet. `all` (the default) starts it on
+   * every replica, which is what you want for a web process and for a queue
+   * worker that competes for jobs. `primary` starts it only on the first server
+   * the app is declared on — the cron/scheduler case, where N copies means every
+   * scheduled job fires N times.
+   *
+   * Ignored outside a fleet: a single server is always the primary.
+   */
+  placement?: Pm2Placement;
 }
+
+export type Pm2Placement = 'all' | 'primary';
 
 export interface Pm2Config {
   apps: Pm2App[];
@@ -190,6 +202,20 @@ export type HookFn = (ctx: HookContext) => Promise<void> | void;
 export interface HooksConfig {
   preDeploy?: HookFn;
   postDeploy?: HookFn;
+  /**
+   * Runs **once per roll**, on the first replica, at the same point as
+   * `preDeploy` — the new release is staged but not yet live anywhere. This is
+   * where database migrations belong: `preDeploy` runs once per replica, so on a
+   * three-server fleet it would run your migration three times.
+   */
+  beforeFleet?: HookFn;
+  /**
+   * Runs **once per roll**, on the last replica, after its `postDeploy`. Every
+   * replica is on the new release by then (the last one is still drained), so
+   * this is the place for the contract half of an expand/contract migration, or
+   * for announcing the release. A roll that fails partway never reaches it.
+   */
+  afterFleet?: HookFn;
 }
 
 /**

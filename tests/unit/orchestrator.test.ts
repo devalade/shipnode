@@ -197,3 +197,69 @@ describe('DeployOrchestrator', () => {
     expect(healthCommands).toHaveLength(0);
   });
 });
+
+describe('run-once fleet hooks', () => {
+  async function deployWith(fleetRole?: { first: boolean; last: boolean }): Promise<string[]> {
+    const ran: string[] = [];
+    const executor = new FakeRemoteExecutor();
+    const config = makeConfig({
+      healthCheck: { enabled: false, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
+      hooks: {
+        beforeFleet: async (ctx: any) => { ran.push('beforeFleet'); await ctx.exec('migrate'); },
+        preDeploy: async (ctx: any) => { ran.push('preDeploy'); await ctx.exec('migrate'); },
+        postDeploy: async (ctx: any) => { ran.push('postDeploy'); await ctx.exec('migrate'); },
+        afterFleet: async (ctx: any) => { ran.push('afterFleet'); await ctx.exec('migrate'); },
+      },
+    });
+
+    executor
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
+      .when((cmd) => cmd.includes('mkdir -p'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
+      .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('migrate'), { stdout: '', exitCode: 0 });
+
+    const { DeployLock } = await import('../../src/domain/release/manager.js');
+    const { HealthCheckService } = await import('../../src/services/health.service.js');
+    const { CaddyService } = await import('../../src/services/caddy.service.js');
+
+    const orchestrator = new DeployOrchestrator(
+      config,
+      executor,
+      new DeployLock(executor, config.remotePath),
+      new HealthCheckService(executor, config),
+      new CaddyService(executor, config),
+    );
+
+    await orchestrator.deploy({ cwd: '/test', skipBuild: false, fleetRole });
+    return ran;
+  }
+
+  it('runs beforeFleet before preDeploy and afterFleet after postDeploy', async () => {
+    // beforeFleet has to land while the old code is still serving — the expand
+    // half of expand/contract — which is why it precedes the symlink switch.
+    expect(await deployWith({ first: true, last: true }))
+      .toEqual(['beforeFleet', 'preDeploy', 'postDeploy', 'afterFleet']);
+  });
+
+  it('skips both on a middle replica, but still runs the per-replica hooks', async () => {
+    expect(await deployWith({ first: false, last: false })).toEqual(['preDeploy', 'postDeploy']);
+  });
+
+  it('runs beforeFleet on the first replica only', async () => {
+    expect(await deployWith({ first: true, last: false }))
+      .toEqual(['beforeFleet', 'preDeploy', 'postDeploy']);
+  });
+
+  it('runs afterFleet on the last replica only', async () => {
+    expect(await deployWith({ first: false, last: true }))
+      .toEqual(['preDeploy', 'postDeploy', 'afterFleet']);
+  });
+
+  it('runs both when no role is given, so a single-server deploy is unaffected', async () => {
+    expect(await deployWith()).toEqual(['beforeFleet', 'preDeploy', 'postDeploy', 'afterFleet']);
+  });
+});

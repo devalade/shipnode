@@ -11,6 +11,7 @@ import type {
   BackupConfig,
   CloudflareConfig,
   HookFn,
+  HooksConfig,
   PkgManager,
 } from '../shared/types.js';
 import { assembleConfig } from './assembly.js';
@@ -45,7 +46,7 @@ type BuilderState = {
   sharedDirs?: string[];
   sharedFiles?: string[];
   appRoot?: string;
-  hooks?: { preDeploy?: HookFn; postDeploy?: HookFn };
+  hooks?: HooksConfig;
   dependsOn?: string[];
   apps?: Partial<ShipnodeApp>[];
 };
@@ -260,6 +261,18 @@ export class ShipnodeBuilder {
     return this;
   }
 
+  /** Runs once per roll, on the first replica. Migrations belong here, not in `preDeploy`. */
+  beforeFleet(fn: HookFn): this {
+    this.config.hooks = { ...(this.config.hooks ?? {}), beforeFleet: fn };
+    return this;
+  }
+
+  /** Runs once per roll, on the last replica, after the whole fleet is on the new release. */
+  afterFleet(fn: HookFn): this {
+    this.config.hooks = { ...(this.config.hooks ?? {}), afterFleet: fn };
+    return this;
+  }
+
   aliases(map: Record<string, string>): this {
     this.config.aliases = { ...(this.config.aliases ?? {}), ...map };
     return this;
@@ -461,6 +474,18 @@ export class ShipnodeAppBuilder {
 
   postDeploy(fn: HookFn): this {
     this.state.hooks = { ...(this.state.hooks ?? {}), postDeploy: fn };
+    return this;
+  }
+
+  /** Runs once per roll, on the first replica. Migrations belong here, not in `preDeploy`. */
+  beforeFleet(fn: HookFn): this {
+    this.state.hooks = { ...(this.state.hooks ?? {}), beforeFleet: fn };
+    return this;
+  }
+
+  /** Runs once per roll, on the last replica, after the whole fleet is on the new release. */
+  afterFleet(fn: HookFn): this {
+    this.state.hooks = { ...(this.state.hooks ?? {}), afterFleet: fn };
     return this;
   }
 

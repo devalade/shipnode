@@ -144,6 +144,45 @@ describe('deploy command dry run', () => {
     expect(output).not.toContain('api.example.com {');
   });
 
+  it('says where a pinned worker lands and where the run-once hooks fire', async () => {
+    const fleetConfig: ShipnodeConfig = {
+      ...config,
+      servers: {
+        'web-a': { host: '1.1.1.1', user: 'deploy', port: 22, privateHost: '10.0.0.11' },
+        'web-b': { host: '1.1.1.2', user: 'deploy', port: 22, privateHost: '10.0.0.12' },
+      },
+      accessories: {},
+      apps: config.apps.map((app) => ({
+        ...app,
+        on: ['web-a', 'web-b'],
+        dependsOn: undefined,
+        pm2: {
+          apps: [
+            { name: 'api', port: 3000 },
+            { name: 'scheduler', command: 'node cron.js', placement: 'primary' as const },
+          ],
+        },
+        hooks: {
+          preDeploy: async () => {},
+          beforeFleet: async () => {},
+          afterFleet: async () => {},
+        },
+        fleet: { batch: 1, port: 80, drainWait: 20, readyPath: '/_shipnode/ready' },
+      })),
+    };
+
+    printDryRun(fleetConfig, false);
+    const output = vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '';
+
+    expect(output).toContain('api-scheduler(web-a only)');
+    expect(output).toContain('Run beforeFleet hook (first replica only)');
+    expect(output).toContain('Run afterFleet hook (last replica only)');
+    // afterFleet runs before cleanup, matching the orchestrator.
+    expect(output.indexOf('afterFleet')).toBeLessThan(output.indexOf('Clean old releases'));
+    // The footgun the hooks exist to solve, stated where someone will read it.
+    expect(output).toContain('preDeploy runs once per replica — 2 times for this roll');
+  });
+
   it('prints a clean error for an unknown dry-run app', async () => {
     vi.mocked(loadConfig).mockResolvedValue(config);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);

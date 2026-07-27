@@ -355,6 +355,69 @@ describe('BackendStrategy.startApp', () => {
     expect(writeCmd).toContain('namespace');
   });
 
+  describe("placement: 'primary'", () => {
+    const fleetConfig = (): ReturnType<typeof assembleConfig> => assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: {
+        apps: [
+          { name: 'api', port: 3000 },
+          { name: 'mailer', command: 'node dist/worker.js' },
+          { name: 'cron', command: 'node dist/cron.js', placement: 'primary' },
+        ],
+      },
+      pkgManager: 'pnpm',
+    });
+
+    it('starts a primary-placed process on the primary replica', async () => {
+      const config = fleetConfig();
+      const executor = new FakeRemoteExecutor();
+      await makeStrategy(config, '/local/project')
+        .startApp!(makeCtx(executor, { config, primaryReplica: true }));
+
+      expect(executor.getHistory()[0].command).toContain('dist/cron.js');
+    });
+
+    it('leaves it out on every other replica', async () => {
+      // Three replicas each running the scheduler means every cron fires three
+      // times — the whole reason placement exists.
+      const config = fleetConfig();
+      const executor = new FakeRemoteExecutor();
+      await makeStrategy(config, '/local/project')
+        .startApp!(makeCtx(executor, { config, primaryReplica: false }));
+
+      const writeCmd = executor.getHistory()[0].command;
+      expect(writeCmd).not.toContain('dist/cron.js');
+      // The web process and the competing-consumer worker still run everywhere.
+      expect(writeCmd).toContain('PORT: 3000');
+      expect(writeCmd).toContain('dist/worker.js');
+    });
+
+    it('runs everything when the replica role is unknown (single-server deploy)', async () => {
+      const config = fleetConfig();
+      const executor = new FakeRemoteExecutor();
+      await makeStrategy(config, '/local/project').startApp!(makeCtx(executor, { config }));
+
+      expect(executor.getHistory()[0].command).toContain('dist/cron.js');
+    });
+
+    it('starts nothing on a secondary when every process is primary-placed', async () => {
+      const config = assembleConfig({
+        app: 'backend',
+        ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+        remotePath: '/var/www/app',
+        pm2: { apps: [{ name: 'cron', command: 'node dist/cron.js', placement: 'primary' }] },
+        pkgManager: 'pnpm',
+      });
+      const executor = new FakeRemoteExecutor();
+      await makeStrategy(config, '/local/project')
+        .startApp!(makeCtx(executor, { config, primaryReplica: false }));
+
+      expect(executor.getHistory()).toHaveLength(0);
+    });
+  });
+
   it('skips the port-in-use guard when no app has a port (worker-only)', async () => {
     const config = assembleConfig({
       app: 'backend',

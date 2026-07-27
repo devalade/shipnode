@@ -74,7 +74,13 @@ export const Pm2AppSchema = z.object({
   maxMemory: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   env: z.record(z.string(), z.string()).optional(),
-});
+  placement: z.enum(['all', 'primary']).optional(),
+}).refine(
+  // Pinning the web process to one replica would defeat the point of the fleet:
+  // the load balancer would send traffic to replicas running nothing.
+  (app) => !(app.placement === 'primary' && app.port !== undefined),
+  { message: "placement 'primary' is for workers — a pm2 app with a port must run on every replica", path: ['placement'] },
+);
 
 export const Pm2ConfigSchema = z.object({
   apps: z.array(Pm2AppSchema).min(1, 'pm2.apps must contain at least one entry'),
@@ -158,6 +164,8 @@ const HookFnSchema = z
 export const HooksConfigSchema = z.object({
   preDeploy: HookFnSchema.optional(),
   postDeploy: HookFnSchema.optional(),
+  beforeFleet: HookFnSchema.optional(),
+  afterFleet: HookFnSchema.optional(),
 }).optional();
 
 // Per-app fields — anything that differs between two apps deployed to the same server.

@@ -152,7 +152,8 @@ async function rollFleetApp(
   }
 
   const appConfig = scoped.value;
-  let replicas = getServerTargets(appConfig).map((target) => target.name);
+  const allReplicas = getServerTargets(appConfig).map((target) => target.name);
+  let replicas = allReplicas;
   if (options.on) {
     if (!replicas.includes(options.on)) {
       ui.error(`App '${app.name}' does not run on '${options.on}'. It runs on: ${replicas.join(', ')}`);
@@ -165,29 +166,26 @@ async function rollFleetApp(
   ui.banner();
   ui.step(`Rolling ${chalk.bold(app.name)} across ${replicas.join(', ')}`);
 
-  if (app.hooks?.preDeploy) {
-    ui.warn(
-      `${app.name} declares a preDeploy hook, which runs once per replica — ` +
-      `${replicas.length} times for this roll. Database migrations belong somewhere that runs once.`,
-    );
-  }
-
+  for (const warning of renderFleetWarnings(app, replicas)) ui.warn(`${app.name}: ${warning}`);
   for (const warning of renderDependencyWarnings(config, app)) ui.warn(warning);
 
   const result = await deployFleet({
     app,
     fleet: app.fleet!,
     replicas,
+    // From the full list, not the narrowed one: `--on web-b` must not promote
+    // web-b to primary and start a second copy of the scheduler alongside web-a's.
+    primary: allReplicas[0],
     remotePath: appConfig.remotePath,
     connect: async (serverName) => {
       const ssh = new SshConnection();
       await ssh.connect(configForServer(appConfig, serverName).ssh);
       return { executor: ssh, close: () => ssh.disconnect() };
     },
-    deployReplica: async ({ serverName, executor, releaseId }) => {
+    deployReplica: async ({ serverName, executor, releaseId, role }) => {
       const replicaConfig = { ...configForServer(appConfig, serverName), apps: [app], accessories: {} };
       const deployer = new DeployService(new LoggingExecutor(executor), replicaConfig);
-      await deployer.execute(cwd, options.skipBuild ?? false, releaseId);
+      await deployer.execute(cwd, options.skipBuild ?? false, releaseId, role);
     },
     onEvent: (event) => reportFleetEvent(app, event),
   });
@@ -344,11 +342,14 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
       serverRows.push([
         'PM2 apps',
         pm2Apps
-          .map((a) =>
-            a.port !== undefined
-              ? `${getPm2Name(namespace, a.name)}(web:${a.port})`
-              : getPm2Name(namespace, a.name),
-          )
+          .map((a) => {
+            const name = getPm2Name(namespace, a.name);
+            if (a.port !== undefined) return `${name}(web:${a.port})`;
+            // Where a pinned worker actually lands is the thing worth checking
+            // before the first roll — say it rather than leave it implied.
+            if (a.placement === 'primary' && replicas.length > 1) return `${name}(${replicas[0]} only)`;
+            return name;
+          })
           .join(', '),
       ]);
     }
@@ -359,6 +360,7 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
   if (app.dependsOn?.length) serverRows.push(['Depends on', app.dependsOn.join(', ')]);
 
   const dependencyWarnings = renderDependencyWarnings(config, app);
+  const fleetWarnings = renderFleetWarnings(app, replicas);
 
   const caddyPreview = renderCaddyPreview(config, app);
 
@@ -386,13 +388,15 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
     'Rsync files',
     'Install dependencies',
   );
+  if (app.hooks?.beforeFleet) steps.push('Run beforeFleet hook (first replica only)');
   if (app.hooks?.preDeploy) steps.push('Run preDeploy hook');
   steps.push('Switch symlink (atomic)');
   if (app.appType === 'backend') steps.push('Reload PM2');
   if (app.healthCheck.enabled) steps.push(`Health check ${app.healthCheck.path}`);
-  steps.push('Record release', 'Clean old releases');
+  steps.push('Record release');
   if (app.hooks?.postDeploy) steps.push('Run postDeploy hook');
-  steps.push('Release lock');
+  if (app.hooks?.afterFleet) steps.push('Run afterFleet hook (last replica only)');
+  steps.push('Clean old releases', 'Release lock');
   if (app.fleet) {
     steps.push(`Undrain (${app.fleet.readyPath} → 200)`, 'Repeat for the next batch');
   }
@@ -408,9 +412,28 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
     '',
     chalk.bold('  Deploy flow'),
     ...flowRows.map(([k, v]) => `    ${chalk.dim(k.padEnd(4))} ${v}`),
+    ...(fleetWarnings.length ? ['', chalk.bold('  Fleet hints'), ...fleetWarnings.map((line) => `    ${line}`)] : []),
     ...(dependencyWarnings.length ? ['', chalk.bold('  Dependency hints'), ...dependencyWarnings.map((line) => `    ${line}`)] : []),
     ...(caddyPreview ? ['', chalk.bold('  Caddy'), caddyPreview.split('\n').map((line) => `    ${line}`).join('\n')] : []),
   ].join('\n');
+}
+
+/**
+ * Caveats that only bite once an app has more than one replica, and that the
+ * config itself cannot decide for you.
+ */
+function renderFleetWarnings(app: ShipnodeApp, replicas: string[]): string[] {
+  if (replicas.length < 2) return [];
+  const warnings: string[] = [];
+
+  if (app.hooks?.preDeploy) {
+    warnings.push(
+      `preDeploy runs once per replica — ${replicas.length} times for this roll. ` +
+      `Move database migrations to .beforeFleet(), which runs once.`,
+    );
+  }
+
+  return warnings;
 }
 
 function renderDependencyWarnings(config: ShipnodeConfig, app: ShipnodeApp): string[] {

@@ -144,6 +144,40 @@ describe('fleet config', () => {
   });
 });
 
+describe('worker placement', () => {
+  it('accepts placement on a worker', () => {
+    const config = ShipnodeConfigSchema.parse(fleetWorkspace({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        on: 'web',
+        domain: 'api.example.com',
+        pm2: { apps: [{ name: 'api', port: 3333 }, { name: 'cron', command: 'node cron.js', placement: 'primary' }] },
+      }],
+    })) as ShipnodeConfig;
+
+    expect(config.apps[0].pm2?.apps[1]?.placement).toBe('primary');
+  });
+
+  it('rejects pinning the web process to one replica', () => {
+    // The load balancer would keep routing to replicas running nothing.
+    const parsed = ShipnodeConfigSchema.safeParse(fleetWorkspace({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        on: 'web',
+        domain: 'api.example.com',
+        pm2: { apps: [{ name: 'api', port: 3333, placement: 'primary' }] },
+      }],
+    }));
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(JSON.stringify(parsed.error.issues)).toContain('must run on every replica');
+    }
+  });
+});
+
 describe('fleet builder', () => {
   it('round-trips groups and fleet settings', () => {
     const config = shipnode

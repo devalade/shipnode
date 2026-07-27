@@ -84,6 +84,61 @@ describe('rolling a fleet', () => {
     expect(seen[0]).toBe(result.releaseId);
   });
 
+  it('marks exactly one replica first and one last, for the run-once hooks', async () => {
+    const roles: string[] = [];
+    const h = harness();
+
+    await h.run({
+      deployReplica: async ({ serverName, role }) => {
+        roles.push(`${serverName}:${role.first ? 'first' : ''}${role.last ? 'last' : ''}`);
+      },
+    });
+
+    expect(roles).toEqual(['web-a:first', 'web-b:', 'web-c:last']);
+  });
+
+  it('never reaches the last replica when the roll fails, so afterFleet cannot run', async () => {
+    const roles: { server: string; last: boolean }[] = [];
+    const h = harness({ failOn: 'web-b' });
+
+    await h.run({
+      deployReplica: async ({ serverName, role }) => {
+        roles.push({ server: serverName, last: role.last });
+        if (serverName === 'web-b') throw new Error('web-b failed to boot');
+      },
+    });
+
+    expect(roles.some((entry) => entry.last)).toBe(false);
+  });
+
+  it('makes a sole replica both first and last', async () => {
+    // Deploying one server — whether it is a single-server app or a fleet
+    // narrowed with --on — must still run the run-once hooks exactly once.
+    const roles: unknown[] = [];
+    const h = harness({ replicas: ['web-a'] });
+
+    await h.run({ deployReplica: async ({ role }) => { roles.push(role); } });
+
+    expect(roles).toEqual([{ first: true, last: true, primary: true }]);
+  });
+
+  it('keeps the primary fixed when a roll is narrowed to one replica', async () => {
+    // `--on web-b` narrows the roll, but web-a is still the fleet's primary.
+    // Promoting web-b would start a second copy of every placement:'primary'
+    // process while web-a's is still running.
+    const roles: { server: string; primary: boolean }[] = [];
+    const h = harness({ replicas: ['web-b'] });
+
+    await h.run({
+      primary: 'web-a',
+      deployReplica: async ({ serverName, role }) => {
+        roles.push({ server: serverName, primary: role.primary });
+      },
+    });
+
+    expect(roles).toEqual([{ server: 'web-b', primary: false }]);
+  });
+
   it('waits out the drain once per batch, not once per replica', async () => {
     const h = harness({ batch: 3 });
 

@@ -16,6 +16,13 @@ export interface StrategyContext {
    * recreate path.
    */
   deployTarget?: import('./blue-green.js').DeployTarget;
+  /**
+   * Whether this server is the fleet's primary. `pm2` apps declaring
+   * `placement: 'primary'` — schedulers and crons, where a second copy fires
+   * every job twice — start only here. Absent means yes: a single-server deploy
+   * is its own primary.
+   */
+  primaryReplica?: boolean;
 }
 
 /**

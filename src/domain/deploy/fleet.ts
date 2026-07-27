@@ -1,7 +1,7 @@
 import type { FleetConfig, ShipnodeApp } from '../../shared/types.js';
 import type { RemoteExecutor } from '../remote/executor.js';
 import { drain, undrain } from './drain.js';
-import { newReleaseId } from './orchestrator.js';
+import { newReleaseId, type ReplicaRole } from './orchestrator.js';
 
 /**
  * Rolling one app across the servers it runs on.
@@ -39,7 +39,24 @@ export interface FleetDeployOptions {
   remotePath: string;
   connect: ReplicaConnector;
   /** Deploy this app on one replica — normally `DeployService.execute`. */
-  deployReplica: (ctx: { serverName: string; executor: RemoteExecutor; releaseId: string }) => Promise<void>;
+  deployReplica: (ctx: {
+    serverName: string;
+    executor: RemoteExecutor;
+    releaseId: string;
+    /**
+     * This replica's position in the roll, which decides where the run-once
+     * `beforeFleet` / `afterFleet` hooks fire. A roll that dies partway never
+     * reaches its last replica, so `afterFleet` correctly never runs.
+     */
+    role: ReplicaRole;
+  }) => Promise<void>;
+  /**
+   * The fleet's primary server, where `placement: 'primary'` processes run.
+   * Defaults to the first replica of this roll — pass it explicitly when the
+   * roll has been narrowed (`--on`), so a partial roll cannot promote a
+   * secondary replica and start a second scheduler.
+   */
+  primary?: string;
   releaseId?: string;
   onEvent?: (event: FleetEvent) => void;
   /** Injected so tests do not wait out a real drain. */
@@ -108,7 +125,16 @@ export async function deployFleet(options: FleetDeployOptions): Promise<FleetDep
         onEvent?.({ type: 'deploying', server });
 
         try {
-          await deployReplica({ serverName: server, executor: session.executor, releaseId });
+          await deployReplica({
+            serverName: server,
+            executor: session.executor,
+            releaseId,
+            role: {
+              first: server === replicas[0],
+              last: server === replicas[replicas.length - 1],
+              primary: server === (options.primary ?? replicas[0]),
+            },
+          });
         } catch (error) {
           failure = { server, message: error instanceof Error ? error.message : String(error) };
           onEvent?.({ type: 'failed', server, message: failure.message });
