@@ -1,10 +1,10 @@
 import type { FleetConfig, ShipnodeApp } from '../../shared/types.js';
 import type { RemoteExecutor } from '../remote/executor.js';
 import { drain, undrain } from './drain.js';
-import { newReleaseId, type ReplicaRole } from './orchestrator.js';
+import type { ReplicaRole } from './orchestrator.js';
 
 /**
- * Rolling one app across the servers it runs on.
+ * Rolling an operation across the servers one app runs on.
  *
  * This sits *above* `DeployOrchestrator`, which stays the unit of work for a
  * single replica — blue-green, health checks, release symlinks and locking are
@@ -13,10 +13,12 @@ import { newReleaseId, type ReplicaRole } from './orchestrator.js';
  *
  * The invariant it exists to hold is that no more than `batch` replicas are out
  * of rotation at once, and that a replica is out of rotation before anything
- * touches it.
+ * touches it. That is true of a rollback as much as a deploy, so the operation
+ * itself is a callback — `applyToReplica` — and both commands drive the same
+ * batching, drain timing and partial-failure reporting.
  */
 
-/** A live connection to one replica, held across its whole drain/deploy/undrain turn. */
+/** A live connection to one replica, held across its whole drain/apply/undrain turn. */
 export interface ReplicaSession {
   executor: RemoteExecutor;
   close(): void;
@@ -27,22 +29,22 @@ export type ReplicaConnector = (serverName: string) => Promise<ReplicaSession>;
 export type FleetEvent =
   | { type: 'batch'; servers: string[] }
   | { type: 'drained'; servers: string[]; waitSeconds: number }
-  | { type: 'deploying'; server: string }
-  | { type: 'deployed'; server: string }
+  | { type: 'applying'; server: string }
+  | { type: 'applied'; server: string }
   | { type: 'undrained'; server: string }
   | { type: 'failed'; server: string; message: string };
 
-export interface FleetDeployOptions {
+export interface FleetRollOptions {
   app: ShipnodeApp;
   fleet: FleetConfig;
   replicas: string[];
   remotePath: string;
   connect: ReplicaConnector;
-  /** Deploy this app on one replica — normally `DeployService.execute`. */
-  deployReplica: (ctx: {
+  /** Do the work on one replica — a deploy, a rollback, anything per-replica. */
+  applyToReplica: (ctx: {
     serverName: string;
     executor: RemoteExecutor;
-    releaseId: string;
+    releaseId?: string;
     /**
      * This replica's position in the roll, which decides where the run-once
      * `beforeFleet` / `afterFleet` hooks fire. A roll that dies partway never
@@ -57,16 +59,21 @@ export interface FleetDeployOptions {
    * secondary replica and start a second scheduler.
    */
   primary?: string;
+  /**
+   * The release every replica should converge on, when the operation has one.
+   * A deploy mints it up front so a converged fleet is distinguishable from a
+   * half-rolled one; an instant blue-green rollback has no such name.
+   */
   releaseId?: string;
   onEvent?: (event: FleetEvent) => void;
   /** Injected so tests do not wait out a real drain. */
   sleep?: (ms: number) => Promise<void>;
 }
 
-export interface FleetDeployResult {
-  releaseId: string;
-  /** Replicas now serving the new release, in the order they were rolled. */
-  deployed: string[];
+export interface FleetRollResult {
+  releaseId?: string;
+  /** Replicas the operation succeeded on, in the order they were rolled. */
+  applied: string[];
   /** The replica that failed, if any. It is deliberately left out of rotation. */
   failed?: { server: string; message: string };
   /** Replicas never reached because the roll stopped. Still on the old release. */
@@ -84,7 +91,7 @@ function batches<T>(items: T[], size: number): T[][] {
 }
 
 /**
- * Roll `app` across its replicas.
+ * Roll an operation across `app`'s replicas.
  *
  * Resolves rather than throwing on a replica failure: a partly-rolled fleet is
  * a real state the caller has to report, not an exception to unwind. Replicas
@@ -92,12 +99,11 @@ function batches<T>(items: T[], size: number): T[][] {
  * old, and the failed replica stays drained so it is out of rotation and safe
  * to inspect.
  */
-export async function deployFleet(options: FleetDeployOptions): Promise<FleetDeployResult> {
-  const { app, fleet, replicas, remotePath, connect, deployReplica, onEvent } = options;
+export async function rollFleet(options: FleetRollOptions): Promise<FleetRollResult> {
+  const { app, fleet, replicas, remotePath, connect, applyToReplica, releaseId, onEvent } = options;
   const sleep = options.sleep ?? defaultSleep;
-  const releaseId = options.releaseId ?? newReleaseId();
 
-  const deployed: string[] = [];
+  const applied: string[] = [];
   const remaining = [...replicas];
 
   for (const batch of batches(replicas, fleet.batch)) {
@@ -122,10 +128,10 @@ export async function deployFleet(options: FleetDeployOptions): Promise<FleetDep
 
       for (const server of batch) {
         const session = sessions.get(server)!;
-        onEvent?.({ type: 'deploying', server });
+        onEvent?.({ type: 'applying', server });
 
         try {
-          await deployReplica({
+          await applyToReplica({
             serverName: server,
             executor: session.executor,
             releaseId,
@@ -141,8 +147,8 @@ export async function deployFleet(options: FleetDeployOptions): Promise<FleetDep
           break;
         }
 
-        onEvent?.({ type: 'deployed', server });
-        deployed.push(server);
+        onEvent?.({ type: 'applied', server });
+        applied.push(server);
         remaining.splice(remaining.indexOf(server), 1);
 
         // Back into rotation only once this replica is serving the new release.
@@ -150,11 +156,11 @@ export async function deployFleet(options: FleetDeployOptions): Promise<FleetDep
         onEvent?.({ type: 'undrained', server });
       }
 
-      // Anything in this batch we drained but never deployed is still healthy on
+      // Anything in this batch we drained but never touched is still healthy on
       // the old release, so it belongs back in rotation. The replica that
       // actually failed is not — it stays drained.
       for (const server of batch) {
-        if (deployed.includes(server) || server === failure?.server) continue;
+        if (applied.includes(server) || server === failure?.server) continue;
         await undrain(sessions.get(server)!.executor, remotePath, app.name);
         onEvent?.({ type: 'undrained', server });
       }
@@ -163,9 +169,9 @@ export async function deployFleet(options: FleetDeployOptions): Promise<FleetDep
     }
 
     if (failure) {
-      return { releaseId, deployed, failed: failure, skipped: remaining.filter((s) => s !== failure.server) };
+      return { releaseId, applied, failed: failure, skipped: remaining.filter((s) => s !== failure.server) };
     }
   }
 
-  return { releaseId, deployed, skipped: [] };
+  return { releaseId, applied, skipped: [] };
 }

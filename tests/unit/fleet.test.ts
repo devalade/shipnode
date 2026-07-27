@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deployFleet, type FleetEvent, type ReplicaSession } from '../../src/domain/deploy/fleet.js';
+import { rollFleet, type FleetEvent, type ReplicaSession } from '../../src/domain/deploy/fleet.js';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
 import type { FleetConfig, ShipnodeApp } from '../../src/shared/types.js';
 
@@ -12,7 +12,7 @@ interface Harness {
   events: FleetEvent[];
   slept: number[];
   closed: string[];
-  run: (overrides?: Partial<Parameters<typeof deployFleet>[0]>) => ReturnType<typeof deployFleet>;
+  run: (overrides?: Partial<Parameters<typeof rollFleet>[0]>) => ReturnType<typeof rollFleet>;
 }
 
 function harness(options: { replicas?: string[]; failOn?: string; batch?: number } = {}): Harness {
@@ -38,13 +38,13 @@ function harness(options: { replicas?: string[]; failOn?: string; batch?: number
     events,
     slept,
     closed,
-    run: (overrides = {}) => deployFleet({
+    run: (overrides = {}) => rollFleet({
       app,
       fleet: { ...fleet, batch: options.batch ?? fleet.batch },
       replicas,
       remotePath: '/var/www/app',
       connect,
-      deployReplica: async ({ serverName }) => {
+      applyToReplica: async ({ serverName }) => {
         timeline.push(`${serverName}:deploy`);
         if (serverName === options.failOn) throw new Error(`${serverName} failed to boot`);
       },
@@ -66,22 +66,35 @@ describe('rolling a fleet', () => {
       'web-b:drain', 'web-b:deploy', 'web-b:undrain',
       'web-c:drain', 'web-c:deploy', 'web-c:undrain',
     ]);
-    expect(result.deployed).toEqual(['web-a', 'web-b', 'web-c']);
+    expect(result.applied).toEqual(['web-a', 'web-b', 'web-c']);
     expect(result.failed).toBeUndefined();
   });
 
-  it('gives every replica the same release id', async () => {
+  it('hands every replica the same release id', async () => {
     // A per-replica timestamp makes a converged fleet indistinguishable from a
     // half-rolled one.
-    const seen: string[] = [];
+    const seen: (string | undefined)[] = [];
     const h = harness();
 
     const result = await h.run({
-      deployReplica: async ({ releaseId }) => { seen.push(releaseId); },
+      releaseId: '2026-01-01T00-00-00-000Z',
+      applyToReplica: async ({ releaseId }) => { seen.push(releaseId); },
     });
 
-    expect(new Set(seen).size).toBe(1);
-    expect(seen[0]).toBe(result.releaseId);
+    expect(seen).toEqual(Array(3).fill('2026-01-01T00-00-00-000Z'));
+    expect(result.releaseId).toBe('2026-01-01T00-00-00-000Z');
+  });
+
+  it('carries no release id for an operation that has none', async () => {
+    // An instant blue-green rollback flips colours; there is no new release to
+    // name, and inventing a timestamp would be a lie in the status output.
+    const seen: (string | undefined)[] = [];
+    const h = harness({ replicas: ['web-a'] });
+
+    const result = await h.run({ applyToReplica: async ({ releaseId }) => { seen.push(releaseId); } });
+
+    expect(seen).toEqual([undefined]);
+    expect(result.releaseId).toBeUndefined();
   });
 
   it('marks exactly one replica first and one last, for the run-once hooks', async () => {
@@ -89,7 +102,7 @@ describe('rolling a fleet', () => {
     const h = harness();
 
     await h.run({
-      deployReplica: async ({ serverName, role }) => {
+      applyToReplica: async ({ serverName, role }) => {
         roles.push(`${serverName}:${role.first ? 'first' : ''}${role.last ? 'last' : ''}`);
       },
     });
@@ -102,7 +115,7 @@ describe('rolling a fleet', () => {
     const h = harness({ failOn: 'web-b' });
 
     await h.run({
-      deployReplica: async ({ serverName, role }) => {
+      applyToReplica: async ({ serverName, role }) => {
         roles.push({ server: serverName, last: role.last });
         if (serverName === 'web-b') throw new Error('web-b failed to boot');
       },
@@ -117,7 +130,7 @@ describe('rolling a fleet', () => {
     const roles: unknown[] = [];
     const h = harness({ replicas: ['web-a'] });
 
-    await h.run({ deployReplica: async ({ role }) => { roles.push(role); } });
+    await h.run({ applyToReplica: async ({ role }) => { roles.push(role); } });
 
     expect(roles).toEqual([{ first: true, last: true, primary: true }]);
   });
@@ -131,7 +144,7 @@ describe('rolling a fleet', () => {
 
     await h.run({
       primary: 'web-a',
-      deployReplica: async ({ serverName, role }) => {
+      applyToReplica: async ({ serverName, role }) => {
         roles.push({ server: serverName, primary: role.primary });
       },
     });
@@ -167,7 +180,7 @@ describe('rolling a fleet', () => {
 
     const result = await h.run();
 
-    expect(result.deployed).toEqual(['web-a']);
+    expect(result.applied).toEqual(['web-a']);
     expect(result.failed).toEqual({ server: 'web-b', message: 'web-b failed to boot' });
     expect(result.skipped).toEqual(['web-c']);
     expect(h.timeline).not.toContain('web-c:deploy');
@@ -204,7 +217,7 @@ describe('rolling a fleet', () => {
       'web-a:deploy',
       'web-b:undrain',
     ]);
-    expect(result.deployed).toEqual([]);
+    expect(result.applied).toEqual([]);
     expect(result.skipped).toEqual(['web-b']);
   });
 
@@ -222,7 +235,7 @@ describe('rolling a fleet', () => {
     await h.run();
 
     expect(h.events.map((event) => event.type)).toEqual([
-      'batch', 'drained', 'deploying', 'deployed', 'undrained',
+      'batch', 'drained', 'applying', 'applied', 'undrained',
     ]);
   });
 });

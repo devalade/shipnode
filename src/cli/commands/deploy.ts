@@ -14,7 +14,8 @@ import { appStateDir } from '../../domain/deploy/drain.js';
 import { type ServerTargetError } from '../../shared/result-errors.js';
 import { runDeployWatch } from './deploy-watch.js';
 import type { BuildLocation } from '../../domain/deploy/hot-sync.js';
-import { deployFleet, type FleetEvent } from '../../domain/deploy/fleet.js';
+import { rollFleet, type FleetEvent } from '../../domain/deploy/fleet.js';
+import { newReleaseId } from '../../domain/deploy/orchestrator.js';
 import { SshConnection } from '../../infrastructure/ssh/connection.js';
 
 export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string; watch?: boolean; build?: string; on?: string }): Promise<void> {
@@ -169,10 +170,13 @@ async function rollFleetApp(
   for (const warning of renderFleetWarnings(app, replicas)) ui.warn(`${app.name}: ${warning}`);
   for (const warning of renderDependencyWarnings(config, app)) ui.warn(warning);
 
-  const result = await deployFleet({
+  const result = await rollFleet({
     app,
     fleet: app.fleet!,
     replicas,
+    // One release id for the whole roll, so `status` can tell a converged fleet
+    // from a half-rolled one.
+    releaseId: newReleaseId(),
     // From the full list, not the narrowed one: `--on web-b` must not promote
     // web-b to primary and start a second copy of the scheduler alongside web-a's.
     primary: allReplicas[0],
@@ -182,7 +186,7 @@ async function rollFleetApp(
       await ssh.connect(configForServer(appConfig, serverName).ssh);
       return { executor: ssh, close: () => ssh.disconnect() };
     },
-    deployReplica: async ({ serverName, executor, releaseId, role }) => {
+    applyToReplica: async ({ serverName, executor, releaseId, role }) => {
       const replicaConfig = { ...configForServer(appConfig, serverName), apps: [app], accessories: {} };
       const deployer = new DeployService(new LoggingExecutor(executor), replicaConfig);
       await deployer.execute(cwd, options.skipBuild ?? false, releaseId, role);
@@ -193,7 +197,7 @@ async function rollFleetApp(
   if (result.failed) {
     ui.error(
       `${app.name}: ${result.failed.server} failed and is out of rotation. ` +
-      `${result.deployed.length ? `${result.deployed.join(', ')} now on ${result.releaseId}; ` : ''}` +
+      `${result.applied.length ? `${result.applied.join(', ')} now on ${result.releaseId}; ` : ''}` +
       `${result.skipped.length ? `${result.skipped.join(', ')} still on the previous release. ` : ''}` +
       `The fleet is running mixed versions.`,
     );
@@ -202,7 +206,7 @@ async function rollFleetApp(
   }
 
   ui.note(
-    [`release  ${result.releaseId}`, `servers  ${result.deployed.join(', ')}`, ...(app.domain ? [`url      https://${app.domain}`] : [])].join('\n'),
+    [`release  ${result.releaseId}`, `servers  ${result.applied.join(', ')}`, ...(app.domain ? [`url      https://${app.domain}`] : [])].join('\n'),
     `${app.name} rolled`,
   );
 }
@@ -212,7 +216,7 @@ function reportFleetEvent(app: ShipnodeApp, event: FleetEvent): void {
     case 'drained':
       ui.info(`${event.servers.join(', ')} draining — waiting ${event.waitSeconds}s for the load balancer`);
       break;
-    case 'deploying':
+    case 'applying':
       ui.step(`${app.name} → ${event.server}`);
       break;
     case 'undrained':
