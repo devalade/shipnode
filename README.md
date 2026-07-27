@@ -252,6 +252,8 @@ export default shipnode
 
 Replicas serve plain HTTP on the private network and never claim the domain — five replicas all requesting a certificate for the same name would race Let's Encrypt. **TLS terminates at your load balancer.**
 
+Each replica installs and builds, so a three-replica roll takes roughly three times a single deploy. `shipnode ci github` sizes the workflow timeout accordingly.
+
 | Setting | Default | Description |
 |---|---|---|
 | `.group(name, servers)` | — | Name a set of servers so `on` can target them all at once |

@@ -200,6 +200,9 @@ describe('ci github', () => {
     expect(workflow).toContain('Verify every replica is a known host');
     expect(workflow).toContain("for host in '10.0.0.11' '10.0.0.12'");
     expect(workflow).toContain('ssh-keyscan 10.0.0.11 10.0.0.12');
+    // Each replica installs and builds in turn inside one job; a timeout
+    // mid-roll leaves the fleet on mixed versions with a replica drained.
+    expect(workflow).toContain('timeout-minutes: 60');
   });
 
   it('omits the replica check for a single-server workspace', async () => {
@@ -216,6 +219,8 @@ describe('ci github', () => {
 
     await cmdCiGithub(root, { app: 'api', syncEnv: true });
 
-    expect(await readWorkflow(root)).not.toContain('Verify every replica is a known host');
+    const workflow = await readWorkflow(root);
+    expect(workflow).not.toContain('Verify every replica is a known host');
+    expect(workflow).toContain('timeout-minutes: 30');
   });
 });

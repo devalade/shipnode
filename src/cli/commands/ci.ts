@@ -177,6 +177,11 @@ function generateWorkflow(
     : '';
   const commandOptions = renderCommandOptions(options);
 
+  // A roll installs and builds on every replica in turn, inside one job. Thirty
+  // minutes is comfortable for one server and tight for four, and a timeout
+  // mid-roll leaves the fleet on mixed versions with a replica drained.
+  const deployTimeoutMinutes = 30 * Math.max(1, hosts.length);
+
   const knownHostsScan = hosts.length > 0 ? hosts.join(' ') : '<your-server>';
   // Fail before the roll rather than during it. A host missing from
   // known_hosts otherwise surfaces as an SSH failure on replica three, with
@@ -238,7 +243,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${deployTimeoutMinutes}
     environment: ${yamlSingleQuoted(environment)}
 
     steps:

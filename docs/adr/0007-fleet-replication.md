@@ -84,4 +84,10 @@ Accessories stay single-node. Shipnode replicating Postgres is out of scope, and
 - **A shipnode-managed load balancer** — a Cloudflare tunnel with N connectors, or an edge Caddy node. The drain contract is designed so either could be added later as an alternative drain implementation without disturbing the roller.
 - **Pass-through TLS.** Replicas serve plain HTTP; the LB terminates.
 - **Replicated accessories.** One Postgres, on one server.
-- **Building once and shipping the artifact.** Each replica still builds. With a committed lockfile the builds are equivalent, so this is a time optimisation rather than a correctness gate, and the two ways to implement it — building locally, or copying between servers — each impose an infrastructure requirement that has not been chosen.
+- **Building once and shipping the artifact.** Each replica installs and builds, so an N-replica roll costs N builds. This was considered and declined.
+
+  The case for it is that a floating dependency could resolve differently on each replica and produce N different artifacts. With a committed lockfile — the normal case — it cannot, so this is a wall-clock cost rather than a correctness gate. Frontends are already unaffected: `FrontendStrategy` builds locally and rsyncs only `buildDir`.
+
+  Both implementations impose an infrastructure requirement that outweighs the saving. Building on the primary and copying to its peers needs SSH *between servers*, a new trust edge in a tool whose whole premise is that it needs nothing but your SSH access to each box. Building locally needs the developer's machine or CI runner to produce server-compatible binaries, which fails silently for native modules — `sharp`, `esbuild`, `better-sqlite3`, Prisma engines — when someone deploys from macOS arm64 to linux x64.
+
+  Revisit if fleets get large enough that build time dominates, or if shipnode grows a container image path where the artifact is already portable by construction.
