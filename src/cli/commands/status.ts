@@ -1,8 +1,20 @@
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import { getDeploymentName, getPm2Name } from '../../domain/pm2/apps.js';
+import { isDrained } from '../../domain/deploy/drain.js';
+import {
+  assessConvergence,
+  describeConvergence,
+  type ReplicaObservation,
+} from '../../domain/deploy/convergence.js';
 
 export async function cmdStatus(cwd: string, options: { config?: string; app?: string; on?: string }): Promise<void> {
+  // Per-app, per-replica observations, gathered as the fan-out visits each
+  // server. Release skew is invisible from inside one server, so the comparison
+  // happens after every replica has reported.
+  const observed = new Map<string, ReplicaObservation[]>();
+  const fleetApps = new Set<string>();
+
   await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor, serverName }) => {
@@ -36,7 +48,13 @@ export async function cmdStatus(cwd: string, options: { config?: string; app?: s
                 const pm2Name = getPm2Name(namespace, pm2App.name);
                 const running = byName.get(pm2Name);
                 if (!running) {
-                  ui.warn(`  App '${pm2App.name}' not found in PM2`);
+                  // A process pinned to the primary is absent everywhere else by
+                  // design; saying "not found" would report the feature as a fault.
+                  if (pm2App.placement === 'primary') {
+                    ui.info(`  App '${pm2App.name}' is pinned to the primary replica — not expected here`);
+                  } else {
+                    ui.warn(`  App '${pm2App.name}' not found in PM2`);
+                  }
                   continue;
                 }
                 ui.heading(`  PM2: ${pm2App.name}`);
@@ -59,11 +77,33 @@ export async function cmdStatus(cwd: string, options: { config?: string; app?: s
 
         const appPath = `${config.remotePath}/${app.name}`;
         const currentResult = await executor.exec(`readlink "${appPath}/current" 2>/dev/null || echo "no current symlink"`);
-        if (currentResult.stdout !== 'no current symlink') {
+        const hasRelease = currentResult.stdout !== 'no current symlink' && currentResult.stdout !== '';
+        if (hasRelease) {
           ui.success(`  Current release: ${currentResult.stdout}`);
         } else {
           ui.warn('  No active release');
         }
+
+        let drained: boolean | null = null;
+        if (app.fleet) {
+          fleetApps.add(app.name);
+          drained = await isDrained(executor, config.remotePath, app.name);
+          if (drained) {
+            ui.warn(`  Rotation: draining (${app.fleet.readyPath} answers 503)`);
+          } else {
+            ui.success('  Rotation: in rotation');
+          }
+        }
+
+        const entries = observed.get(app.name) ?? [];
+        entries.push({
+          server: serverName,
+          // The symlink is absolute; only the release directory name is
+          // comparable between replicas.
+          release: hasRelease ? currentResult.stdout.split('/').pop() ?? null : null,
+          drained,
+        });
+        observed.set(app.name, entries);
 
         const releasesResult = await executor.exec(`ls -1t "${appPath}/releases/" 2>/dev/null | head -5`);
         if (releasesResult.stdout) {
@@ -74,4 +114,44 @@ export async function cmdStatus(cwd: string, options: { config?: string; app?: s
     },
     { configPath: options.config, serverName: options.on },
   );
+
+  reportFleetConvergence(observed, fleetApps, options.on !== undefined);
+}
+
+/**
+ * The cross-replica view, which is the only place a half-rolled fleet shows up.
+ *
+ * Skipped when `--on` narrowed the run to one server: a single observation
+ * proves nothing about the others, and reporting "converged" from it would be
+ * worse than saying nothing.
+ */
+function reportFleetConvergence(
+  observed: Map<string, ReplicaObservation[]>,
+  fleetApps: Set<string>,
+  narrowed: boolean,
+): void {
+  if (narrowed) return;
+
+  for (const [appName, observations] of observed) {
+    if (!fleetApps.has(appName) || observations.length < 2) continue;
+
+    const convergence = assessConvergence(observations);
+    ui.heading(`Fleet: ${appName}`);
+    ui.section(
+      '  Replicas',
+      observations.map((o) => [
+        o.server,
+        `${o.release ?? 'no release'}${o.drained ? ' (draining)' : ''}`,
+      ]),
+    );
+
+    if (convergence.converged) {
+      ui.success(`  All ${observations.length} replicas on ${convergence.releases[0]}`);
+      continue;
+    }
+
+    for (const line of describeConvergence(appName, observations, convergence)) {
+      ui.warn(`  ${line}`);
+    }
+  }
 }
