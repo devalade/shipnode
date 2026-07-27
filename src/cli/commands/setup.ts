@@ -88,14 +88,38 @@ async function bootstrapDeployUser(
  * user is already root, and the conditional `$SUDO` fallback breaks on `sudo -u`
  * because it leaves `-u` as the leading token when SUDO="".
  */
+/**
+ * Run a command as another user, from a directory that user can actually read.
+ *
+ * `sudo` inherits the caller's working directory, and setup normally runs over
+ * SSH as root, whose home is mode 700. Node's `spawn()` returns EACCES when the
+ * working directory is unreadable, so every pm2 command that starts the daemon
+ * failed — reporting `spawn /home/deploy/.../node EACCES`, which names the node
+ * binary and hides the real cause. `-H` sets HOME to the target user's rather
+ * than leaving root's.
+ */
 function asUser(user: string | null, cmd: string): string {
   if (!user) return cmd;
-  const escaped = cmd.replace(/'/g, "'\\''");
-  return `sudo -u "${user}" bash -lc '${escaped}'`;
+  const escaped = `cd "$HOME" 2>/dev/null || cd /; ${cmd}`.replace(/'/g, "'\\''");
+  return `sudo -u "${user}" -H bash -lc '${escaped}'`;
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+/**
+ * Whether this server needs Caddy.
+ *
+ * A domain is the obvious case. A fleet replica is the non-obvious one: it
+ * deliberately has *no* domain — five replicas claiming one name would race
+ * Let's Encrypt — but it still needs Caddy to serve the `/_shipnode/ready`
+ * endpoint the load balancer health-checks, and to reverse-proxy the app. Gating
+ * on `domain` alone left fleet replicas without Caddy, and the first deploy died
+ * writing its site file into a directory that was never created.
+ */
+function needsCaddy(config: ShipnodeConfig): boolean {
+  return config.apps.some((app) => app.domain !== undefined || app.fleet !== undefined);
 }
 
 export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {
@@ -188,7 +212,7 @@ export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, own
           },
         ], { concurrent: false }),
       }] : []),
-      ...(hasApps && config.apps.some((app) => app.domain) ? [{
+      ...(hasApps && needsCaddy(config) ? [{
         title: 'Caddy',
         task: () =>
           executor.execOrThrow(
@@ -270,7 +294,7 @@ export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, own
               `${shellQuote(`${config.remotePath}/shared`)} ${shellQuote(`${config.remotePath}/.shipnode`)}`,
             ),
           },
-          ...(config.apps.some((app) => app.domain) ? [{
+          ...(needsCaddy(config) ? [{
             title: 'Configure Caddy include',
             task: () => executor.execOrThrow(
               'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; ' +
@@ -294,9 +318,7 @@ async function configurePm2Startup(
   nodeVersion: string,
   mise: string,
 ): Promise<ResultType<void, Pm2StartupError>> {
-  const resolvePm2 = runAsUser
-    ? `sudo -u "${runAsUser}" bash -lc '${mise}; mise exec "node@${nodeVersion}" -- which pm2'`
-    : `${mise}; mise exec "node@${nodeVersion}" -- which pm2`;
+  const resolvePm2 = asUser(runAsUser, `${mise}; mise exec "node@${nodeVersion}" -- which pm2`);
   const savePm2 = asUser(
     runAsUser,
     `${mise}; mise exec "node@${nodeVersion}" -- pm2 save --force`,

@@ -66,3 +66,63 @@ describe('CaddyService snippets', () => {
 }`);
   });
 });
+
+describe('configureAll reloads what it writes', () => {
+  const fleetApp: ShipnodeApp = {
+    ...baseApp,
+    domain: undefined,
+    zeroDowntime: false,
+    fleet: { batch: 1, port: 80, drainWait: 8, readyPath: '/_shipnode/ready' },
+  };
+
+  it('reloads Caddy after writing a fleet replica site', async () => {
+    // The site file changes nothing until Caddy re-reads it. Only the blue-green
+    // path reloaded, and a fleet replica has no domain so is never blue-green —
+    // its readiness endpoint 404'd and the load balancer took it out of rotation.
+    const executor = new FakeRemoteExecutor();
+    const fleetConfig: ShipnodeConfig = {
+      ...config,
+      servers: { 'web-a': { host: '1.2.3.4', user: 'deploy', port: 22, privateHost: '10.0.0.11' } },
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22, privateHost: '10.0.0.11' },
+      apps: [fleetApp],
+    };
+
+    await new CaddyService(executor, fleetConfig).configureAll();
+
+    const commands = executor.getHistory().map((entry) => entry.command);
+    const wrote = commands.findIndex((c) => c.includes('/etc/caddy/conf.d/api.caddy'));
+    const reloaded = commands.findIndex((c) => c.includes('systemctl reload caddy'));
+
+    expect(wrote).toBeGreaterThanOrEqual(0);
+    expect(reloaded).toBeGreaterThan(wrote);
+  });
+
+  it('reloads once, not once per app', async () => {
+    const executor = new FakeRemoteExecutor();
+    const twoApps: ShipnodeConfig = {
+      ...config,
+      apps: [
+        { ...baseApp, name: 'api', zeroDowntime: false },
+        { ...baseApp, name: 'web', appType: 'frontend', pm2: undefined, domain: 'example.com' },
+      ],
+    };
+
+    await new CaddyService(executor, twoApps).configureAll();
+
+    const reloads = executor.getHistory()
+      .filter((entry) => entry.command.includes('systemctl reload caddy'));
+    expect(reloads).toHaveLength(1);
+  });
+
+  it('does not reload when there is nothing to write', async () => {
+    const executor = new FakeRemoteExecutor();
+    const noSites: ShipnodeConfig = {
+      ...config,
+      apps: [{ ...baseApp, domain: undefined, fleet: undefined }],
+    };
+
+    await new CaddyService(executor, noSites).configureAll();
+
+    expect(executor.getHistory().some((e) => e.command.includes('reload caddy'))).toBe(false);
+  });
+});

@@ -65,7 +65,10 @@ program
   .description('Setup a new server with required dependencies')
   .option('--no-deploy-user', 'Skip creating the deploy user (advanced)')
   .option('--config <path>', 'Use a specific config file')
-  .action((opts) => cmdSetup(process.cwd(), opts));
+  // Commander turns `--no-deploy-user` into `deployUser: false`, not
+  // `noDeployUser: true`, so passing opts straight through silently ignored the
+  // flag and created the user anyway.
+  .action((opts) => cmdSetup(process.cwd(), { ...opts, noDeployUser: opts.deployUser === false }));
 
 program
   .command('deploy')

@@ -161,7 +161,10 @@ export class DeployOrchestrator {
       let healthResponseMs: number | undefined;
 
       if (app.appType === 'backend' && app.healthCheck.enabled) {
-        const healthResult = await this.healthCheck.perform(app, this.healthOpts(app, target));
+        const healthResult = await this.healthCheck.perform(
+          app,
+          this.healthOpts(app, target, fleetRole.primary),
+        );
         healthAttempts = healthResult.attempts;
         healthResponseMs = healthResult.responseMs;
       }
@@ -261,12 +264,24 @@ export class DeployOrchestrator {
   /**
    * Health-check options that point the probe at the blue-green target colour
    * (its port and colour-suffixed pm2 name) instead of the static config.
+   *
+   * `primaryReplica` also narrows which processes must be online. The status
+   * check requires every declared pm2 app to be running, and a `placement:
+   * 'primary'` process is deliberately absent from every other replica — so
+   * without this, placement working correctly is what fails the health check.
    */
   private healthOpts(
     app: ShipnodeApp,
     target: DeployTarget | undefined,
+    primaryReplica: boolean,
   ): { httpPort?: number; resolvePm2Name?: (a: Pm2App) => string; pm2Apps?: Pm2App[] } | undefined {
-    if (!target) return undefined;
+    if (!target) {
+      const declared = app.pm2?.apps ?? [];
+      const placed = declared.filter((a) => primaryReplica || a.placement !== 'primary');
+      // Only override when placement actually removed something, so the default
+      // path stays byte-identical for every config that does not use it.
+      return placed.length === declared.length ? undefined : { pm2Apps: placed };
+    }
     const namespace = app.pm2?.apps[0]?.name ?? app.name;
     // Workers are still on the previous release until afterHealthy — only the
     // new web colour must be online for this probe.

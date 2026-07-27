@@ -98,6 +98,40 @@ describe('setup target dependency selection', () => {
     expect(startup).toContain('sudo -u "deploy"');
     expect(startup).toContain('pm2 save --force');
     expect(startup).not.toContain('|| true');
+
+    // sudo inherits the caller's working directory, and setup normally runs over
+    // SSH as root whose home is mode 700. Node's spawn() returns EACCES from an
+    // unreadable cwd, so every pm2 command that starts the daemon failed with a
+    // message naming the node binary rather than the cause.
+    expect(startup).toContain('sudo -u "deploy" -H');
+    expect(startup).toContain('cd "$HOME"');
+  });
+
+  it('runs every deploy-user command from a directory that user can read', async () => {
+    const executor = new FakeRemoteExecutor();
+    const config = baseConfig({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        pm2: { apps: [{ name: 'api', port: 3000 }] },
+        healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 3 },
+        envFile: '.env',
+        keepReleases: 5,
+        zeroDowntime: false,
+      }],
+    });
+
+    await buildTasks(executor, config, 'deploy').run();
+
+    const asDeploy = executor.getHistory()
+      .map((entry) => entry.command)
+      .filter((command) => command.includes('sudo -u "deploy"'));
+
+    expect(asDeploy.length).toBeGreaterThan(0);
+    for (const command of asDeploy) {
+      expect(command).toContain('sudo -u "deploy" -H');
+      expect(command).toContain('cd "$HOME"');
+    }
   });
 
   it('propagates a PM2 startup failure with its command output', async () => {
@@ -118,5 +152,31 @@ describe('setup target dependency selection', () => {
     });
 
     await expect(buildTasks(executor, config, 'deploy').run()).rejects.toThrow('systemd unit could not be enabled');
+  });
+
+  it('installs Caddy for a fleet replica, which has no domain', async () => {
+    // A fleet replica deliberately has no domain — replicas claiming one name
+    // would race Let's Encrypt — but it still needs Caddy for the readiness
+    // endpoint the load balancer health-checks.
+    const executor = new FakeRemoteExecutor();
+    const config = baseConfig({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        pm2: { apps: [{ name: 'api', port: 3000 }] },
+        healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 3 },
+        envFile: '.env',
+        keepReleases: 5,
+        zeroDowntime: false,
+        fleet: { batch: 1, port: 80, drainWait: 8, readyPath: '/_shipnode/ready' },
+      }],
+    });
+
+    await buildTasks(executor, config, 'deploy').run();
+
+    const commands = executor.getHistory().map((entry) => entry.command);
+    expect(commands.some((c) => c.includes('apt-get install -y caddy'))).toBe(true);
+    // Without this directory the first deploy dies writing its site file.
+    expect(commands.some((c) => c.includes('mkdir -p /etc/caddy/conf.d'))).toBe(true);
   });
 });

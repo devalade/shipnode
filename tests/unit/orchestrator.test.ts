@@ -198,6 +198,75 @@ describe('DeployOrchestrator', () => {
   });
 });
 
+describe('health check and worker placement', () => {
+  async function deployOn(primary: boolean): Promise<string[]> {
+    const executor = new FakeRemoteExecutor();
+    const config = makeConfig({
+      pm2: {
+        apps: [
+          { name: 'app', port: 3000 },
+          { name: 'cron', command: 'node cron.js', placement: 'primary' },
+        ],
+      },
+      healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
+    });
+
+    executor
+      .when((cmd) => cmd.includes('deploy.lock'), { stdout: 'OK', exitCode: 0 })
+      .when((cmd) => cmd.includes('mkdir -p'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('ln -sfn'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('mv -Tf'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('cat') && cmd.includes('releases.json'), { stdout: '[]', exitCode: 0 })
+      .when((cmd) => cmd.includes('releases.json') && cmd.includes('base64'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('ls -1t'), { stdout: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 42', exitCode: 0 })
+      // Only the web process is running: the cron is pinned to the primary and
+      // genuinely absent everywhere else.
+      .when((cmd) => cmd.includes('pm2 jlist'), {
+        stdout: JSON.stringify([{ name: 'app', pm2_env: { status: 'online', restart_time: 0 } }]),
+        exitCode: 0,
+      });
+
+    const { DeployLock } = await import('../../src/domain/release/manager.js');
+    const { HealthCheckService } = await import('../../src/services/health.service.js');
+    const { CaddyService } = await import('../../src/services/caddy.service.js');
+
+    const orchestrator = new DeployOrchestrator(
+      config,
+      executor,
+      new DeployLock(executor, config.remotePath),
+      new HealthCheckService(executor, config),
+      new CaddyService(executor, config),
+    );
+
+    const errors: string[] = [];
+    try {
+      await orchestrator.deploy({
+        cwd: '/test',
+        skipBuild: false,
+        fleetRole: { first: true, last: true, primary },
+      });
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    return errors;
+  }
+
+  it('does not require a primary-pinned process on a secondary replica', async () => {
+    // The status check requires every declared pm2 app to be online. A pinned
+    // cron is deliberately absent here, so without the placement filter the
+    // health check fails precisely when placement is working.
+    expect(await deployOn(false)).toEqual([]);
+  });
+
+  it('still requires it on the primary, where it is supposed to be running', async () => {
+    const errors = await deployOn(true);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('cron');
+  });
+});
+
 describe('run-once fleet hooks', () => {
   async function deployWith(fleetRole?: { first: boolean; last: boolean }): Promise<string[]> {
     const ran: string[] = [];

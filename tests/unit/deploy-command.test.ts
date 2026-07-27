@@ -180,10 +180,11 @@ describe('deploy command dry run', () => {
     expect(output).toContain('Wait 20s for the load balancer to notice');
     expect(output).toContain('Undrain (/_shipnode/ready → 200)');
 
-    // A replica serves its private port; claiming the domain would make every
-    // replica race the others for the same certificate.
-    expect(output).toContain('http://10.0.0.11:80 {');
-    expect(output).not.toContain('api.example.com {');
+    // A replica answers to the domain so forwarded traffic reaches it, but over
+    // plain HTTP — claiming it for TLS would make every replica race the others
+    // for the same certificate.
+    expect(output).toContain('http://10.0.0.11:80, http://api.example.com:80 {');
+    expect(output).not.toMatch(/(?<!http:\/\/)api\.example\.com \{/);
   });
 
   it('says where a pinned worker lands and where the run-once hooks fire', async () => {

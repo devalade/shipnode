@@ -30,16 +30,22 @@ const config: ShipnodeConfig = {
 };
 
 describe('fleet Caddy site', () => {
-  it('never claims the public domain', async () => {
-    // Every replica writing `api.example.com { ... }` means every replica
-    // races the others for a Let's Encrypt certificate on the same name.
+  it('answers to the domain over plain HTTP, never claiming it for TLS', async () => {
+    // Two different Hosts arrive on this port: the load balancer's health check
+    // dials the private address, while forwarded client traffic carries the
+    // app's domain. Binding only the private address made the health check pass
+    // while every real request fell through to whatever else held port 80.
+    //
+    // The `http://` scheme is what keeps this safe — a bare `api.example.com {`
+    // would have every replica racing the others for one Let's Encrypt cert.
     const executor = new FakeRemoteExecutor();
 
     await new CaddyService(executor, config).configureBackend(fleetApp);
 
     const written = executor.getLastCommand()?.command ?? '';
-    expect(written).not.toContain('api.example.com {');
-    expect(written).toContain('http://10.0.0.11:80 {');
+    expect(written).toContain('http://10.0.0.11:80, http://api.example.com:80 {');
+    expect(written).not.toContain('api.example.com {\n');
+    expect(written).not.toMatch(/(?<!http:\/\/)api\.example\.com \{/);
   });
 
   it('serves a readiness endpoint gated on the drain sentinel', () => {
@@ -77,7 +83,20 @@ describe('fleet Caddy site', () => {
       stateDir: '/state',
     });
 
-    expect(site).toContain('http://:8080 {');
+    expect(site).toContain('http://:8080, http://api.example.com:8080 {');
+  });
+
+  it('binds only the private address when the app declares no domain', () => {
+    const site = generateFleetCaddyfile({ ...fleetApp, domain: undefined }, {
+      listen: 80,
+      bind: '10.0.0.11',
+      upstream: 3000,
+      readyPath: '/ready',
+      stateDir: '/state',
+    });
+
+    expect(site).toContain('http://10.0.0.11:80 {');
+    expect(site).not.toContain(',');
   });
 
   it('serves static files for a frontend replica', async () => {
