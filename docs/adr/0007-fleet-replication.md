@@ -89,6 +89,16 @@ Injection happens during config assembly, not at deploy time: scoping the config
 
 Accessories stay single-node. Shipnode replicating Postgres is out of scope, and the schema says so rather than letting someone try.
 
+### Docker publishes past the firewall
+
+An accessory reachable across the network needs its port closed to everything except the replicas that consume it, and `ufw allow from <replica> to any port 5432` looks like it does that. It does not.
+
+Docker writes its own ACCEPT rules into the FORWARD path when it publishes a port, and those are consulted before ufw's chain. The ufw rule is accepted, appears in `ufw status`, and restricts nothing — the database stays reachable from every host that can route to the server. This was found by connecting to Postgres from an unrelated machine with the rules in place, and it is invisible to any test that only inspects generated commands.
+
+`harden` therefore writes `DOCKER-USER` entries alongside the ufw rules. That is the one chain Docker guarantees to evaluate first and never rewrite: allowed sources `RETURN` and fall through to Docker's own ACCEPT, everything else for that port is `DROP`ped. The `DROP` is inserted *before* the `RETURN`s, because each `-I … 1` pushes the previous entry down — appending it would place it after the `RETURN` Docker keeps at the end of the chain, where it is never reached.
+
+The consequence worth stating plainly: **an accessory is exposed until `harden` runs.** Binding it to the server's private address rather than `0.0.0.0` narrows that window to the private network, and is worth doing regardless.
+
 ## What is deliberately not here
 
 - **A shipnode-managed load balancer** — a Cloudflare tunnel with N connectors, or an edge Caddy node. The drain contract is designed so either could be added later as an alternative drain implementation without disturbing the roller.

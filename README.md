@@ -281,7 +281,9 @@ Each app is given `SHIPNODE_<ACCESSORY>_HOST` for every accessory it `dependsOn`
 const url = `postgres://app:${pw}@${process.env.SHIPNODE_POSTGRES_HOST}:5432/app`;
 ```
 
-Bind the accessory somewhere reachable (`'0.0.0.0:5432:5432'`, not `'127.0.0.1:5432:5432'`) and run `shipnode harden` to open that port to the replicas that need it — and only to them.
+Bind the accessory somewhere reachable (`'0.0.0.0:5432:5432'`, not `'127.0.0.1:5432:5432'` — shipnode rejects the latter when a replica on another host depends on it) and run `shipnode harden` to open that port to the replicas that need it, and only to them.
+
+> **`harden` is what closes the port.** Docker publishes container ports straight past UFW — a `ufw allow from …` rule is accepted, shows in `ufw status`, and restricts nothing. `shipnode harden` writes matching `DOCKER-USER` rules, which is the chain Docker actually consults. Until you run it, an accessory bound to `0.0.0.0` is reachable from every host that can route to that server.
 
 #### Fleet commands
 
