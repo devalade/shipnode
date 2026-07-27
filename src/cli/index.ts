@@ -72,6 +72,8 @@ program
   .option('--dry-run', 'Show what would be deployed without making changes')
   .option('--skip-build', 'Skip the build step')
   .option('--app <name>', 'Deploy a specific app (default: all apps)')
+  .option('--watch', 'Deploy once, then sync and reload on every local file change')
+  .option('--build <where>', 'Watch mode: where each cycle builds — remote, local, or none')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdDeploy(process.cwd(), opts));
 
@@ -178,6 +180,7 @@ program
   .command('unlock')
   .description('Clear a stuck deployment lock')
   .option('--config <path>', 'Use a specific config file')
+  .option('--yes', 'Clear without confirmation (for CI and scripts)')
   .action((opts) => cmdUnlock(process.cwd(), opts));
 
 // ── CI/CD ─────────────────────────────────────────────────────────

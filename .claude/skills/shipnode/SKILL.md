@@ -173,6 +173,7 @@ shipnode run "pnpm db:apply" [--app name]
 shipnode run bash
 shipnode deploy --dry-run
 shipnode deploy --skip-build
+shipnode deploy --watch [--app name]   # dev loop: patches the live release, no rollback target
 shipnode unlock            # stuck .shipnode/deploy.lock (directory)
 shipnode config show [--app name]
 shipnode user add alice --key ~/.ssh/alice.pub --sudo

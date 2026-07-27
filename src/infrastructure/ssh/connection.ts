@@ -78,11 +78,21 @@ export class SshConnection extends RemoteExecutor {
   }
 
   async connect(config: SshConfig): Promise<void> {
+    // Start from a fresh client so a reconnect (watch sessions do this after an
+    // idle drop) doesn't accumulate listeners on a client that already ended.
+    this.client.removeAllListeners();
+    this.client = new Client();
+
     const sshConfig: ConnectConfig = {
       host: config.host,
       port: config.port,
       username: config.user,
       readyTimeout: 30000,
+      // Long-lived sessions (`deploy --watch`, `monitor`) sit idle between
+      // commands; without keepalives a NAT or firewall timeout silently drops
+      // the connection and the next exec fails with "Not connected".
+      keepaliveInterval: 15000,
+      keepaliveCountMax: 6,
     };
 
     const authentication = resolveSshAuthentication(config, {

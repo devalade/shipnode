@@ -3,6 +3,20 @@ import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { HealthCheckError } from '../shared/errors.js';
 import { getPm2Name } from '../domain/pm2/apps.js';
 
+/** Exponential retry pacing for the HTTP probe. */
+export interface RetryBackoff {
+  initialMs: number;
+  maxMs: number;
+}
+
+const FLAT_RETRY_DELAY_MS = 2000;
+
+/** Delay before the attempt following `attempt` (1-indexed). */
+function retryDelayMs(attempt: number, backoff?: RetryBackoff): number {
+  if (!backoff) return FLAT_RETRY_DELAY_MS;
+  return Math.min(backoff.maxMs, backoff.initialMs * 2 ** (attempt - 1));
+}
+
 interface Pm2JlistEntry {
   name: string;
   pm2_env?: {
@@ -24,6 +38,10 @@ export class HealthCheckService {
    * derived (the web app carries a colour suffix; workers do not), and
    * `pm2Apps` narrows which processes are required online (blue-green checks
    * only the web colour before workers reload in `afterHealthy`).
+   *
+   * `backoff` replaces the flat retry delay with exponential backoff — used by
+   * `deploy --watch`, where a 2-second gap dominates the loop for an app that
+   * boots in milliseconds. Omitted, the delay stays flat.
    */
   async perform(
     app: ShipnodeApp,
@@ -31,6 +49,7 @@ export class HealthCheckService {
       httpPort?: number;
       resolvePm2Name?: (a: Pm2App) => string;
       pm2Apps?: Pm2App[];
+      backoff?: RetryBackoff;
     },
   ): Promise<{ attempts: number; responseMs: number }> {
     if (!app.healthCheck.enabled) {
@@ -46,7 +65,7 @@ export class HealthCheckService {
     let responseMs = 0;
 
     if (webApp) {
-      const result = await this.performHttpCheck(webApp, app.healthCheck, opts?.httpPort);
+      const result = await this.performHttpCheck(webApp, app.healthCheck, opts?.httpPort, opts?.backoff);
       attempts = result.attempts;
       responseMs = result.responseMs;
     }
@@ -59,7 +78,12 @@ export class HealthCheckService {
     return { attempts, responseMs };
   }
 
-  private async performHttpCheck(webApp: Pm2App, healthCheck: ShipnodeApp['healthCheck'], portOverride?: number): Promise<{ attempts: number; responseMs: number }> {
+  private async performHttpCheck(
+    webApp: Pm2App,
+    healthCheck: ShipnodeApp['healthCheck'],
+    portOverride?: number,
+    backoff?: RetryBackoff,
+  ): Promise<{ attempts: number; responseMs: number }> {
     const { path, timeout, retries } = healthCheck;
     const port = portOverride ?? webApp.port;
     const url = `http://localhost:${port}${path}`;
@@ -84,7 +108,7 @@ export class HealthCheckService {
       }
 
       if (attempt < retries) {
-        await this.sleep(2000);
+        await this.sleep(retryDelayMs(attempt, backoff));
       }
     }
 

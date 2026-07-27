@@ -47,6 +47,12 @@ Stages source files, installs dependencies on the remote host, builds remotely, 
 ### FrontendStrategy
 Builds locally, stages build output, and relies on Caddy to serve static files.
 
+### HotSync
+One iteration of `deploy --watch`: rsync changed files into the **live** release, reinstall only when a dependency manifest moved, rebuild, reload the running processes, probe health. Deliberately *not* a Release — it mutates what is already serving, so there is no rollback target. Trades the release pipeline's safety for a sub-second edit-to-live loop.
+
+### ProjectWatcher
+The local file-watching seam behind `deploy --watch`. Emits debounced batches of changed repo-relative paths. Prefers recursive `fs.watch` and falls back to an mtime-scan poller where that is unavailable.
+
 ### Hook
 User-provided function that runs at a fixed point in the deployment lifecycle. `preDeploy` runs before the app goes live; `postDeploy` runs after cleanup.
 
@@ -70,4 +76,5 @@ Owns config-loading and SSH lifecycle for CLI commands. Each command is pure bus
 - **Config seam**: `assembleConfig` is the only entry point from raw config → trusted config.
 - **Remote seam**: `RemoteExecutor` is the only way services talk to the remote host.
 - **Deployment seam**: `DeployOrchestrator` + `DeploymentStrategy` split invariant sequence from app-specific behaviour.
+- **Watch seam**: `ProjectWatcher` (local file events) and `HotSync` (remote patch + reload) are independent; the watch session owns the deploy lock, cycle serialisation, and reconnection.
 - **CLI seam**: `runRemoteCommand` / `runLocalCommand` separate connection ceremony from command logic.

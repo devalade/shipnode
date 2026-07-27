@@ -4,6 +4,22 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Added
+- **`shipnode deploy --watch` — the development loop.** Runs one normal deploy to establish a baseline, then watches the working tree: every save is rsynced into the live release, rebuilt, reloaded, and health-probed. Each cycle is incremental — rsync receives an explicit `--files-from` list of changed paths instead of scanning the whole tree, dependencies are reinstalled only when a manifest or lockfile changes, and the health probe uses exponential backoff (100ms → 1s) rather than the deploy path's fixed 3s delay plus 2s retry gaps. Falls back to a full-tree sync when a change set is large or contains a delete, which `--files-from` cannot express. Requires `--app <name>` in a multi-app workspace; mutually exclusive with `--dry-run`.
+  - This is deliberately not a release: it patches the release that is already serving, so there is no rollback target, reload can drop in-flight requests, and local deletes do not propagate until the next full deploy. Watch mode says so on startup.
+  - Blue-green apps reload only the colour serving traffic (via that release's `ecosystem.web.config.cjs`), leaving the idle colour untouched so it remains a valid rollback target.
+  - The deploy lock is held for each cycle, so a concurrent `shipnode deploy` can never interleave with a sync — it is skipped with a notice instead.
+  - **`--build <remote|local|none>`** controls where each cycle builds. `remote` (backend default) builds on the server. `local` builds here (from `appRoot` in a monorepo) and ships the artifact. `none` (implied by `--skip-build`) only syncs and reloads, which is what pairs with a framework's own watch mode. Projects that build locally and upload the bundle — Nitro/TanStack Start/Nuxt apps deployed with `--skip-build` — need `local` or `none`; on `remote` their `.output/` is ignored and the loop would ship source the app never runs.
+  - The watcher is suppressed while a build shipnode runs is writing. Ignoring build *directories* is not sufficient: a TanStack Start/Nitro build regenerates files inside the source tree (`routeTree.gen.ts`) and drops temp files at the repo root, which are indistinguishable from a developer's edit by path alone. Left unguarded this feeds each cycle back into itself — observed in the wild as a `pm2 reload` of the live process every ~8 seconds. Gating on *when* we build fixes it for any framework's codegen.
+  - Build output is watched only when shipnode is not the thing writing it (`none`). Under `local` the cycle runs the build itself, so watching its output would feed those writes back in and rebuild forever; that mode instead syncs by full-tree rsync, which detects the fresh artifact without the watcher reporting it.
+  - The watcher reads `.shipnodeignore` and skips those directories, so a build cache like `.nitro/` no longer costs a full lock/sync/reload/probe cycle to transfer nothing.
+  - Ctrl-C during a cycle releases the deploy lock instead of leaking it. Exiting straight from the signal handler skipped the `finally` that releases it, leaving a lock no process owned and blocking every later deploy until someone ran `shipnode unlock`. A second Ctrl-C still exits immediately.
+  - The debounce has a max-wait ceiling (2s). A plain debounce resets on every event, so in a repo with a background writer — a turbo daemon, a framework's own watcher — changes would sit unemitted for as long as the writing continued, and the loop would appear hung.
+
+### Fixed
+- **SSH keepalives on long-lived sessions** — `deploy --watch` and `monitor` sit idle between commands, where a NAT or firewall timeout would silently drop the connection and fail the next exec. Connections now send keepalives every 15s, and `connect` starts from a fresh client so reconnecting doesn't accumulate listeners.
+- **`.env` symlinks survive a rebuild** — the build-output symlink logic moved to `envSymlinkCommand` and now re-runs after every hot-sync build, since a build that wipes and recreates its output directory takes the symlink with it. The initial deploy path is unchanged.
+
 ## [3.2.0-alpha.0] - 2026-07-11
 
 ### Added

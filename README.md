@@ -253,6 +253,7 @@ shipnode setup                 # Install Node, PM2, Caddy, fail2ban on server
 shipnode deploy                # Deploy (zero-downtime by default)
 shipnode deploy --dry-run      # Preview without making changes
 shipnode deploy --skip-build   # Skip local build step
+shipnode deploy --watch        # Deploy once, then sync + reload on every save
 shipnode doctor                # Check local + remote config
 shipnode doctor --security     # Run security audit
 shipnode status                # Show PM2 process status

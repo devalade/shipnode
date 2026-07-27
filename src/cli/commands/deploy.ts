@@ -11,8 +11,10 @@ import { getPm2Name } from '../../domain/pm2/apps.js';
 import { configForAppResult, configForServer, getServerTargets, resolveServerName, resolveServerNameResult } from '../../domain/servers.js';
 import { generateBackendCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
 import { type ServerTargetError } from '../../shared/result-errors.js';
+import { runDeployWatch } from './deploy-watch.js';
+import type { BuildLocation } from '../../domain/deploy/hot-sync.js';
 
-export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string }): Promise<void> {
+export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string; watch?: boolean; build?: string }): Promise<void> {
   let config: ShipnodeConfig;
   let targetConfig: ShipnodeConfig;
   try {
@@ -36,7 +38,17 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
   }
 
   if (options.dryRun) {
+    if (options.watch) {
+      ui.error('--watch and --dry-run are mutually exclusive.');
+      process.exit(1);
+      return;
+    }
     printDryRun(targetConfig, options.skipBuild ?? false);
+    return;
+  }
+
+  if (options.watch) {
+    await startWatch(cwd, config, options);
     return;
   }
 
@@ -69,6 +81,75 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
     },
     { configPath: options.config },
   );
+}
+
+/**
+ * Where each watch cycle builds.
+ *
+ * Explicit `--build` wins. Otherwise `--skip-build` means the developer builds
+ * (or their framework's own watch mode does), a frontend always builds locally,
+ * and a backend defaults to the server — matching the plain deploy path.
+ * Returns undefined for an unrecognised `--build` value.
+ */
+function resolveBuildLocation(
+  options: { skipBuild?: boolean; build?: string },
+  app: ShipnodeApp,
+): BuildLocation | undefined {
+  if (options.build !== undefined) {
+    const known: BuildLocation[] = ['remote', 'local', 'none'];
+    return known.find((candidate) => candidate === options.build);
+  }
+  if (options.skipBuild) return 'none';
+  return app.appType === 'frontend' ? 'local' : 'remote';
+}
+
+/**
+ * Watch mode targets exactly one app on one server: it holds a single SSH
+ * session open and reloads one process set, so "which app" must be
+ * unambiguous rather than inferred.
+ */
+async function startWatch(
+  cwd: string,
+  config: ShipnodeConfig,
+  options: { skipBuild?: boolean; app?: string; build?: string },
+): Promise<void> {
+  const appName = options.app ?? (config.apps.length === 1 ? config.apps[0]?.name : undefined);
+
+  if (!appName) {
+    const known = config.apps.map((app) => app.name).join(', ');
+    ui.error(
+      config.apps.length === 0
+        ? 'No apps configured to watch.'
+        : `This workspace has ${config.apps.length} apps — pick one with --app <name>. Known apps: ${known}`,
+    );
+    process.exit(1);
+    return;
+  }
+
+  const scoped = configForAppResult(config, appName);
+  if (scoped.isErr()) {
+    ui.error(scoped.error.message);
+    process.exit(1);
+    return;
+  }
+
+  const watchConfig = scoped.value;
+  const app = watchConfig.apps[0];
+
+  const buildLocation = resolveBuildLocation(options, app);
+  if (!buildLocation) {
+    ui.error(`--build must be one of: remote, local, none (got "${options.build}")`);
+    process.exit(1);
+    return;
+  }
+
+  try {
+    await runDeployWatch(cwd, watchConfig, app, { buildLocation });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ui.error(message);
+    process.exit(1);
+  }
 }
 
 function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: boolean): string {

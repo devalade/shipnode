@@ -4,7 +4,7 @@ import { confirm } from '../prompt.js';
 
 export async function cmdUnlock(
   cwd: string,
-  options: { config?: string },
+  options: { config?: string; yes?: boolean },
 ): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
@@ -28,10 +28,15 @@ export async function cmdUnlock(
       const age = result.stdout.split(':')[1];
       ui.warn(`Deployment lock found (age: ${age}s)`);
 
-      const ok = await confirm('Clear this lock?');
-      if (!ok) {
-        ui.info('Lock not cleared.');
-        return;
+      // Without `--yes` this blocks on stdin forever when there is no TTY —
+      // CI, a script, or an agent — which is exactly where a stuck lock most
+      // needs clearing.
+      if (!options.yes) {
+        const ok = await confirm('Clear this lock?');
+        if (!ok) {
+          ui.info('Lock not cleared.');
+          return;
+        }
       }
 
       await executor.exec(`rm -rf "${lockPath}"`);
