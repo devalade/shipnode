@@ -214,6 +214,86 @@ export default shipnode
   .build();
 ```
 
+### Horizontal scaling (fleets)
+
+Name several servers in one `on` target and the app becomes a **fleet**: the same app on N servers, deployed by rolling through them a batch at a time.
+
+```ts
+import { shipnode, app } from '@devalade/shipnode';
+
+export default shipnode
+  .servers({
+    'web-a': { host: '1.2.3.4', user: 'deploy', privateHost: '10.0.0.11' },
+    'web-b': { host: '1.2.3.5', user: 'deploy', privateHost: '10.0.0.12' },
+    'db-1':  { host: '1.2.3.6', user: 'deploy', privateHost: '10.0.0.20' },
+  })
+  .group('web', ['web-a', 'web-b'])
+  .deployTo('/var/www/example')
+  .accessories({
+    postgres: { image: 'postgres:16', on: 'db-1', port: '0.0.0.0:5432:5432' },
+  })
+  .apps([
+    app().backend().name('api').on('web').port(3333)
+      .domain('api.example.com')
+      .dependsOn(['postgres'])
+      .fleet({ batch: 1, drainWait: 30 })
+      .worker({ name: 'mailer', command: 'node dist/worker.js' })
+      .worker({ name: 'cron', command: 'node dist/cron.js', placement: 'primary' })
+      .beforeFleet(async ({ exec }) => { await exec('pnpm db:apply'); }),
+  ])
+  .build();
+```
+
+`shipnode deploy` now rolls: drain a replica → wait `drainWait` → deploy it → health-check → put it back → next.
+
+**You bring the load balancer.** Shipnode never talks to it. Point your Hetzner / DigitalOcean / ALB / nginx load balancer at each replica's `privateHost:80` and set its health check to **`/_shipnode/ready`**. That endpoint answers `200` normally and `503` while shipnode is deploying that replica, which is the entire integration — no provider APIs, no credentials.
+
+> **`drainWait` is the setting that matters.** Shipnode drains instantly; your load balancer only notices on its next health check, after its failure threshold. Shipnode cannot see either value, so you declare how long to wait. Set it below your LB's *interval × unhealthy-threshold* and the roll will drop requests. Verify it once by `curl`ing the LB in a loop during a deploy and confirming zero non-200s.
+
+Replicas serve plain HTTP on the private network and never claim the domain — five replicas all requesting a certificate for the same name would race Let's Encrypt. **TLS terminates at your load balancer.**
+
+| Setting | Default | Description |
+|---|---|---|
+| `.group(name, servers)` | — | Name a set of servers so `on` can target them all at once |
+| `privateHost` | — | The address the LB and other servers reach this box on. Required for every fleet member |
+| `.fleet({ batch })` | `1` | Replicas taken out of rotation at once |
+| `.fleet({ drainWait })` | `30` | Seconds to wait after draining, before touching the app |
+| `.fleet({ port })` | `80` | Port a replica serves on for the load balancer |
+| `.fleet({ readyPath })` | `/_shipnode/ready` | Readiness endpoint the LB health-checks |
+
+#### Hooks that must run once
+
+`preDeploy` runs **once per replica** — a migration there runs three times on a three-server fleet. Use `.beforeFleet()` (runs on the first replica, before the new code goes live anywhere) and `.afterFleet()` (runs on the last, once every replica is updated). A roll that fails partway never reaches `afterFleet`.
+
+#### Workers that must run once
+
+`.worker({ placement: 'primary' })` pins a process to the first server in the fleet. Use it for crons and schedulers, where N copies means every job fires N times. Queue workers competing for jobs want the default (`'all'`).
+
+#### Talking to accessories on another server
+
+Each app is given `SHIPNODE_<ACCESSORY>_HOST` for every accessory it `dependsOn` — `127.0.0.1` when co-located, the accessory server's `privateHost` when not. Read it in your connection string and moving Postgres to its own box becomes a config change:
+
+```ts
+const url = `postgres://app:${pw}@${process.env.SHIPNODE_POSTGRES_HOST}:5432/app`;
+```
+
+Bind the accessory somewhere reachable (`'0.0.0.0:5432:5432'`, not `'127.0.0.1:5432:5432'`) and run `shipnode harden` to open that port to the replicas that need it — and only to them.
+
+#### Fleet commands
+
+```bash
+shipnode deploy                      # roll every replica
+shipnode deploy --on web-a           # deploy one replica
+shipnode status                      # per-replica release + rotation, flags skew
+shipnode rollback --app api          # roll the rollback across the fleet
+shipnode drain   --app api --on web-a  # take one replica out of rotation
+shipnode undrain --app api --on web-a  # put it back
+```
+
+`shipnode status` is what tells you a roll died halfway: it compares replicas and reports which ones are on which release, and which are sitting out of rotation.
+
+See [ADR-0007](docs/adr/0007-fleet-replication.md) for the design and its limits.
+
 ### All options
 
 | Method | Default | Description |
@@ -254,16 +334,20 @@ shipnode deploy                # Deploy (zero-downtime by default)
 shipnode deploy --dry-run      # Preview without making changes
 shipnode deploy --skip-build   # Skip local build step
 shipnode deploy --watch        # Deploy once, then sync + reload on every save
+shipnode deploy --on web-a     # Deploy one server (or one replica of a fleet)
 shipnode doctor                # Check local + remote config
 shipnode doctor --security     # Run security audit
-shipnode status                # Show PM2 process status
+shipnode status                # PM2 status; for a fleet, per-replica release + skew
 ```
 
 ### Release management
 
 ```bash
-shipnode rollback              # Roll back to the previous release
+shipnode rollback              # Roll back to the previous release (rolls across a fleet)
 shipnode rollback --steps 3    # Roll back 3 releases
+shipnode rollback --on web-a   # Roll back one replica
+shipnode drain --app api --on web-a    # Take a replica out of rotation
+shipnode undrain --app api --on web-a  # Put it back
 shipnode migrate               # Migrate existing deploy to zero-downtime structure
 ```
 
