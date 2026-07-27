@@ -1,0 +1,173 @@
+import { describe, expect, it } from 'vitest';
+import { deployFleet, type FleetEvent, type ReplicaSession } from '../../src/domain/deploy/fleet.js';
+import { FakeRemoteExecutor } from '../testing/fake-executor.js';
+import type { FleetConfig, ShipnodeApp } from '../../src/shared/types.js';
+
+const app = { name: 'api' } as ShipnodeApp;
+const fleet: FleetConfig = { batch: 1, port: 80, drainWait: 30, readyPath: '/_shipnode/ready' };
+
+interface Harness {
+  /** Every drain/undrain/deploy in the order it happened, as `server:action`. */
+  timeline: string[];
+  events: FleetEvent[];
+  slept: number[];
+  closed: string[];
+  run: (overrides?: Partial<Parameters<typeof deployFleet>[0]>) => ReturnType<typeof deployFleet>;
+}
+
+function harness(options: { replicas?: string[]; failOn?: string; batch?: number } = {}): Harness {
+  const replicas = options.replicas ?? ['web-a', 'web-b', 'web-c'];
+  const timeline: string[] = [];
+  const events: FleetEvent[] = [];
+  const slept: number[] = [];
+  const closed: string[] = [];
+
+  const connect = async (serverName: string): Promise<ReplicaSession> => {
+    const executor = new FakeRemoteExecutor();
+    const original = executor.exec.bind(executor);
+    executor.exec = async (command: string) => {
+      if (command.includes('touch')) timeline.push(`${serverName}:drain`);
+      if (command.includes('rm -f')) timeline.push(`${serverName}:undrain`);
+      return original(command);
+    };
+    return { executor, close: () => closed.push(serverName) };
+  };
+
+  return {
+    timeline,
+    events,
+    slept,
+    closed,
+    run: (overrides = {}) => deployFleet({
+      app,
+      fleet: { ...fleet, batch: options.batch ?? fleet.batch },
+      replicas,
+      remotePath: '/var/www/app',
+      connect,
+      deployReplica: async ({ serverName }) => {
+        timeline.push(`${serverName}:deploy`);
+        if (serverName === options.failOn) throw new Error(`${serverName} failed to boot`);
+      },
+      onEvent: (event) => events.push(event),
+      sleep: async (ms) => { slept.push(ms); },
+      ...overrides,
+    }),
+  };
+}
+
+describe('rolling a fleet', () => {
+  it('drains, waits, deploys, then undrains each replica in turn', async () => {
+    const h = harness();
+
+    const result = await h.run();
+
+    expect(h.timeline).toEqual([
+      'web-a:drain', 'web-a:deploy', 'web-a:undrain',
+      'web-b:drain', 'web-b:deploy', 'web-b:undrain',
+      'web-c:drain', 'web-c:deploy', 'web-c:undrain',
+    ]);
+    expect(result.deployed).toEqual(['web-a', 'web-b', 'web-c']);
+    expect(result.failed).toBeUndefined();
+  });
+
+  it('gives every replica the same release id', async () => {
+    // A per-replica timestamp makes a converged fleet indistinguishable from a
+    // half-rolled one.
+    const seen: string[] = [];
+    const h = harness();
+
+    const result = await h.run({
+      deployReplica: async ({ releaseId }) => { seen.push(releaseId); },
+    });
+
+    expect(new Set(seen).size).toBe(1);
+    expect(seen[0]).toBe(result.releaseId);
+  });
+
+  it('waits out the drain once per batch, not once per replica', async () => {
+    const h = harness({ batch: 3 });
+
+    await h.run();
+
+    expect(h.slept).toEqual([30_000]);
+  });
+
+  it('never has more than `batch` replicas out of rotation', async () => {
+    const h = harness({ batch: 2 });
+
+    await h.run();
+
+    let out = 0;
+    let peak = 0;
+    for (const entry of h.timeline) {
+      if (entry.endsWith(':drain')) peak = Math.max(peak, ++out);
+      if (entry.endsWith(':undrain')) out -= 1;
+    }
+
+    expect(peak).toBe(2);
+  });
+
+  it('stops rolling at the first failure', async () => {
+    const h = harness({ failOn: 'web-b' });
+
+    const result = await h.run();
+
+    expect(result.deployed).toEqual(['web-a']);
+    expect(result.failed).toEqual({ server: 'web-b', message: 'web-b failed to boot' });
+    expect(result.skipped).toEqual(['web-c']);
+    expect(h.timeline).not.toContain('web-c:deploy');
+  });
+
+  it('leaves the failed replica out of rotation', async () => {
+    // It is serving nothing good; keeping it drained means no traffic reaches
+    // it and it can be inspected as-is.
+    const h = harness({ failOn: 'web-b' });
+
+    await h.run();
+
+    expect(h.timeline).toContain('web-b:drain');
+    expect(h.timeline).not.toContain('web-b:undrain');
+  });
+
+  it('returns undeployed batch-mates to rotation', async () => {
+    // web-c was drained alongside web-b but never touched, so it is still
+    // healthy on the old release and belongs back in the pool.
+    const h = harness({ batch: 2, failOn: 'web-b' });
+
+    await h.run();
+
+    expect(h.timeline.filter((entry) => entry.startsWith('web-c'))).toEqual([]);
+  });
+
+  it('returns a drained-but-never-deployed replica in the failing batch', async () => {
+    const h = harness({ replicas: ['web-a', 'web-b'], batch: 2, failOn: 'web-a' });
+
+    const result = await h.run();
+
+    expect(h.timeline).toEqual([
+      'web-a:drain', 'web-b:drain',
+      'web-a:deploy',
+      'web-b:undrain',
+    ]);
+    expect(result.deployed).toEqual([]);
+    expect(result.skipped).toEqual(['web-b']);
+  });
+
+  it('closes every connection it opens, including on failure', async () => {
+    const h = harness({ failOn: 'web-a' });
+
+    await h.run();
+
+    expect(h.closed).toEqual(['web-a']);
+  });
+
+  it('reports progress so a long roll is not silent', async () => {
+    const h = harness({ replicas: ['web-a'] });
+
+    await h.run();
+
+    expect(h.events.map((event) => event.type)).toEqual([
+      'batch', 'drained', 'deploying', 'deployed', 'undrained',
+    ]);
+  });
+});

@@ -1,7 +1,7 @@
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 
-export async function cmdRestart(cwd: string, options: { config?: string; process?: string; app?: string }): Promise<void> {
+export async function cmdRestart(cwd: string, options: { config?: string; process?: string; app?: string; on?: string }): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor }) => {
@@ -34,6 +34,6 @@ export async function cmdRestart(cwd: string, options: { config?: string; proces
         ui.success(`App '${app.name}' restarted successfully`);
       }
     },
-    { configPath: options.config, appName: options.app },
+    { configPath: options.config, appName: options.app, serverName: options.on },
   );
 }

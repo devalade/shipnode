@@ -9,12 +9,15 @@ import type { AccessoryConfig, ShipnodeConfig, ShipnodeApp } from '../../shared/
 import { accessoryMounts } from '../../services/accessory.service.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
 import { configForAppResult, configForServer, getServerTargets, resolveServerNames, resolveSingleServerNameResult } from '../../domain/servers.js';
-import { generateBackendCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
+import { generateBackendCaddyfile, generateFleetCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
+import { appStateDir } from '../../domain/deploy/drain.js';
 import { type ServerTargetError } from '../../shared/result-errors.js';
 import { runDeployWatch } from './deploy-watch.js';
 import type { BuildLocation } from '../../domain/deploy/hot-sync.js';
+import { deployFleet, type FleetEvent } from '../../domain/deploy/fleet.js';
+import { SshConnection } from '../../infrastructure/ssh/connection.js';
 
-export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string; watch?: boolean; build?: string }): Promise<void> {
+export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBuild?: boolean; app?: string; config?: string; watch?: boolean; build?: string; on?: string }): Promise<void> {
   let config: ShipnodeConfig;
   let targetConfig: ShipnodeConfig;
   try {
@@ -52,18 +55,45 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
     return;
   }
 
+  // Check --on against what was actually asked for, before opening any
+  // connection. Otherwise `--app api --on db-1` dials a server api does not run
+  // on and fails with an SSH timeout instead of saying so.
+  if (options.on) {
+    const reachable = getServerTargets(targetConfig).map((target) => target.name);
+    if (!reachable.includes(options.on)) {
+      ui.error(
+        options.app
+          ? `App '${options.app}' does not run on '${options.on}'. It runs on: ${reachable.join(', ')}`
+          : `Unknown server target '${options.on}'. Known targets: ${reachable.join(', ')}`,
+      );
+      process.exit(1);
+      return;
+    }
+  }
+
   // The per-server config the callback receives only carries that server's own
   // accessories, so cross-server dependencies are invisible from inside it.
   // Dependency warnings have to be resolved against the whole workspace.
   const workspaceConfig = config;
+  const fleetApps = targetConfig.apps.filter((candidate) => candidate.fleet);
+  const soloApps = targetConfig.apps.filter((candidate) => !candidate.fleet);
 
-  await runRemoteCommandForTargets(
+  // Naming a fleet app leaves the fan-out with nothing to do — rolling it is
+  // the whole job, and visiting other servers would deploy things not asked for.
+  const fanOut = soloApps.length > 0 || !options.app;
+
+  // Accessories and single-server apps go server by server, as they always
+  // have. Fleet apps cannot: they appear on several servers at once and must be
+  // rolled one batch at a time, so they are held back and handled after — which
+  // also means the accessories they depend on are already up.
+  if (fanOut) await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor, serverName }) => {
-      const app = options.app ? config.apps.find((candidate) => candidate.name === options.app) : undefined;
+      const serverApps = config.apps.filter((candidate) => !candidate.fleet);
+      const app = options.app ? serverApps.find((candidate) => candidate.name === options.app) : undefined;
       const deployConfig = options.app
         ? { ...config, apps: app ? [app] : [] }
-        : config;
+        : { ...config, apps: serverApps };
       if (deployConfig.apps.length === 0 && Object.keys(deployConfig.accessories ?? {}).length === 0) return;
 
       ui.banner();
@@ -88,10 +118,114 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
       }
 
       ui.note(lines.join('\n'), 'Done');
-      ui.outro('Run shipnode status to check your app.');
     },
-    { configPath: options.config },
+    { configPath: options.config, serverName: options.on, appName: options.app },
   );
+
+  for (const fleetApp of fleetApps) {
+    await rollFleetApp(cwd, workspaceConfig, fleetApp, options);
+  }
+
+  ui.outro('Run shipnode status to check your app.');
+}
+
+/**
+ * Roll one app across its replicas.
+ *
+ * Each replica gets the workspace narrowed to just this app and just that
+ * server, so the deploy that runs on it is exactly the single-server deploy —
+ * same orchestrator, same blue-green, same health check. Accessories are
+ * stripped because the fan-out above has already ensured them; leaving them in
+ * would restart the database once per replica.
+ */
+async function rollFleetApp(
+  cwd: string,
+  config: ShipnodeConfig,
+  app: ShipnodeApp,
+  options: { skipBuild?: boolean; on?: string },
+): Promise<void> {
+  const scoped = configForAppResult(config, app.name);
+  if (scoped.isErr()) {
+    ui.error(scoped.error.message);
+    process.exit(1);
+    return;
+  }
+
+  const appConfig = scoped.value;
+  let replicas = getServerTargets(appConfig).map((target) => target.name);
+  if (options.on) {
+    if (!replicas.includes(options.on)) {
+      ui.error(`App '${app.name}' does not run on '${options.on}'. It runs on: ${replicas.join(', ')}`);
+      process.exit(1);
+      return;
+    }
+    replicas = [options.on];
+  }
+
+  ui.banner();
+  ui.step(`Rolling ${chalk.bold(app.name)} across ${replicas.join(', ')}`);
+
+  if (app.hooks?.preDeploy) {
+    ui.warn(
+      `${app.name} declares a preDeploy hook, which runs once per replica — ` +
+      `${replicas.length} times for this roll. Database migrations belong somewhere that runs once.`,
+    );
+  }
+
+  for (const warning of renderDependencyWarnings(config, app)) ui.warn(warning);
+
+  const result = await deployFleet({
+    app,
+    fleet: app.fleet!,
+    replicas,
+    remotePath: appConfig.remotePath,
+    connect: async (serverName) => {
+      const ssh = new SshConnection();
+      await ssh.connect(configForServer(appConfig, serverName).ssh);
+      return { executor: ssh, close: () => ssh.disconnect() };
+    },
+    deployReplica: async ({ serverName, executor, releaseId }) => {
+      const replicaConfig = { ...configForServer(appConfig, serverName), apps: [app], accessories: {} };
+      const deployer = new DeployService(new LoggingExecutor(executor), replicaConfig);
+      await deployer.execute(cwd, options.skipBuild ?? false, releaseId);
+    },
+    onEvent: (event) => reportFleetEvent(app, event),
+  });
+
+  if (result.failed) {
+    ui.error(
+      `${app.name}: ${result.failed.server} failed and is out of rotation. ` +
+      `${result.deployed.length ? `${result.deployed.join(', ')} now on ${result.releaseId}; ` : ''}` +
+      `${result.skipped.length ? `${result.skipped.join(', ')} still on the previous release. ` : ''}` +
+      `The fleet is running mixed versions.`,
+    );
+    process.exit(1);
+    return;
+  }
+
+  ui.note(
+    [`release  ${result.releaseId}`, `servers  ${result.deployed.join(', ')}`, ...(app.domain ? [`url      https://${app.domain}`] : [])].join('\n'),
+    `${app.name} rolled`,
+  );
+}
+
+function reportFleetEvent(app: ShipnodeApp, event: FleetEvent): void {
+  switch (event.type) {
+    case 'drained':
+      ui.info(`${event.servers.join(', ')} draining — waiting ${event.waitSeconds}s for the load balancer`);
+      break;
+    case 'deploying':
+      ui.step(`${app.name} → ${event.server}`);
+      break;
+    case 'undrained':
+      ui.success(`${event.server} back in rotation`);
+      break;
+    case 'failed':
+      ui.error(`${event.server}: ${event.message}`);
+      break;
+    default:
+      break;
+  }
 }
 
 /**
@@ -122,7 +256,7 @@ function resolveBuildLocation(
 async function startWatch(
   cwd: string,
   config: ShipnodeConfig,
-  options: { skipBuild?: boolean; app?: string; build?: string },
+  options: { skipBuild?: boolean; app?: string; build?: string; on?: string },
 ): Promise<void> {
   const appName = options.app ?? (config.apps.length === 1 ? config.apps[0]?.name : undefined);
 
@@ -144,8 +278,31 @@ async function startWatch(
     return;
   }
 
-  const watchConfig = scoped.value;
+  let watchConfig = scoped.value;
   const app = watchConfig.apps[0];
+
+  // A watch session holds one SSH connection and reloads one process set, so a
+  // fleet app has to be narrowed to a single replica. Patching the live release
+  // of every replica in lockstep is not something this loop can promise.
+  const replicas = getServerTargets(watchConfig).map((target) => target.name);
+  if (replicas.length > 1) {
+    if (!options.on) {
+      ui.error(
+        `'${appName}' runs on ${replicas.length} servers (${replicas.join(', ')}). ` +
+        `Watch mode patches one live release — pick a replica with --on <server>.`,
+      );
+      process.exit(1);
+      return;
+    }
+    if (!replicas.includes(options.on)) {
+      ui.error(`'${appName}' does not run on '${options.on}'. It runs on: ${replicas.join(', ')}`);
+      process.exit(1);
+      return;
+    }
+  }
+  if (options.on) {
+    watchConfig = configForServer(watchConfig, options.on);
+  }
 
   const buildLocation = resolveBuildLocation(options, app);
   if (!buildLocation) {
@@ -215,12 +372,20 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
     buildRows.push(['', chalk.dim('runs on remote server')]);
   }
 
-  const steps: string[] = [
+  const steps: string[] = [];
+  if (app.fleet) {
+    const batch = app.fleet.batch === 1 ? 'one replica' : `${app.fleet.batch} replicas`;
+    steps.push(
+      `Drain ${batch} (${app.fleet.readyPath} → 503)`,
+      `Wait ${app.fleet.drainWait}s for the load balancer to notice`,
+    );
+  }
+  steps.push(
     'Acquire deploy lock',
     'Create release directory',
     'Rsync files',
     'Install dependencies',
-  ];
+  );
   if (app.hooks?.preDeploy) steps.push('Run preDeploy hook');
   steps.push('Switch symlink (atomic)');
   if (app.appType === 'backend') steps.push('Reload PM2');
@@ -228,6 +393,9 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
   steps.push('Record release', 'Clean old releases');
   if (app.hooks?.postDeploy) steps.push('Run postDeploy hook');
   steps.push('Release lock');
+  if (app.fleet) {
+    steps.push(`Undrain (${app.fleet.readyPath} → 200)`, 'Repeat for the next batch');
+  }
 
   const flowRows: [string, string][] = steps.map((step, i) => [`${i + 1}.`, step]);
 
@@ -268,11 +436,27 @@ function renderDependencyWarnings(config: ShipnodeConfig, app: ShipnodeApp): str
 }
 
 function renderCaddyPreview(config: ShipnodeConfig, app: ShipnodeApp): string | null {
+  const servePath = `${config.remotePath}/${app.name}/current`;
+  const web = app.pm2?.apps.find((pm2App) => pm2App.port !== undefined);
+
+  // A replica serves a private port and never claims the domain — showing the
+  // public site here would preview a file shipnode is not going to write.
+  if (app.fleet) {
+    const [firstReplica] = resolveServerNames(config, app.on);
+    return generateFleetCaddyfile(app, {
+      listen: app.fleet.port,
+      bind: firstReplica ? config.servers[firstReplica]?.privateHost : undefined,
+      upstream: web?.port,
+      servePath: app.appType === 'frontend' ? servePath : undefined,
+      readyPath: app.fleet.readyPath,
+      stateDir: appStateDir(config.remotePath, app.name),
+    });
+  }
+
   if (!app.domain) return null;
   if (app.appType === 'frontend') {
-    return generateFrontendCaddyfile(app, `${config.remotePath}/${app.name}/current`);
+    return generateFrontendCaddyfile(app, servePath);
   }
-  const web = app.pm2?.apps.find((pm2App) => pm2App.port !== undefined);
   if (!web?.port) return null;
   return generateBackendCaddyfile(app, web.port);
 }
@@ -289,9 +473,10 @@ export function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
     `  ${chalk.dim('Apps'.padEnd(14))} ${config.apps.map((a) => a.name).join(', ')}`,
   ].join('\n');
 
-  const perApp = getServerTargets(config)
-    .map((target) => configForServer(config, target.name))
-    .flatMap((targetConfig) => targetConfig.apps.map((app) => renderAppPlan(config, app, skipBuild)))
+  // Per app, not per server: a fleet app runs on several servers and would
+  // otherwise be printed once for each of them.
+  const perApp = config.apps
+    .map((app) => renderAppPlan(config, app, skipBuild))
     .join('\n\n');
 
   const accessories = renderAccessoriesPlan(config);

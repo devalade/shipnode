@@ -20,6 +20,11 @@ import { BackendStrategy } from './backend-strategy.js';
 import { FrontendStrategy } from './frontend-strategy.js';
 import { runWithDotenv } from './dotenv.js';
 
+/** Release directory name: an ISO timestamp with the characters paths dislike removed. */
+export function newReleaseId(): string {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
 export class DeployOrchestrator {
   constructor(
     private config: ShipnodeConfig,
@@ -30,7 +35,12 @@ export class DeployOrchestrator {
     private accessories?: AccessoryService,
   ) {}
 
-  async deploy(options: { cwd: string; skipBuild: boolean; gitCommit?: string }): Promise<void> {
+  /**
+   * `releaseId` lets a fleet deploy give every replica the same release
+   * directory name. Without it each replica mints its own timestamp and there
+   * is no way to tell a converged fleet from a half-rolled one.
+   */
+  async deploy(options: { cwd: string; skipBuild: boolean; gitCommit?: string; releaseId?: string }): Promise<void> {
     const cwd = options.cwd;
 
     await this.lock.acquire();
@@ -63,10 +73,10 @@ export class DeployOrchestrator {
   private async deployApp(
     app: ShipnodeApp,
     strategy: DeploymentStrategy,
-    options: { cwd: string; skipBuild: boolean; gitCommit?: string },
+    options: { cwd: string; skipBuild: boolean; gitCommit?: string; releaseId?: string },
   ): Promise<void> {
     const deployStart = Date.now();
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const timestamp = options.releaseId ?? newReleaseId();
     const appPath = `${this.config.remotePath}/${app.name}`;
     const releases = new ReleaseManager(this.executor, appPath, app.keepReleases);
 

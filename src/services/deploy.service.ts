@@ -29,13 +29,14 @@ export class DeployService {
     );
   }
 
-  async execute(cwd: string, skipBuild = false): Promise<void> {
+  async execute(cwd: string, skipBuild = false, releaseId?: string): Promise<void> {
     const gitCommit = await getGitCommit(cwd);
 
     await this.orchestrator.deploy({
       cwd,
       skipBuild,
       gitCommit,
+      releaseId,
     });
   }
 }

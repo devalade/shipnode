@@ -1,6 +1,6 @@
 import { runRemoteCommandForTargets } from '../runner.js';
 
-export async function cmdLogs(cwd: string, options: { lines?: number; config?: string; process?: string; app?: string }): Promise<void> {
+export async function cmdLogs(cwd: string, options: { lines?: number; config?: string; process?: string; app?: string; on?: string }): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor }) => {
@@ -35,6 +35,6 @@ export async function cmdLogs(cwd: string, options: { lines?: number; config?: s
         if (result.stderr) process.stderr.write(`[${app.name}] ${result.stderr}\n`);
       }
     },
-    { configPath: options.config, appName: options.app },
+    { configPath: options.config, appName: options.app, serverName: options.on },
   );
 }

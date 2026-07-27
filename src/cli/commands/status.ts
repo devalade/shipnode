@@ -2,7 +2,7 @@ import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import { getDeploymentName, getPm2Name } from '../../domain/pm2/apps.js';
 
-export async function cmdStatus(cwd: string, options: { config?: string; app?: string }): Promise<void> {
+export async function cmdStatus(cwd: string, options: { config?: string; app?: string; on?: string }): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor, serverName }) => {
@@ -72,6 +72,6 @@ export async function cmdStatus(cwd: string, options: { config?: string; app?: s
         }
       }
     },
-    { configPath: options.config },
+    { configPath: options.config, serverName: options.on },
   );
 }

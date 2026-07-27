@@ -110,6 +110,40 @@ describe('deploy command dry run', () => {
     expect(output).toContain('redis runs on data; api runs on app. Confirm reachable networking.');
   });
 
+  it('describes a fleet app once, with the roll and the private site', () => {
+    const fleetConfig: ShipnodeConfig = {
+      ...config,
+      servers: {
+        'web-a': { host: '1.1.1.1', user: 'deploy', port: 22, privateHost: '10.0.0.11' },
+        'web-b': { host: '1.1.1.2', user: 'deploy', port: 22, privateHost: '10.0.0.12' },
+      },
+      accessories: {},
+      apps: config.apps.map((app) => ({
+        ...app,
+        on: ['web-a', 'web-b'],
+        domain: 'api.example.com',
+        dependsOn: undefined,
+        fleet: { batch: 1, port: 80, drainWait: 20, readyPath: '/_shipnode/ready' },
+      })),
+    };
+
+    printDryRun(fleetConfig, false);
+    const output = vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '';
+
+    // Once, not once per replica — the app appears under every server it runs on.
+    expect(output.match(/App: api/g)).toHaveLength(1);
+    expect(output).toContain('Servers        web-a, web-b');
+    expect(output).toContain('Rolling        1 at a time, 20s drain');
+    expect(output).toContain('Drain one replica (/_shipnode/ready → 503)');
+    expect(output).toContain('Wait 20s for the load balancer to notice');
+    expect(output).toContain('Undrain (/_shipnode/ready → 200)');
+
+    // A replica serves its private port; claiming the domain would make every
+    // replica race the others for the same certificate.
+    expect(output).toContain('http://10.0.0.11:80 {');
+    expect(output).not.toContain('api.example.com {');
+  });
+
   it('prints a clean error for an unknown dry-run app', async () => {
     vi.mocked(loadConfig).mockResolvedValue(config);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);

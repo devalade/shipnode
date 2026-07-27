@@ -12,6 +12,7 @@ import { cmdStatus } from './commands/status.js';
 import { cmdRollback } from './commands/rollback.js';
 import { cmdEnv } from './commands/env.js';
 import { cmdUnlock } from './commands/unlock.js';
+import { cmdDrain, cmdUndrain } from './commands/drain.js';
 import { cmdRun } from './commands/run.js';
 import { cmdHarden } from './commands/harden.js';
 import { cmdMigrate } from './commands/migrate.js';
@@ -75,6 +76,7 @@ program
   .option('--watch', 'Deploy once, then sync and reload on every local file change')
   .option('--build <where>', 'Watch mode: where each cycle builds — remote, local, or none')
   .option('--config <path>', 'Use a specific config file')
+  .option('--on <server>', 'Target a specific server (default: every server the app runs on)')
   .action((opts) => cmdDeploy(process.cwd(), opts));
 
 program
@@ -89,6 +91,7 @@ program
   .description('Check application status')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
+  .option('--on <server>', 'Target a specific server')
   .action((opts) => cmdStatus(process.cwd(), opts));
 
 // ── Release management ────────────────────────────────────────────
@@ -116,6 +119,7 @@ program
   .option('--no-reload', 'Upload without reloading running PM2 processes')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
+  .option('--on <server>', 'Target a specific server')
   .action((opts) => cmdEnv(process.cwd(), opts));
 
 program
@@ -135,6 +139,7 @@ program
   .option('--process <name>', 'Target a specific PM2 process')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
+  .option('--on <server>', 'Target a specific server')
   .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), process: opts.process, app: opts.app, config: opts.config }));
 
 program
@@ -143,6 +148,7 @@ program
   .option('--process <name>', 'Target a specific PM2 process')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
+  .option('--on <server>', 'Target a specific server')
   .action((opts) => cmdRestart(process.cwd(), opts));
 
 program
@@ -151,6 +157,7 @@ program
   .option('--process <name>', 'Target a specific PM2 process')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
+  .option('--on <server>', 'Target a specific server')
   .action((opts) => cmdStop(process.cwd(), opts));
 
 program
@@ -181,7 +188,24 @@ program
   .description('Clear a stuck deployment lock')
   .option('--config <path>', 'Use a specific config file')
   .option('--yes', 'Clear without confirmation (for CI and scripts)')
+  .option('--on <server>', 'Target a specific server')
   .action((opts) => cmdUnlock(process.cwd(), opts));
+
+program
+  .command('drain')
+  .description('Take a replica out of the load balancer rotation')
+  .option('--app <name>', 'Target a specific app')
+  .option('--on <server>', 'Target a specific server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdDrain(process.cwd(), opts));
+
+program
+  .command('undrain')
+  .description('Return a replica to the load balancer rotation')
+  .option('--app <name>', 'Target a specific app')
+  .option('--on <server>', 'Target a specific server')
+  .option('--config <path>', 'Use a specific config file')
+  .action((opts) => cmdUndrain(process.cwd(), opts));
 
 // ── CI/CD ─────────────────────────────────────────────────────────
 

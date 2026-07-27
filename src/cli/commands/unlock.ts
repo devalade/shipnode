@@ -4,7 +4,7 @@ import { confirm } from '../prompt.js';
 
 export async function cmdUnlock(
   cwd: string,
-  options: { config?: string; yes?: boolean },
+  options: { config?: string; yes?: boolean; on?: string },
 ): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
@@ -42,6 +42,6 @@ export async function cmdUnlock(
       await executor.exec(`rm -rf "${lockPath}"`);
       ui.success('Deployment lock cleared.');
     },
-    { configPath: options.config, includeEmpty: true },
+    { configPath: options.config, includeEmpty: true, serverName: options.on },
   );
 }

@@ -31,7 +31,7 @@ export async function uploadEnvironmentFile(
 
 export async function cmdEnv(
   cwd: string,
-  options: { file?: string; config?: string; app?: string; reload?: boolean },
+  options: { file?: string; config?: string; app?: string; reload?: boolean; on?: string },
 ): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
@@ -102,6 +102,6 @@ export async function cmdEnv(
         }
       }
     },
-    { configPath: options.config, appName: options.app },
+    { configPath: options.config, appName: options.app, serverName: options.on },
   );
 }
