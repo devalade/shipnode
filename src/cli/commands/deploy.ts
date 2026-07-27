@@ -8,7 +8,7 @@ import { ui } from '../ui.js';
 import type { AccessoryConfig, ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
 import { accessoryMounts } from '../../services/accessory.service.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
-import { configForAppResult, configForServer, getServerTargets, resolveServerName, resolveServerNameResult } from '../../domain/servers.js';
+import { configForAppResult, configForServer, getServerTargets, resolveServerNames, resolveSingleServerNameResult } from '../../domain/servers.js';
 import { generateBackendCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
 import { type ServerTargetError } from '../../shared/result-errors.js';
 import { runDeployWatch } from './deploy-watch.js';
@@ -167,12 +167,18 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
   const namespace = app.pm2?.apps[0]?.name;
   const web = app.pm2?.apps.find((a) => a.port !== undefined);
 
+  const replicas = resolveServerNames(config, app.on);
   const serverRows: [string, string][] = [
     ['App type', app.appType],
-    ['Server', resolveServerName(config, app.on)],
+    [replicas.length > 1 ? 'Servers' : 'Server', replicas.join(', ')],
     ['App root', app.appRoot ?? '(repo root)'],
     ['Keep releases', String(app.keepReleases)],
   ];
+
+  if (app.fleet) {
+    serverRows.push(['Rolling', `${app.fleet.batch} at a time, ${app.fleet.drainWait}s drain`]);
+    serverRows.push(['Ready path', `:${app.fleet.port}${app.fleet.readyPath}`]);
+  }
 
   if (app.appType === 'backend') {
     const pm2Apps = app.pm2?.apps ?? [];
@@ -243,14 +249,19 @@ function renderDependencyWarnings(config: ShipnodeConfig, app: ShipnodeApp): str
   const dependencies = app.dependsOn ?? [];
   if (dependencies.length === 0) return [];
 
-  const appServer = resolveServerName(config, app.on);
+  const appServers = resolveServerNames(config, app.on);
   const warnings: string[] = [];
   for (const name of dependencies) {
     const accessory = config.accessories?.[name];
     if (!accessory) continue;
-    const accessoryServer = resolveServerName(config, accessory.on);
-    if (appServer !== accessoryServer) {
-      warnings.push(`${name} runs on ${accessoryServer}; ${app.name} runs on ${appServer}. Confirm reachable networking.`);
+    const [accessoryServer] = resolveServerNames(config, accessory.on);
+    if (accessoryServer === undefined) continue;
+    const strangers = appServers.filter((server) => server !== accessoryServer);
+    if (strangers.length > 0) {
+      warnings.push(
+        `${name} runs on ${accessoryServer}; ${app.name} runs on ${strangers.join(', ')}. ` +
+        `Confirm reachable networking.`,
+      );
     }
   }
   return warnings;
@@ -315,7 +326,7 @@ function resolveAccessoryServer(
   config: ShipnodeConfig,
   accessory: AccessoryConfig,
 ): ResultType<string, ServerTargetError> {
-  return resolveServerNameResult(config, accessory.on);
+  return resolveSingleServerNameResult(config, accessory.on, 'This accessory');
 }
 
 function renderAccessoryPlan(

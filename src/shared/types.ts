@@ -31,9 +31,43 @@ export interface SshConfig {
   host: string;
   user: string;
   port: number;
+  /**
+   * The address other servers and the load balancer use to reach this box —
+   * typically a private-network IP. SSH still connects over `host`. Required
+   * for every server a fleet app runs on, since the LB has to reach each
+   * replica directly.
+   */
+  privateHost?: string;
   identityFile?: string;
   proxyMode?: 'cloudflare';
   proxyCommand?: string;
+}
+
+/**
+ * How an app is rolled across the servers it runs on.
+ *
+ * shipnode does not manage the load balancer. It owns one thing — a readiness
+ * endpoint that answers 200 normally and 503 while a replica is being
+ * deployed — and relies on the LB's own health check to pull that replica out
+ * of rotation and put it back.
+ */
+export interface FleetConfig {
+  /** Replicas updated at a time. 1 (the default) is the safest roll. */
+  batch: number;
+  /** Port replicas serve on. TLS terminates at the load balancer, not here. */
+  port: number;
+  /**
+   * Seconds to wait after flipping the readiness endpoint to 503 before
+   * touching the app.
+   *
+   * shipnode cannot know your LB's health-check interval or unhealthy
+   * threshold, so it cannot detect when traffic has actually stopped. This is
+   * the one number you must match to your LB: too low and the roll drops
+   * requests that were already in flight.
+   */
+  drainWait: number;
+  /** Path the load balancer's health check polls. */
+  readyPath: string;
 }
 
 export interface Pm2App {
@@ -166,7 +200,17 @@ export interface HooksConfig {
 export interface ShipnodeApp {
   name: string;
   appType: AppType;
-  on?: string;
+  /**
+   * Where this app runs: a server name, a group name, or a list of either.
+   * Resolving to more than one server makes it a fleet — see {@link fleet}.
+   */
+  on?: string | string[];
+  /**
+   * Rolling-deploy settings. Populated by assembly whenever the app resolves to
+   * more than one server, or declared explicitly to put a single-server app
+   * behind the same drain contract (useful before scaling out).
+   */
+  fleet?: FleetConfig;
   appRoot?: string;
   domain?: string;
   caddy?: {
@@ -208,6 +252,8 @@ export interface ShipnodeConfig {
   // workspace-level
   ssh: SshConfig;
   servers: Record<string, SshConfig>;
+  /** Named sets of servers, usable anywhere a single server name is. */
+  groups?: Record<string, string[]>;
   remotePath: string;
   nodeVersion: string;
   pkgManager?: PkgManager;

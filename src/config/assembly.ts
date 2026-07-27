@@ -13,6 +13,7 @@ type LegacyPm2Input = {
 type AssembleInput = {
   ssh?: ShipnodeConfig['ssh'];
   servers?: ShipnodeConfig['servers'];
+  groups?: ShipnodeConfig['groups'];
   remotePath?: string;
   nodeVersion?: string;
   pkgManager?: ShipnodeConfig['pkgManager'];
@@ -26,7 +27,7 @@ type AssembleInput = {
   accessories?: ShipnodeConfig['accessories'];
   // Legacy input fields — synthesized to apps[0] by z.preprocess
   app?: string;
-  on?: string;
+  on?: string | string[];
   domain?: string;
   caddy?: ShipnodeApp['caddy'];
   pm2?: LegacyPm2Input | Pm2Config;

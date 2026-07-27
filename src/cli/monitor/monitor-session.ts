@@ -1,5 +1,5 @@
 import { Result, type Result as ResultType } from 'better-result';
-import { getServerTargetResult, resolveServerNameResult, type ServerTarget } from '../../domain/servers.js';
+import { getServerTargetResult, resolveServerNamesResult, type ServerTarget } from '../../domain/servers.js';
 import type { ShipnodeApp, ShipnodeConfig } from '../../shared/types.js';
 import { UnknownAppError, type AppTargetError, type ServerTargetError } from '../../shared/result-errors.js';
 
@@ -19,7 +19,9 @@ export function resolveMonitorSession(
 
   if (app === undefined) return Result.err(new UnknownAppError({ name: appName ?? '(default)' }));
 
-  const target = getServerTargetResult(config, app.on);
+  // The monitor holds one live connection, so a fleet app must be narrowed to
+  // one replica first (`monitor --on <server>`).
+  const target = getServerTargetResult(config, app.on, `App '${app.name}'`);
   if (target.isErr()) return Result.err(target.error);
 
   return Result.ok({ config, app, target: target.value });
@@ -31,9 +33,9 @@ export function getAppsForMonitorTarget(
 ): ResultType<ShipnodeApp[], ServerTargetError> {
   const apps: ShipnodeApp[] = [];
   for (const app of config.apps) {
-    const serverName = resolveServerNameResult(config, app.on);
-    if (serverName.isErr()) return Result.err(serverName.error);
-    if (serverName.value === targetName) apps.push(app);
+    const serverNames = resolveServerNamesResult(config, app.on);
+    if (serverNames.isErr()) return Result.err(serverNames.error);
+    if (serverNames.value.includes(targetName)) apps.push(app);
   }
   return Result.ok(apps);
 }
@@ -44,9 +46,9 @@ export function getAccessoriesForMonitorTarget(
 ): ResultType<string[], ServerTargetError> {
   const names: string[] = [];
   for (const [name, accessory] of Object.entries(config.accessories ?? {})) {
-    const serverName = resolveServerNameResult(config, accessory.on);
-    if (serverName.isErr()) return Result.err(serverName.error);
-    if (serverName.value === targetName) names.push(name);
+    const serverNames = resolveServerNamesResult(config, accessory.on);
+    if (serverNames.isErr()) return Result.err(serverNames.error);
+    if (serverNames.value.includes(targetName)) names.push(name);
   }
   return Result.ok(names);
 }

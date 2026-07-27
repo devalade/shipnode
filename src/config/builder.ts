@@ -18,6 +18,7 @@ import { assembleConfig } from './assembly.js';
 type BuilderState = {
   ssh?: SshConfig;
   servers?: Record<string, SshConfig>;
+  groups?: Record<string, string[]>;
   remotePath?: string;
   nodeVersion?: string;
   pkgManager?: PkgManager;
@@ -31,7 +32,7 @@ type BuilderState = {
   accessories?: Record<string, AccessoryConfig>;
   // Legacy per-app input fields (synthesized to apps[0] by z.preprocess)
   app?: string;
-  on?: string;
+  on?: string | string[];
   pm2?: { apps: Pm2App[] };
   domain?: string;
   keepReleases?: number;
@@ -49,8 +50,10 @@ type BuilderState = {
   apps?: Partial<ShipnodeApp>[];
 };
 
-type AppBuilderState = Omit<Partial<ShipnodeApp>, 'pm2'> & {
+type AppBuilderState = Omit<Partial<ShipnodeApp>, 'pm2' | 'fleet'> & {
   pm2?: { apps: Pm2App[] };
+  // Partial: the schema fills in batch/port/drainWait/readyPath.
+  fleet?: Partial<ShipnodeApp['fleet']>;
 };
 
 export type WorkerOptions = Omit<Pm2App, 'port'>;
@@ -84,7 +87,21 @@ export class ShipnodeBuilder {
     return this;
   }
 
-  on(target: string): this {
+  /**
+   * Name a set of servers, usable anywhere a single server name is.
+   * `.group('web', ['web-a', 'web-b'])` then `.on('web')` runs an app on both.
+   */
+  group(name: string, servers: string[]): this {
+    this.config.groups = { ...this.config.groups, [name]: servers };
+    return this;
+  }
+
+  groups(groups: Record<string, string[]>): this {
+    this.config.groups = { ...this.config.groups, ...groups };
+    return this;
+  }
+
+  on(target: string | string[]): this {
     this.config.on = target;
     return this;
   }
@@ -343,8 +360,23 @@ export class ShipnodeAppBuilder {
     return this;
   }
 
-  on(target: string): this {
+  /** A server name, a group name, or a list of either. More than one is a fleet. */
+  on(target: string | string[]): this {
     this.state.on = target;
+    return this;
+  }
+
+  /**
+   * Rolling-deploy settings. Implied for any app that resolves to more than one
+   * server; declare it explicitly to put a single-server app behind the same
+   * drain contract, or to tune the roll.
+   *
+   * `drainWait` (seconds) must match your load balancer's health check — it is
+   * how long shipnode waits after flipping the readiness endpoint to 503 before
+   * it touches the app. Too low and in-flight requests are dropped.
+   */
+  fleet(opts: Partial<ShipnodeApp['fleet']> = {}): this {
+    this.state.fleet = { ...this.state.fleet, ...opts };
     return this;
   }
 

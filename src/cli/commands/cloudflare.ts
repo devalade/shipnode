@@ -2,7 +2,7 @@ import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import { CloudflareOrchestrator } from '../../services/cloudflare.orchestrator.js';
 import { loadConfig } from '../../config/loader.js';
-import { getServerTargets, configForServer, resolveServerName } from '../../domain/servers.js';
+import { getServerTargets, configForServer, expandTarget } from '../../domain/servers.js';
 import type { ShipnodeConfig } from '../../shared/types.js';
 
 function requireToken(): string {
@@ -49,8 +49,10 @@ export async function cmdCloudflareInit(
   const workspace = await loadConfig(cwd, options.config);
   assertTunnelNameIsUnambiguous(workspace);
 
-  // Only one tunnel can own the workspace's ssh hostname.
-  const sshHostnameOwner = resolveServerName(workspace);
+  // Only one tunnel can own the workspace's ssh hostname: the default server,
+  // or the first declared when there is no server called `default`.
+  const sshHostnameOwner = expandTarget(workspace, undefined)[0]
+    ?? getServerTargets(workspace)[0]?.name;
 
   await runRemoteCommandForTargets(
     cwd,

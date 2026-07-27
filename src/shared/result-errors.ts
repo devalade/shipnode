@@ -21,6 +21,26 @@ export class UnknownServerTargetError extends TaggedError('UnknownServerTargetEr
   }
 }
 
+/**
+ * A target resolved to several servers where only one is meaningful — an
+ * accessory's host, a `run` invocation, a watch session. Naming the servers
+ * lets the user pick one with `--on` instead of guessing what shipnode chose.
+ */
+export class AmbiguousServerTargetError extends TaggedError('AmbiguousServerTargetError')<{
+  subject: string;
+  servers: string;
+  message: string;
+}>() {
+  constructor(args: { subject: string; servers: string }) {
+    super({
+      ...args,
+      message:
+        `${args.subject} runs on several servers (${args.servers}), ` +
+        `but this needs exactly one. Pick it with --on <server>.`,
+    });
+  }
+}
+
 export class UnknownAppError extends TaggedError('UnknownAppError')<{
   name: string;
   message: string;
@@ -213,7 +233,8 @@ export class GitHubSecretUpdateError extends TaggedError('GitHubSecretUpdateErro
 
 export type ServerTargetError =
   | MissingServerTargetError
-  | UnknownServerTargetError;
+  | UnknownServerTargetError
+  | AmbiguousServerTargetError;
 
 export type AppTargetError = ServerTargetError | UnknownAppError;
 

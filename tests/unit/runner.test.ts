@@ -171,11 +171,9 @@ describe('runRemoteCommandForTargets', () => {
     errorSpy.mockRestore();
   });
 
-  it('abandons the remaining servers when one fails', async () => {
-    // Documents today's behaviour: the try/catch sits outside the loop, so a
-    // failure on `edge` means `data` is never visited and the user gets no
-    // account of what did or did not happen. Phase 1 replaces this with
-    // per-server isolation plus a summary — this test should change with it.
+  it('keeps going when one server fails, then exits non-zero', async () => {
+    // Servers are independent. Abandoning the rest of the fan-out leaves the
+    // user with no account of what did and did not happen.
     mocks.config = workspace();
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -186,12 +184,67 @@ describe('runRemoteCommandForTargets', () => {
       if (serverName === 'edge') throw new Error('edge blew up');
     });
 
-    expect(visited).toEqual(['edge']);
+    expect(visited).toEqual(['edge', 'data']);
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(mocks.open.size).toBe(0);
 
     exitSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+
+  it('reports which servers failed', async () => {
+    mocks.config = workspace();
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logged: string[] = [];
+    const logSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      logged.push(String(chunk));
+      return true;
+    });
+
+    await runRemoteCommandForTargets('/test', async ({ serverName }) => {
+      if (serverName === 'data') throw new Error('data blew up');
+    });
+
+    logSpy.mockRestore();
+    const output = logged.join('');
+    // `spare` hosts nothing and is skipped, so it is not part of the count.
+    expect(output).toContain('Failed on 1 of 2 servers: data');
+
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('narrows the traversal to the servers an --app actually runs on', async () => {
+    // Without this, an unrelated server being unreachable sinks a command that
+    // was scoped to a single app.
+    mocks.config = workspace();
+    const visited: string[] = [];
+
+    await runRemoteCommandForTargets(
+      '/test',
+      async ({ serverName }) => {
+        visited.push(serverName);
+      },
+      { appName: 'worker' },
+    );
+
+    expect(visited).toEqual(['data']);
+  });
+
+  it('scopes to one replica with serverName', async () => {
+    mocks.config = workspace();
+    const visited: string[] = [];
+
+    await runRemoteCommandForTargets(
+      '/test',
+      async ({ serverName }) => {
+        visited.push(serverName);
+      },
+      { serverName: 'data' },
+    );
+
+    expect(visited).toEqual(['data']);
   });
 });
 

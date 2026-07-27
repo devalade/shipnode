@@ -6,7 +6,7 @@ import {
   getServerTarget,
   getServerTargetResult,
   getServerTargets,
-  resolveServerName,
+  resolveSingleServerName,
 } from '../../src/domain/servers.js';
 import type { ShipnodeConfig } from '../../src/shared/types.js';
 
@@ -43,7 +43,7 @@ describe('server target resolution', () => {
   it('resolves a single named server when default is absent', () => {
     const oneServer = { ...config, servers: { app: config.servers.app } };
 
-    expect(resolveServerName(oneServer)).toBe('app');
+    expect(resolveSingleServerName(oneServer)).toBe('app');
     expect(getServerTarget(oneServer).name).toBe('app');
   });
 

@@ -1,15 +1,31 @@
 import { z } from 'zod';
 import { isValidIpOrHostname, isValidDomain, isValidPm2Name } from '../domain/validation/ip.js';
+import { expandTarget } from '../domain/servers.js';
 import type { HookFn } from '../shared/types.js';
 
 export const SshConfigSchema = z.object({
   host: z.string().refine(isValidIpOrHostname, 'Must be a valid IP address or hostname'),
   user: z.string().min(1, 'SSH user is required'),
   port: z.number().int().min(1).max(65535).default(22),
+  privateHost: z.string().refine(isValidIpOrHostname, 'Must be a valid IP address or hostname').optional(),
   identityFile: z.string().optional(),
   proxyMode: z.enum(['cloudflare']).optional(),
   proxyCommand: z.string().optional(),
 });
+
+/** Where an app runs: a server name, a group name, or a list of either. */
+export const ServerTargetSchema = z.union([
+  z.string().min(1),
+  z.array(z.string().min(1)).min(1),
+]);
+
+export const FleetConfigSchema = z.object({
+  batch: z.number().int().min(1).default(1),
+  port: z.number().int().min(1).max(65535).default(80),
+  // Seconds, matching healthCheck.timeout and startupDelay.
+  drainWait: z.number().int().min(0).default(30),
+  readyPath: z.string().startsWith('/', 'readyPath must start with /').default('/_shipnode/ready'),
+}).default({});
 
 export const RegistryConfigSchema = z.object({
   server: z.string().min(1, 'Registry server is required'),
@@ -151,7 +167,8 @@ export const HooksConfigSchema = z.object({
 export const ShipnodeAppSchema = z.object({
   name: z.string().refine(isValidPm2Name, 'app name must be alphanumeric, dash, or underscore (max 64 chars)').default('app'),
   appType: z.enum(['backend', 'frontend']).default('backend'),
-  on: z.string().min(1).optional(),
+  on: ServerTargetSchema.optional(),
+  fleet: FleetConfigSchema.optional(),
   appRoot: z.string().optional(),
   domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
   caddy: z.object({
@@ -211,6 +228,7 @@ const ShipnodeConfigBaseSchema = z.object({
   // workspace-level
   ssh: SshConfigSchema.optional(),
   servers: z.record(z.string().min(1), SshConfigSchema).optional(),
+  groups: z.record(z.string().min(1), z.array(z.string().min(1)).min(1, 'a group must contain at least one server')).optional(),
   remotePath: z.string().min(1, 'Remote path is required').default('/var/www/app'),
   nodeVersion: z.string().default('lts'),
   pkgManager: z.enum(['npm', 'yarn', 'pnpm', 'bun']).optional(),
@@ -246,8 +264,36 @@ const ShipnodeConfigBaseSchema = z.object({
     return;
   }
 
-  const validateTarget = (target: string | undefined, path: (string | number)[]): void => {
-    if (!target) {
+  const groups = cfg.groups ?? {};
+  const groupNames = new Set(Object.keys(groups));
+
+  for (const [name, members] of Object.entries(groups)) {
+    if (serverNames.has(name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Group '${name}' collides with a server of the same name — targets would be ambiguous`,
+        path: ['groups', name],
+      });
+    }
+    for (const member of members) {
+      if (!serverNames.has(member)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Group '${name}' references unknown server '${member}'`,
+          path: ['groups', name],
+        });
+      }
+    }
+  }
+
+  const source = { servers, groups: cfg.groups };
+
+  /** Expand a target, reporting anything that names neither a server nor a group. */
+  const validateTarget = (
+    target: string | string[] | undefined,
+    path: (string | number)[],
+  ): string[] => {
+    if (target === undefined) {
       if (!serverNames.has('default') && serverNames.size !== 1) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -255,23 +301,63 @@ const ShipnodeConfigBaseSchema = z.object({
           path,
         });
       }
-      return;
+      return expandTarget(source, undefined);
     }
-    if (!serverNames.has(target)) {
+
+    for (const entry of Array.isArray(target) ? target : [target]) {
+      if (serverNames.has(entry) || groupNames.has(entry)) continue;
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `Unknown server target '${target}'`,
+        message: `Unknown server target '${entry}'`,
+        path,
+      });
+    }
+
+    return expandTarget(source, target);
+  };
+
+  /** Things that cannot be replicated: an accessory, a database, a Redis. */
+  const validateSingleTarget = (
+    target: string | undefined,
+    path: (string | number)[],
+    subject: string,
+  ): void => {
+    const resolved = validateTarget(target, path);
+    if (resolved.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `${subject} must run on exactly one server, but '${target}' resolves to ` +
+          `${resolved.join(', ')}. shipnode does not replicate managed services.`,
         path,
       });
     }
   };
 
-  cfg.apps.forEach((app, index) => validateTarget(app.on, ['apps', index, 'on']));
-  Object.entries(cfg.accessories ?? {}).forEach(([name, accessory]) => {
-    validateTarget(accessory.on, ['accessories', name, 'on']);
+  cfg.apps.forEach((app, index) => {
+    const targets = validateTarget(app.on, ['apps', index, 'on']);
+
+    // A replicated app sits behind a load balancer that must reach each replica
+    // directly, and replicas talk to each other's accessories over the same
+    // network. Neither works off the public SSH host alone.
+    if (targets.length <= 1 && !app.fleet) return;
+    const missing = targets.filter((name) => !servers[name]?.privateHost);
+    if (missing.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `App '${app.name}' runs on ${targets.length} servers, so the load balancer must be able ` +
+          `to reach each one. Add privateHost to: ${missing.join(', ')}`,
+        path: ['apps', index, 'on'],
+      });
+    }
   });
-  if (cfg.database) validateTarget(cfg.database.on, ['database', 'on']);
-  if (cfg.redis) validateTarget(cfg.redis.on, ['redis', 'on']);
+
+  Object.entries(cfg.accessories ?? {}).forEach(([name, accessory]) => {
+    validateSingleTarget(accessory.on, ['accessories', name, 'on'], `Accessory '${name}'`);
+  });
+  if (cfg.database) validateSingleTarget(cfg.database.on, ['database', 'on'], 'database');
+  if (cfg.redis) validateSingleTarget(cfg.redis.on, ['redis', 'on'], 'redis');
   const accessoryNames = new Set(Object.keys(cfg.accessories ?? {}));
   cfg.apps.forEach((app, index) => {
     for (const name of app.dependsOn ?? []) {
@@ -292,7 +378,18 @@ const ShipnodeConfigBaseSchema = z.object({
   if (firstServer === undefined) throw new Error('At least one server target must be configured');
 
   const ssh = cfg.ssh ?? servers.default ?? firstServer;
-  return { ...cfg, ssh, servers };
+
+  // An app on more than one server is a fleet whether or not it said so, and a
+  // fleet has to be rolled rather than deployed everywhere at once. Fill in the
+  // rolling defaults here so nothing downstream has to ask "is this a fleet?"
+  // twice and get two answers.
+  const apps = cfg.apps.map((app) => {
+    const replicas = expandTarget({ servers, groups: cfg.groups }, app.on);
+    if (replicas.length <= 1 && !app.fleet) return app;
+    return { ...app, fleet: app.fleet ?? FleetConfigSchema.parse(undefined) };
+  });
+
+  return { ...cfg, ssh, servers, apps };
 });
 
 export const ShipnodeConfigSchema = z.preprocess(
