@@ -181,6 +181,7 @@ program
 program
   .command('harden')
   .description('Apply server security hardening (SSH, firewall, fail2ban)')
+  .option('--on <server>', 'Harden one server instead of every server in the workspace')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdHarden(process.cwd(), opts));
 

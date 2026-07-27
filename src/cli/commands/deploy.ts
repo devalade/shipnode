@@ -15,6 +15,7 @@ import { type ServerTargetError } from '../../shared/result-errors.js';
 import { runDeployWatch } from './deploy-watch.js';
 import type { BuildLocation } from '../../domain/deploy/hot-sync.js';
 import { rollFleet, type FleetEvent } from '../../domain/deploy/fleet.js';
+import { accessoryHostVar } from '../../domain/networking.js';
 import { newReleaseId } from '../../domain/deploy/orchestrator.js';
 import { SshConnection } from '../../infrastructure/ssh/connection.js';
 
@@ -47,7 +48,7 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
       process.exit(1);
       return;
     }
-    printDryRun(targetConfig, options.skipBuild ?? false);
+    printDryRun(targetConfig, options.skipBuild ?? false, config);
     return;
   }
 
@@ -322,7 +323,12 @@ async function startWatch(
   }
 }
 
-function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: boolean): string {
+function renderAppPlan(
+  config: ShipnodeConfig,
+  app: ShipnodeApp,
+  skipBuild: boolean,
+  workspace: ShipnodeConfig = config,
+): string {
   const namespace = app.pm2?.apps[0]?.name;
   const web = app.pm2?.apps.find((a) => a.port !== undefined);
 
@@ -363,7 +369,7 @@ function renderAppPlan(config: ShipnodeConfig, app: ShipnodeApp, skipBuild: bool
   if (app.domain) serverRows.push(['Domain', app.domain]);
   if (app.dependsOn?.length) serverRows.push(['Depends on', app.dependsOn.join(', ')]);
 
-  const dependencyWarnings = renderDependencyWarnings(config, app);
+  const dependencyWarnings = renderDependencyWarnings(workspace, app);
   const fleetWarnings = renderFleetWarnings(app, replicas);
 
   const caddyPreview = renderCaddyPreview(config, app);
@@ -452,12 +458,18 @@ function renderDependencyWarnings(config: ShipnodeConfig, app: ShipnodeApp): str
     const [accessoryServer] = resolveServerNames(config, accessory.on);
     if (accessoryServer === undefined) continue;
     const strangers = appServers.filter((server) => server !== accessoryServer);
-    if (strangers.length > 0) {
-      warnings.push(
-        `${name} runs on ${accessoryServer}; ${app.name} runs on ${strangers.join(', ')}. ` +
-        `Confirm reachable networking.`,
-      );
-    }
+    if (strangers.length === 0) continue;
+
+    const privateHost = config.servers[accessoryServer]?.privateHost;
+    warnings.push(
+      privateHost
+        ? `${name} runs on ${accessoryServer}; ${app.name} runs on ${strangers.join(', ')}. ` +
+          `${accessoryHostVar(name)}=${privateHost} is set for ${app.name} — make sure your ` +
+          `connection string reads it, and that ${accessoryServer} accepts the connection.`
+        : `${name} runs on ${accessoryServer}; ${app.name} runs on ${strangers.join(', ')}, ` +
+          `and ${accessoryServer} has no privateHost — shipnode has no address to hand ${app.name}. ` +
+          `Add privateHost to ${accessoryServer}, or set the host yourself in ${app.envFile}.`,
+    );
   }
   return warnings;
 }
@@ -488,7 +500,19 @@ function renderCaddyPreview(config: ShipnodeConfig, app: ShipnodeApp): string | 
   return generateBackendCaddyfile(app, web.port);
 }
 
-export function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
+/**
+ * `workspace` is the *unscoped* config. `--app api` narrows `config` to that app
+ * and the servers it runs on, which drops the server a cross-server accessory
+ * lives on — and with it the warning that the app has to reach across the
+ * network. The real deploy path already resolves dependencies against the whole
+ * workspace; the preview has to as well or it is quietest exactly when it
+ * matters most.
+ */
+export function printDryRun(
+  config: ShipnodeConfig,
+  skipBuild: boolean,
+  workspace: ShipnodeConfig = config,
+): void {
   ui.banner();
 
   const servers = getServerTargets(config).map((target) => `${target.name}=${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`).join(', ');
@@ -503,7 +527,7 @@ export function printDryRun(config: ShipnodeConfig, skipBuild: boolean): void {
   // Per app, not per server: a fleet app runs on several servers and would
   // otherwise be printed once for each of them.
   const perApp = config.apps
-    .map((app) => renderAppPlan(config, app, skipBuild))
+    .map((app) => renderAppPlan(config, app, skipBuild, workspace))
     .join('\n\n');
 
   const accessories = renderAccessoriesPlan(config);

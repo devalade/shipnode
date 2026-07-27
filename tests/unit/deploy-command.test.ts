@@ -85,9 +85,57 @@ describe('deploy command dry run', () => {
     expect(output).not.toContain('acme-secret');
   });
 
-  it('warns when an app dependency lives on a different server', () => {
+  it('names the injected address when a dependency lives on a different server', () => {
     const redis = config.accessories?.redis;
     expect(redis).toBeDefined();
+    if (!redis) return;
+
+    printDryRun({
+      ...config,
+      servers: {
+        app: { host: '1.2.3.4', user: 'deploy', port: 22 },
+        data: { host: '2.3.4.5', user: 'deploy', port: 22, privateHost: '10.0.0.20' },
+      },
+      apps: config.apps.map((app) => ({ ...app, on: 'app' })),
+      accessories: { redis: { ...redis, on: 'data' } },
+    }, false);
+
+    const output = vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '';
+    expect(output).toContain('Depends on     redis');
+    expect(output).toContain('SHIPNODE_REDIS_HOST=10.0.0.20');
+  });
+
+  it('still warns when the config has been scoped to one app', () => {
+    // --app narrows the config to that app and its servers, which drops the
+    // server the accessory lives on. Resolving against the scoped config would
+    // make the preview silent exactly when the dependency is cross-server.
+    const redis = config.accessories?.redis;
+    if (!redis) return;
+
+    const workspace: ShipnodeConfig = {
+      ...config,
+      servers: {
+        app: { host: '1.2.3.4', user: 'deploy', port: 22 },
+        data: { host: '2.3.4.5', user: 'deploy', port: 22, privateHost: '10.0.0.20' },
+      },
+      apps: config.apps.map((a) => ({ ...a, on: 'app' })),
+      accessories: { redis: { ...redis, on: 'data' } },
+    };
+    const scoped: ShipnodeConfig = {
+      ...workspace,
+      servers: { app: workspace.servers.app! },
+      accessories: {},
+    };
+
+    printDryRun(scoped, false, workspace);
+
+    expect(vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '').toContain('SHIPNODE_REDIS_HOST=10.0.0.20');
+  });
+
+  it('says so when there is no private address to hand the app', () => {
+    // localhost is the shipnode default and points at nothing from another box,
+    // so silence here would mean a connection failure at runtime.
+    const redis = config.accessories?.redis;
     if (!redis) return;
 
     printDryRun({
@@ -97,17 +145,11 @@ describe('deploy command dry run', () => {
         data: { host: '2.3.4.5', user: 'deploy', port: 22 },
       },
       apps: config.apps.map((app) => ({ ...app, on: 'app' })),
-      accessories: {
-        redis: {
-          ...redis,
-          on: 'data',
-        },
-      },
+      accessories: { redis: { ...redis, on: 'data' } },
     }, false);
 
     const output = vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '';
-    expect(output).toContain('Depends on     redis');
-    expect(output).toContain('redis runs on data; api runs on app. Confirm reachable networking.');
+    expect(output).toContain('data has no privateHost');
   });
 
   it('describes a fleet app once, with the roll and the private site', () => {

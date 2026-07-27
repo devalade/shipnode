@@ -1,3 +1,5 @@
+import type { FirewallRule } from '../../domain/networking.js';
+
 const SUDO = 'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"';
 
 export function sshCheckActiveCommand(): string {
@@ -32,15 +34,28 @@ export function ufwInstallCommand(): string {
   return `${SUDO}; $SUDO apt-get install -y ufw`;
 }
 
-export function ufwConfigureCommands(): string[] {
+/**
+ * `extra` carries the rules a multi-server layout needs on top of the defaults
+ * — see {@link import('../../domain/networking.js').fleetFirewallRules}. They go
+ * in before `enable` so the firewall is never briefly up with the holes closed.
+ */
+export function ufwConfigureCommands(extra: FirewallRule[] = []): string[] {
   return [
     `${SUDO}; $SUDO ufw default deny incoming`,
     `${SUDO}; $SUDO ufw default allow outgoing`,
     `${SUDO}; $SUDO ufw allow ssh`,
     `${SUDO}; $SUDO ufw allow 80/tcp`,
     `${SUDO}; $SUDO ufw allow 443/tcp`,
+    ...extra.map((rule) => `${SUDO}; $SUDO ${ufwAllowRule(rule)}`),
     `${SUDO}; $SUDO ufw --force enable`,
   ];
+}
+
+export function ufwAllowRule(rule: FirewallRule): string {
+  const comment = `comment ${JSON.stringify(rule.comment)}`;
+  return rule.from === undefined
+    ? `ufw allow ${rule.port}/tcp ${comment}`
+    : `ufw allow from ${rule.from} to any port ${rule.port} proto tcp ${comment}`;
 }
 
 export function fail2banCheckActiveCommand(): string {

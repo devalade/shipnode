@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isValidIpOrHostname, isValidDomain, isValidPm2Name } from '../domain/validation/ip.js';
 import { expandTarget } from '../domain/servers.js';
+import { accessoryHostEnv, isLoopbackOnly } from '../domain/networking.js';
 import type { HookFn } from '../shared/types.js';
 
 export const SshConfigSchema = z.object({
@@ -368,12 +369,38 @@ const ShipnodeConfigBaseSchema = z.object({
   if (cfg.redis) validateSingleTarget(cfg.redis.on, ['redis', 'on'], 'redis');
   const accessoryNames = new Set(Object.keys(cfg.accessories ?? {}));
   cfg.apps.forEach((app, index) => {
+    const appServers = expandTarget(source, app.on);
+
     for (const name of app.dependsOn ?? []) {
       if (!accessoryNames.has(name)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `Unknown accessory dependency '${name}'`,
           path: ['apps', index, 'dependsOn'],
+        });
+        continue;
+      }
+
+      const accessory = cfg.accessories![name]!;
+      const [host] = expandTarget(source, accessory.on);
+      // Only a dependency the app cannot reach over loopback needs an address,
+      // and only then does the bind matter.
+      if (host === undefined || appServers.every((server) => server === host)) continue;
+
+      const strangers = appServers.filter((server) => server !== host);
+
+      // A missing privateHost is only a warning (deploy and --dry-run raise it):
+      // the user may be supplying the address themselves in .env, and refusing
+      // to parse a config that works today would be overreach. A loopback bind
+      // is different — no connection string can reach it from another machine.
+      if (isLoopbackOnly(accessory)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            `Accessory '${name}' publishes only on loopback, so ${app.name} on ` +
+            `${strangers.join(', ')} can never reach it across the network. ` +
+            `Bind it to ${servers[host]?.privateHost ?? host}'s private address instead of 127.0.0.1.`,
+          path: ['accessories', name, 'port'],
         });
       }
     }
@@ -391,10 +418,32 @@ const ShipnodeConfigBaseSchema = z.object({
   // fleet has to be rolled rather than deployed everywhere at once. Fill in the
   // rolling defaults here so nothing downstream has to ask "is this a fleet?"
   // twice and get two answers.
+  const source = { servers, groups: cfg.groups };
+
   const apps = cfg.apps.map((app) => {
-    const replicas = expandTarget({ servers, groups: cfg.groups }, app.on);
-    if (replicas.length <= 1 && !app.fleet) return app;
-    return { ...app, fleet: app.fleet ?? FleetConfigSchema.parse(undefined) };
+    const replicas = expandTarget(source, app.on);
+
+    // Where this app's accessories actually live. Injected here rather than at
+    // deploy time because scoping the config to one app or one server drops the
+    // servers the dependencies are on — by then the address is unknowable.
+    const hostEnv = accessoryHostEnv(app.dependsOn, replicas, (name) => {
+      const accessory = cfg.accessories?.[name];
+      if (!accessory) return undefined;
+      const [host] = expandTarget(source, accessory.on);
+      return host === undefined ? undefined : { server: host, privateHost: servers[host]?.privateHost };
+    });
+
+    const withEnv = Object.keys(hostEnv).length === 0 || !app.pm2
+      ? app
+      : {
+          ...app,
+          // Declared env wins: an explicit override is the escape hatch for a
+          // topology shipnode cannot see, such as a managed database.
+          pm2: { ...app.pm2, apps: app.pm2.apps.map((p) => ({ ...p, env: { ...hostEnv, ...p.env } })) },
+        };
+
+    if (replicas.length <= 1 && !withEnv.fleet) return withEnv;
+    return { ...withEnv, fleet: withEnv.fleet ?? FleetConfigSchema.parse(undefined) };
   });
 
   return { ...cfg, ssh, servers, apps };
