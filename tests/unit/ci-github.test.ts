@@ -168,4 +168,54 @@ describe('ci github', () => {
 
     expect(await readWorkflow(directory)).toContain('run: shipnode deploy');
   });
+
+  it('checks every replica is a known host before rolling a fleet', async () => {
+    // A host missing from known_hosts otherwise surfaces as an SSH failure on
+    // replica three, with one and two already updated and three left drained.
+    const root = await temporaryDirectory('shipnode-ci-fleet-');
+    await initialiseGitRepository(root);
+    await writeFile(join(root, 'package.json'), '{}');
+    await writeFile(join(root, 'shipnode.config.ts'), `
+      export default {
+        servers: {
+          'web-a': { host: '10.0.0.11', user: 'deploy', privateHost: '10.0.0.11' },
+          'web-b': { host: '10.0.0.12', user: 'deploy', privateHost: '10.0.0.12' },
+        },
+        nodeVersion: '22',
+        remotePath: '/var/www/app',
+        apps: [{
+          name: 'api',
+          appType: 'backend',
+          on: ['web-a', 'web-b'],
+          envFile: '.env',
+          pm2: { apps: [{ name: 'api', port: 3000 }] },
+        }],
+      };
+    `);
+
+    await cmdCiGithub(root, { app: 'api', syncEnv: true });
+
+    const workflow = await readWorkflow(root);
+    expect(() => load(workflow)).not.toThrow();
+    expect(workflow).toContain('Verify every replica is a known host');
+    expect(workflow).toContain("for host in '10.0.0.11' '10.0.0.12'");
+    expect(workflow).toContain('ssh-keyscan 10.0.0.11 10.0.0.12');
+  });
+
+  it('omits the replica check for a single-server workspace', async () => {
+    const root = await temporaryDirectory('shipnode-ci-solo-');
+    await initialiseGitRepository(root);
+    await writeFile(join(root, 'package.json'), '{}');
+    await writeFile(join(root, 'shipnode.config.ts'), `
+      export default {
+        ssh: { host: 'example.com', user: 'deploy' },
+        nodeVersion: '22',
+        apps: [{ name: 'api', appType: 'backend', envFile: '.env' }],
+      };
+    `);
+
+    await cmdCiGithub(root, { app: 'api', syncEnv: true });
+
+    expect(await readWorkflow(root)).not.toContain('Verify every replica is a known host');
+  });
 });

@@ -4,6 +4,7 @@ import { pathExists, ensureDir } from 'fs-extra';
 import { ExecaError, execa } from 'execa';
 import { Result, type Result as ResultType } from 'better-result';
 import { loadConfig } from '../../config/loader.js';
+import { resolveServerNames } from '../../domain/servers.js';
 import {
   CiAppTargetRequiredError,
   CiConfigLoadError,
@@ -104,6 +105,8 @@ interface WorkflowEnvironmentTarget {
   readonly appName: string;
   readonly envFile: string;
   readonly nodeVersion: string;
+  /** Every SSH host this workflow's deploy will connect to. */
+  readonly hosts: string[];
 }
 
 function renderCommandOptions(options: CiGithubOptions): string {
@@ -134,10 +137,21 @@ async function resolveWorkflowEnvironmentTarget(
     return Result.err(new UnknownAppError({ name: options.app ?? '(default)' }));
   }
 
+  // Every replica, not just config.ssh: a fleet deploy connects to each in
+  // turn, and a host missing from known_hosts fails mid-roll with replicas
+  // already drained.
+  const hosts = [...new Set(
+    resolveServerNames(configResult.value, app.on).flatMap((name) => {
+      const server = configResult.value.servers[name];
+      return server ? [server.host] : [];
+    }),
+  )];
+
   return Result.ok({
     appName: app.name,
     envFile: app.envFile,
     nodeVersion: configResult.value.nodeVersion === 'lts' ? '24' : configResult.value.nodeVersion,
+    hosts: hosts.length > 0 ? hosts : [configResult.value.ssh.host],
   });
 }
 
@@ -148,6 +162,7 @@ function generateWorkflow(
   options: CiGithubOptions = {},
   envFile?: string,
   nodeVersion = '20',
+  hosts: string[] = [],
 ): string {
   const environment = options.environment ?? 'production';
   const concurrencySuffix = options.app
@@ -161,6 +176,22 @@ function generateWorkflow(
     ? `\n        working-directory: ${yamlSingleQuoted(deployDirectory)}`
     : '';
   const commandOptions = renderCommandOptions(options);
+
+  const knownHostsScan = hosts.length > 0 ? hosts.join(' ') : '<your-server>';
+  // Fail before the roll rather than during it. A host missing from
+  // known_hosts otherwise surfaces as an SSH failure on replica three, with
+  // replicas one and two already updated and replica three drained.
+  const knownHostsCheck = hosts.length < 2 ? '' : `
+      - name: Verify every replica is a known host
+        run: |
+          for host in ${hosts.map((h) => shellSingleQuoted(h)).join(' ')}; do
+            ssh-keygen -F "$host" >/dev/null || {
+              echo "::error::$host is missing from SHIPNODE_KNOWN_HOSTS. Rebuild it with: ssh-keyscan ${knownHostsScan}"
+              exit 1
+            }
+          done
+`;
+
   const envSyncSteps = options.syncEnv && envFile && options.app
     ? (() => {
       const secretName = `SHIPNODE_ENV_${githubSecretSegment(environment)}_${githubSecretSegment(options.app)}`;
@@ -223,16 +254,20 @@ ${setupPmStep}      - name: Setup Node.js
       - name: Install dependencies
         run: ${pm.installCmd}
 
+      # SHIPNODE_SSH_KEY may hold several keys, one after another, when the
+      # servers below do not share one. ssh-agent loads each in turn.
       - name: Setup SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: \${{ secrets.SHIPNODE_SSH_KEY }}
 
-      - name: Add server to known hosts
+      # SHIPNODE_KNOWN_HOSTS must cover every server this deploy reaches. Build
+      # it with:  ssh-keyscan ${knownHostsScan}
+      - name: Add servers to known hosts
         run: |
           mkdir -p ~/.ssh
           echo "\${{ secrets.SHIPNODE_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
-
+${knownHostsCheck}
       - name: Install Shipnode
         run: npm install -g ${packageSpec}
 ${envSyncSteps}
@@ -265,6 +300,7 @@ export async function cmdCiGithub(
   let workflowOptions = options;
   let envFile: string | undefined;
   let nodeVersion = '20';
+  let hosts: string[] = [];
   if (options.syncEnv) {
     const target = await resolveWorkflowEnvironmentTarget(canonicalCwd, options);
     if (target.isErr()) {
@@ -275,6 +311,7 @@ export async function cmdCiGithub(
     workflowOptions = { ...options, app: target.value.appName };
     envFile = target.value.envFile;
     nodeVersion = target.value.nodeVersion;
+    hosts = target.value.hosts;
   } else {
     const configFile = resolve(canonicalCwd, options.config ?? 'shipnode.config.ts');
     if (await pathExists(configFile)) {
@@ -288,6 +325,7 @@ export async function cmdCiGithub(
         return;
       }
       nodeVersion = configResult.value.nodeVersion === 'lts' ? '24' : configResult.value.nodeVersion;
+      hosts = [...new Set(Object.values(configResult.value.servers).map((server) => server.host))];
     }
   }
 
@@ -312,6 +350,7 @@ export async function cmdCiGithub(
     workflowOptions,
     envFile,
     nodeVersion,
+    hosts,
   );
   await writeFile(workflowPath, content, 'utf8');
 
@@ -319,9 +358,21 @@ export async function cmdCiGithub(
   ui.heading('Required GitHub Secrets');
   console.log('  Repository Actions secrets:');
   console.log('');
-  console.log('  SHIPNODE_SSH_KEY        Your SSH private key for server access');
-  console.log('  SHIPNODE_KNOWN_HOSTS    Known hosts entry for your server');
+  const plural = hosts.length > 1;
+  console.log(
+    plural
+      ? `  SHIPNODE_SSH_KEY        Private key(s) for all ${hosts.length} servers, one after another`
+      : '  SHIPNODE_SSH_KEY        Your SSH private key for server access',
+  );
+  console.log(
+    plural
+      ? `  SHIPNODE_KNOWN_HOSTS    Known hosts entries for all ${hosts.length} servers`
+      : '  SHIPNODE_KNOWN_HOSTS    Known hosts entry for your server',
+  );
   console.log('                          (capture outside CI and verify the host fingerprint)');
+  if (hosts.length > 0) {
+    console.log(`                          ssh-keyscan ${hosts.join(' ')}`);
+  }
   if (workflowOptions.syncEnv && workflowOptions.app) {
     const environment = workflowOptions.environment ?? 'production';
     const secretName = `SHIPNODE_ENV_${githubSecretSegment(environment)}_${githubSecretSegment(workflowOptions.app)}`;
