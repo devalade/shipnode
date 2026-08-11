@@ -75,7 +75,7 @@ program
   .command('deploy')
   .description('Deploy your application')
   .option('--dry-run', 'Show what would be deployed without making changes')
-  .option('--skip-build', 'Skip the build step')
+  .option('--skip-build', 'Skip the remote build step')
   .option('--app <name>', 'Deploy a specific app (default: all apps)')
   .option('--watch', 'Deploy once, then sync and reload on every local file change')
   .option('--build <where>', 'Watch mode: where each cycle builds — remote, local, or none')
