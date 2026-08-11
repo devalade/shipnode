@@ -204,12 +204,12 @@ function generateWorkflow(
       return `
       - name: Materialize application environment
         env:
-          SHIPNODE_ENV_FILE: \${{ secrets.${secretName} }}
+          SHIPNODE_DEPLOY_SECRET_FILE: \${{ secrets.${secretName} }}
         run: |
-          [ -n "$SHIPNODE_ENV_FILE" ] || { echo "Missing GitHub Environment secret: ${secretName}" >&2; exit 1; }
+          [ -n "$SHIPNODE_DEPLOY_SECRET_FILE" ] || { echo "Missing GitHub Environment secret: ${secretName}" >&2; exit 1; }
           umask 077
           mkdir -p "$(dirname ${quotedEnvFile})"
-          printf '%s' "$SHIPNODE_ENV_FILE" > ${quotedEnvFile}${stepWorkingDirectory}
+          printf '%s' "$SHIPNODE_DEPLOY_SECRET_FILE" > ${quotedEnvFile}${stepWorkingDirectory}
 
       - name: Upload application environment
         run: shipnode env${commandOptions ? ` ${commandOptions}` : ''} --file ${quotedEnvFile} --no-reload${stepWorkingDirectory}
