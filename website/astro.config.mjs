@@ -48,6 +48,7 @@ export default defineConfig({
           label: 'Operations',
           items: [
             { label: 'CI/CD', slug: 'docs/ci-cd' },
+            { label: 'Load balancer', slug: 'docs/load-balancer' },
             { label: 'Backups', slug: 'docs/backups' },
             { label: 'Cloudflare Tunnel', slug: 'docs/cloudflare' },
             { label: 'Server hardening', slug: 'docs/hardening' },

@@ -156,19 +156,24 @@ describe('setup target dependency selection', () => {
 
   it('installs Caddy for a fleet replica, which has no domain', async () => {
     // A fleet replica deliberately has no domain — replicas claiming one name
-    // would race Let's Encrypt — but it still needs Caddy for the readiness
-    // endpoint the load balancer health-checks.
+    // would race Let's Encrypt — but it still needs Caddy to serve the app for
+    // the load balancer, which health-checks the replica directly.
     const executor = new FakeRemoteExecutor();
     const config = baseConfig({
+      servers: {
+        '1.2.3.4': { host: '1.2.3.4', user: 'deploy', port: 22 },
+        '1.2.3.5': { host: '1.2.3.5', user: 'deploy', port: 22 },
+      },
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
       apps: [{
         name: 'api',
         appType: 'backend',
+        on: ['1.2.3.4', '1.2.3.5'],
         pm2: { apps: [{ name: 'api', port: 3000 }] },
         healthCheck: { enabled: true, path: '/health', timeout: 30, retries: 3, startupDelay: 3 },
         envFile: '.env',
         keepReleases: 5,
         zeroDowntime: false,
-        fleet: { batch: 1, port: 80, drainWait: 8, readyPath: '/_shipnode/ready' },
       }],
     });
 

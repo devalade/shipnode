@@ -94,7 +94,7 @@ describe('deploy command dry run', () => {
       ...config,
       servers: {
         app: { host: '1.2.3.4', user: 'deploy', port: 22 },
-        data: { host: '2.3.4.5', user: 'deploy', port: 22, privateHost: '10.0.0.20' },
+        data: { host: '2.3.4.5', user: 'deploy', port: 22 },
       },
       apps: config.apps.map((app) => ({ ...app, on: 'app' })),
       accessories: { redis: { ...redis, on: 'data' } },
@@ -102,7 +102,7 @@ describe('deploy command dry run', () => {
 
     const output = vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '';
     expect(output).toContain('Depends on     redis');
-    expect(output).toContain('SHIPNODE_REDIS_HOST=10.0.0.20');
+    expect(output).toContain('SHIPNODE_REDIS_HOST=2.3.4.5');
   });
 
   it('still warns when the config has been scoped to one app', () => {
@@ -116,7 +116,7 @@ describe('deploy command dry run', () => {
       ...config,
       servers: {
         app: { host: '1.2.3.4', user: 'deploy', port: 22 },
-        data: { host: '2.3.4.5', user: 'deploy', port: 22, privateHost: '10.0.0.20' },
+        data: { host: '2.3.4.5', user: 'deploy', port: 22 },
       },
       apps: config.apps.map((a) => ({ ...a, on: 'app' })),
       accessories: { redis: { ...redis, on: 'data' } },
@@ -129,12 +129,12 @@ describe('deploy command dry run', () => {
 
     printDryRun(scoped, false, workspace);
 
-    expect(vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '').toContain('SHIPNODE_REDIS_HOST=10.0.0.20');
+    expect(vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '').toContain('SHIPNODE_REDIS_HOST=2.3.4.5');
   });
 
-  it('says so when there is no private address to hand the app', () => {
-    // localhost is the shipnode default and points at nothing from another box,
-    // so silence here would mean a connection failure at runtime.
+  it('tells the reader the variable the app is handed for a cross-server dependency', () => {
+    // The preview is where a mis-scoped dependency shows up before it becomes a
+    // runtime connection failure.
     const redis = config.accessories?.redis;
     if (!redis) return;
 
@@ -149,15 +149,15 @@ describe('deploy command dry run', () => {
     }, false);
 
     const output = vi.mocked(ui.note).mock.calls.at(-1)?.[0] ?? '';
-    expect(output).toContain('data has no privateHost');
+    expect(output).toContain('SHIPNODE_REDIS_HOST=2.3.4.5 is set for api');
   });
 
-  it('describes a fleet app once, with the roll and the private site', () => {
+  it('describes a fleet app once, with the roll and the replica site', () => {
     const fleetConfig: ShipnodeConfig = {
       ...config,
       servers: {
-        'web-a': { host: '1.1.1.1', user: 'deploy', port: 22, privateHost: '10.0.0.11' },
-        'web-b': { host: '1.1.1.2', user: 'deploy', port: 22, privateHost: '10.0.0.12' },
+        'web-a': { host: '1.1.1.1', user: 'deploy', port: 22 },
+        'web-b': { host: '1.1.1.2', user: 'deploy', port: 22 },
       },
       accessories: {},
       apps: config.apps.map((app) => ({
@@ -165,7 +165,6 @@ describe('deploy command dry run', () => {
         on: ['web-a', 'web-b'],
         domain: 'api.example.com',
         dependsOn: undefined,
-        fleet: { batch: 1, port: 80, drainWait: 20, readyPath: '/_shipnode/ready' },
       })),
     };
 
@@ -175,15 +174,14 @@ describe('deploy command dry run', () => {
     // Once, not once per replica — the app appears under every server it runs on.
     expect(output.match(/App: api/g)).toHaveLength(1);
     expect(output).toContain('Servers        web-a, web-b');
-    expect(output).toContain('Rolling        1 at a time, 20s drain');
-    expect(output).toContain('Drain one replica (/_shipnode/ready → 503)');
-    expect(output).toContain('Wait 20s for the load balancer to notice');
-    expect(output).toContain('Undrain (/_shipnode/ready → 200)');
+    expect(output).toContain('Rolling        one replica at a time, blue-green per replica');
+    expect(output).toContain('Roll replica 1 of 2');
+    expect(output).toContain('Repeat for the next replica');
 
     // A replica answers to the domain so forwarded traffic reaches it, but over
     // plain HTTP — claiming it for TLS would make every replica race the others
     // for the same certificate.
-    expect(output).toContain('http://10.0.0.11:80, http://api.example.com:80 {');
+    expect(output).toContain('http://:80, http://api.example.com:80 {');
     expect(output).not.toMatch(/(?<!http:\/\/)api\.example\.com \{/);
   });
 
@@ -191,8 +189,8 @@ describe('deploy command dry run', () => {
     const fleetConfig: ShipnodeConfig = {
       ...config,
       servers: {
-        'web-a': { host: '1.1.1.1', user: 'deploy', port: 22, privateHost: '10.0.0.11' },
-        'web-b': { host: '1.1.1.2', user: 'deploy', port: 22, privateHost: '10.0.0.12' },
+        'web-a': { host: '1.1.1.1', user: 'deploy', port: 22 },
+        'web-b': { host: '1.1.1.2', user: 'deploy', port: 22 },
       },
       accessories: {},
       apps: config.apps.map((app) => ({
@@ -210,7 +208,6 @@ describe('deploy command dry run', () => {
           beforeFleet: async () => {},
           afterFleet: async () => {},
         },
-        fleet: { batch: 1, port: 80, drainWait: 20, readyPath: '/_shipnode/ready' },
       })),
     };
 

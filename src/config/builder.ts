@@ -2,6 +2,7 @@ import type {
   ShipnodeConfig,
   ShipnodeApp,
   SshConfig,
+  ServersInput,
   AccessoryConfig,
   RegistryConfig,
   Pm2App,
@@ -18,8 +19,7 @@ import { assembleConfig } from './assembly.js';
 
 type BuilderState = {
   ssh?: SshConfig;
-  servers?: Record<string, SshConfig>;
-  groups?: Record<string, string[]>;
+  servers?: ServersInput | Record<string, SshConfig>;
   remotePath?: string;
   nodeVersion?: string;
   pkgManager?: PkgManager;
@@ -51,10 +51,8 @@ type BuilderState = {
   apps?: Partial<ShipnodeApp>[];
 };
 
-type AppBuilderState = Omit<Partial<ShipnodeApp>, 'pm2' | 'fleet'> & {
+type AppBuilderState = Omit<Partial<ShipnodeApp>, 'pm2'> & {
   pm2?: { apps: Pm2App[] };
-  // Partial: the schema fills in batch/port/drainWait/readyPath.
-  fleet?: Partial<ShipnodeApp['fleet']>;
 };
 
 export type WorkerOptions = Omit<Pm2App, 'port'>;
@@ -83,27 +81,20 @@ export class ShipnodeBuilder {
     return this;
   }
 
-  servers(servers: Record<string, SshConfig>): this {
-    this.config.servers = servers;
-    return this;
-  }
-
   /**
-   * Name a set of servers, usable anywhere a single server name is.
-   * `.group('web', ['web-a', 'web-b'])` then `.on('web')` runs an app on both.
+   * Every server shipnode touches, in one object. `user` is the SSH user for
+   * every host without its own `user@` prefix (default `root`); `hosts` is one
+   * host string, or a list of them. The host string is the server's identity
+   * everywhere else — `on`, `--on`, accessory `on`, status output — and the
+   * order of `hosts` is deployment order.
    */
-  group(name: string, servers: string[]): this {
-    this.config.groups = { ...this.config.groups, [name]: servers };
+  servers(input: ServersInput | Record<string, SshConfig>): this {
+    this.config.servers = input;
     return this;
   }
 
-  groups(groups: Record<string, string[]>): this {
-    this.config.groups = { ...this.config.groups, ...groups };
-    return this;
-  }
-
-  on(target: string | string[]): this {
-    this.config.on = target;
+  on(...targets: Array<string | string[]>): this {
+    this.config.on = targets.flat();
     return this;
   }
 
@@ -373,23 +364,9 @@ export class ShipnodeAppBuilder {
     return this;
   }
 
-  /** A server name, a group name, or a list of either. More than one is a fleet. */
-  on(target: string | string[]): this {
-    this.state.on = target;
-    return this;
-  }
-
-  /**
-   * Rolling-deploy settings. Implied for any app that resolves to more than one
-   * server; declare it explicitly to put a single-server app behind the same
-   * drain contract, or to tune the roll.
-   *
-   * `drainWait` (seconds) must match your load balancer's health check — it is
-   * how long shipnode waits after flipping the readiness endpoint to 503 before
-   * it touches the app. Too low and in-flight requests are dropped.
-   */
-  fleet(opts: Partial<ShipnodeApp['fleet']> = {}): this {
-    this.state.fleet = { ...this.state.fleet, ...opts };
+  /** A host, or a list of hosts. More than one is a fleet. */
+  on(...targets: Array<string | string[]>): this {
+    this.state.on = targets.flat();
     return this;
   }
 

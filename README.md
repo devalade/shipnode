@@ -216,27 +216,24 @@ export default shipnode
 
 ### Horizontal scaling (fleets)
 
-Name several servers in one `on` target and the app becomes a **fleet**: the same app on N servers, deployed by rolling through them a batch at a time.
+Give an app more than one host in its `on` target and it becomes a **fleet**: the same app on N servers, deployed by rolling through the replicas one at a time. Blue-green runs *within* each replica, so a replica keeps serving until the new release passes its health check — nothing is taken out of rotation to deploy it.
 
 ```ts
 import { shipnode, app } from '@devalade/shipnode';
 
 export default shipnode
   .servers({
-    'web-a': { host: '1.2.3.4', user: 'deploy', privateHost: '10.0.0.11' },
-    'web-b': { host: '1.2.3.5', user: 'deploy', privateHost: '10.0.0.12' },
-    'db-1':  { host: '1.2.3.6', user: 'deploy', privateHost: '10.0.0.20' },
+    user: 'deploy',
+    hosts: ['1.2.3.4', '1.2.3.5', '1.2.3.6'],
   })
-  .group('web', ['web-a', 'web-b'])
   .deployTo('/var/www/example')
   .accessories({
-    postgres: { image: 'postgres:16', on: 'db-1', port: '0.0.0.0:5432:5432' },
+    postgres: { image: 'postgres:16', on: '1.2.3.6', port: '0.0.0.0:5432:5432' },
   })
   .apps([
-    app().backend().name('api').on('web').port(3333)
+    app().backend().name('api').on('1.2.3.4', '1.2.3.5').port(3333)
       .domain('api.example.com')
       .dependsOn(['postgres'])
-      .fleet({ batch: 1, drainWait: 30 })
       .worker({ name: 'mailer', command: 'node dist/worker.js' })
       .worker({ name: 'cron', command: 'node dist/cron.js', placement: 'primary' })
       .beforeFleet(async ({ exec }) => { await exec('pnpm db:apply'); }),
@@ -244,26 +241,22 @@ export default shipnode
   .build();
 ```
 
-`shipnode deploy` now rolls: drain a replica → wait `drainWait` → deploy it → health-check → put it back → next.
+`shipnode deploy` now rolls: deploy the first replica (blue-green, health-checked) → deploy the next → … The host string is the server's identity everywhere — `on`, `--on`, accessory `on`, status output — and the order of `hosts` is the roll order.
 
-**You bring the load balancer.** Shipnode never talks to it. Point your Hetzner / DigitalOcean / ALB / nginx load balancer at each replica's `privateHost:80` and set its health check to **`/_shipnode/ready`**. That endpoint answers `200` normally and `503` while shipnode is deploying that replica, which is the entire integration — no provider APIs, no credentials.
+**You bring the load balancer.** Shipnode never talks to it. Point your Hetzner / DigitalOcean / ALB / nginx load balancer at each replica on port 80 and set its health check to your app's own health path (e.g. `/health`). No provider APIs, no credentials, and no shipnode-specific settings on the load balancer — the full setup and verification walkthrough is in the [load balancer guide](https://shipnode.dev/docs/load-balancer).
 
-> **`drainWait` is the setting that matters.** Shipnode drains instantly; your load balancer only notices on its next health check, after its failure threshold. Shipnode cannot see either value, so you declare how long to wait. Set it below your LB's *interval × unhealthy-threshold* and the roll will drop requests. Verify it once by `curl`ing the LB in a loop during a deploy and confirming zero non-200s.
+Blue-green is enabled automatically for fleet backends: a replica boots the new release on its idle colour, health-checks it, and only then does Caddy's upstream flip — so a bad release never reaches your users and the fleet never skips a beat mid-roll.
 
 Replicas serve plain HTTP and never request a certificate — five replicas all asking for the same name would race Let's Encrypt. **TLS terminates at your load balancer.**
 
-> **Give a fleet app a `.domain()`.** Your load balancer forwards the client's `Host` header, so each replica has to recognise it. Shipnode configures the replica to answer on both its `privateHost` (for the LB's health check) and the domain (for forwarded traffic) — over plain HTTP, so no replica ever requests a certificate. Without a domain, only requests addressed to the private IP reach your app.
+> **Give a fleet app a `.domain()`.** Your load balancer forwards the client's `Host` header, so each replica has to recognise it. Shipnode configures the replica to answer on every interface on port 80 (which is what the LB's health check dials) and on the domain (for forwarded traffic) — over plain HTTP, so no replica ever requests a certificate.
 
 Each replica installs and builds, so a three-replica roll takes roughly three times a single deploy. `shipnode ci github` sizes the workflow timeout accordingly.
 
 | Setting | Default | Description |
 |---|---|---|
-| `.group(name, servers)` | — | Name a set of servers so `on` can target them all at once |
-| `privateHost` | — | The address the LB and other servers reach this box on. Required for every fleet member |
-| `.fleet({ batch })` | `1` | Replicas taken out of rotation at once |
-| `.fleet({ drainWait })` | `30` | Seconds to wait after draining, before touching the app |
-| `.fleet({ port })` | `80` | Port a replica serves on for the load balancer |
-| `.fleet({ readyPath })` | `/_shipnode/ready` | Readiness endpoint the LB health-checks |
+| `.servers({ user, hosts })` | user `root` | Every server: `user` is the SSH user for each host without its own `user@` prefix; `hosts` is one string or a list |
+| `on` | — | The hosts an app runs on. More than one = fleet |
 
 #### Hooks that must run once
 
@@ -271,11 +264,11 @@ Each replica installs and builds, so a three-replica roll takes roughly three ti
 
 #### Workers that must run once
 
-`.worker({ placement: 'primary' })` pins a process to the first server in the fleet. Use it for crons and schedulers, where N copies means every job fires N times. Queue workers competing for jobs want the default (`'all'`).
+`.worker({ placement: 'primary' })` pins a process to the first host in the fleet. Use it for crons and schedulers, where N copies means every job fires N times. Queue workers competing for jobs want the default (`'all'`).
 
 #### Talking to accessories on another server
 
-Each app is given `SHIPNODE_<ACCESSORY>_HOST` for every accessory it `dependsOn` — `127.0.0.1` when co-located, the accessory server's `privateHost` when not. Read it in your connection string and moving Postgres to its own box becomes a config change:
+Each app is given `SHIPNODE_<ACCESSORY>_HOST` for every accessory it `dependsOn` — `127.0.0.1` when co-located, the accessory server's host when not. Read it in your connection string and moving Postgres to its own box becomes a config change:
 
 ```ts
 const url = `postgres://app:${pw}@${process.env.SHIPNODE_POSTGRES_HOST}:5432/app`;
@@ -289,16 +282,14 @@ Bind the accessory somewhere reachable (`'0.0.0.0:5432:5432'`, not `'127.0.0.1:5
 
 ```bash
 shipnode deploy                      # roll every replica
-shipnode deploy --on web-a           # deploy one replica
-shipnode status                      # per-replica release + rotation, flags skew
+shipnode deploy --on 1.2.3.4         # deploy one replica
+shipnode status                      # per-replica release, flags skew
 shipnode rollback --app api          # roll the rollback across the fleet
-shipnode drain   --app api --on web-a  # take one replica out of rotation
-shipnode undrain --app api --on web-a  # put it back
 ```
 
-`shipnode status` is what tells you a roll died halfway: it compares replicas and reports which ones are on which release, and which are sitting out of rotation.
+`shipnode status` is what tells you a roll died halfway: it compares replicas and reports which ones are on which release.
 
-See [ADR-0007](docs/adr/0007-fleet-replication.md) for the design and its limits.
+See [ADR-0007](docs/adr/0007-fleet-replication.md) and [ADR-0008](docs/adr/0008-reactive-health.md) for the design and its limits.
 
 ### All options
 
@@ -351,9 +342,7 @@ shipnode status                # PM2 status; for a fleet, per-replica release + 
 ```bash
 shipnode rollback              # Roll back to the previous release (rolls across a fleet)
 shipnode rollback --steps 3    # Roll back 3 releases
-shipnode rollback --on web-a   # Roll back one replica
-shipnode drain --app api --on web-a    # Take a replica out of rotation
-shipnode undrain --app api --on web-a  # Put it back
+shipnode rollback --on 1.2.3.4 # Roll back one replica
 shipnode migrate               # Migrate existing deploy to zero-downtime structure
 ```
 

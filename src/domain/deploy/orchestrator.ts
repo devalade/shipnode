@@ -209,8 +209,7 @@ export class DeployOrchestrator {
 
       await this.runHook(app, 'postDeploy', releasePath);
       // The roll reached its final replica, so every server is now on this
-      // release (this one is still drained). Safe to drop what the old code
-      // needed — the contract half.
+      // release. Safe to drop what the old code needed — the contract half.
       if (fleetRole.last) await this.runHook(app, 'afterFleet', releasePath);
       await releases.cleanupOldReleases();
     } catch (error) {

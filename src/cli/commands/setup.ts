@@ -13,6 +13,7 @@ import {
   buildRedisConfigureCommand,
   buildRedisProbeCommand,
 } from '../../infrastructure/provisioning/commands.js';
+import { isFleet } from '../../domain/servers.js';
 import { loadUsersYml, saveUsersYml, syncUsers, upsertUser } from './user.js';
 import { Pm2StartupError } from '../../shared/result-errors.js';
 
@@ -114,13 +115,13 @@ function shellQuote(value: string): string {
  *
  * A domain is the obvious case. A fleet replica is the non-obvious one: it
  * deliberately has *no* domain — five replicas claiming one name would race
- * Let's Encrypt — but it still needs Caddy to serve the `/_shipnode/ready`
- * endpoint the load balancer health-checks, and to reverse-proxy the app. Gating
- * on `domain` alone left fleet replicas without Caddy, and the first deploy died
- * writing its site file into a directory that was never created.
+ * Let's Encrypt — but it still needs Caddy to serve the app for the load
+ * balancer, which health-checks the replica directly. Gating on `domain` alone
+ * left fleet replicas without Caddy, and the first deploy died writing its site
+ * file into a directory that was never created.
  */
 function needsCaddy(config: ShipnodeConfig): boolean {
-  return config.apps.some((app) => app.domain !== undefined || app.fleet !== undefined);
+  return config.apps.some((app) => app.domain !== undefined || isFleet(config, app));
 }
 
 export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, ownerUser: string | null) {

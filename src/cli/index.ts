@@ -12,7 +12,6 @@ import { cmdStatus } from './commands/status.js';
 import { cmdRollback } from './commands/rollback.js';
 import { cmdEnv } from './commands/env.js';
 import { cmdUnlock } from './commands/unlock.js';
-import { cmdDrain, cmdUndrain } from './commands/drain.js';
 import { cmdRun } from './commands/run.js';
 import { cmdHarden } from './commands/harden.js';
 import { cmdMigrate } from './commands/migrate.js';
@@ -196,22 +195,6 @@ program
   .option('--yes', 'Clear without confirmation (for CI and scripts)')
   .option('--on <server>', 'Target a specific server')
   .action((opts) => cmdUnlock(process.cwd(), opts));
-
-program
-  .command('drain')
-  .description('Take a replica out of the load balancer rotation')
-  .option('--app <name>', 'Target a specific app')
-  .option('--on <server>', 'Target a specific server')
-  .option('--config <path>', 'Use a specific config file')
-  .action((opts) => cmdDrain(process.cwd(), opts));
-
-program
-  .command('undrain')
-  .description('Return a replica to the load balancer rotation')
-  .option('--app <name>', 'Target a specific app')
-  .option('--on <server>', 'Target a specific server')
-  .option('--config <path>', 'Use a specific config file')
-  .action((opts) => cmdUndrain(process.cwd(), opts));
 
 // ── CI/CD ─────────────────────────────────────────────────────────
 

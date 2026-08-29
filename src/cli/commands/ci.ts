@@ -139,7 +139,7 @@ async function resolveWorkflowEnvironmentTarget(
 
   // Every replica, not just config.ssh: a fleet deploy connects to each in
   // turn, and a host missing from known_hosts fails mid-roll with replicas
-  // already drained.
+  // already updated.
   const hosts = [...new Set(
     resolveServerNames(configResult.value, app.on).flatMap((name) => {
       const server = configResult.value.servers[name];
@@ -179,13 +179,13 @@ function generateWorkflow(
 
   // A roll installs and builds on every replica in turn, inside one job. Thirty
   // minutes is comfortable for one server and tight for four, and a timeout
-  // mid-roll leaves the fleet on mixed versions with a replica drained.
+  // mid-roll leaves the fleet on mixed versions.
   const deployTimeoutMinutes = 30 * Math.max(1, hosts.length);
 
   const knownHostsScan = hosts.length > 0 ? hosts.join(' ') : '<your-server>';
   // Fail before the roll rather than during it. A host missing from
   // known_hosts otherwise surfaces as an SSH failure on replica three, with
-  // replicas one and two already updated and replica three drained.
+  // replicas one and two already updated.
   const knownHostsCheck = hosts.length < 2 ? '' : `
       - name: Verify every replica is a known host
         run: |

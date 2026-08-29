@@ -165,14 +165,14 @@ describe('assembleConfig', () => {
     expect(config.apps[0].appType).toBe('backend');
   });
 
-  it('normalizes legacy ssh to the default server target', () => {
+  it('keys a workspace declared only with .ssh() by its host', () => {
     const config = assembleConfig({
       ssh: { host: '1.2.3.4', user: 'deploy' },
       remotePath: '/var/www/app',
     });
 
-    expect(config.servers.default).toEqual(config.ssh);
-    expect(config.servers.default.host).toBe('1.2.3.4');
+    expect(config.servers['1.2.3.4']).toEqual(config.ssh);
+    expect(config.ssh?.host).toBe('1.2.3.4');
   });
 
   it('accepts named server targets for apps and accessories', () => {

@@ -8,9 +8,8 @@ import { ui } from '../ui.js';
 import type { AccessoryConfig, ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
 import { accessoryMounts } from '../../services/accessory.service.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
-import { configForAppResult, configForServer, getServerTargets, resolveServerNames, resolveSingleServerNameResult } from '../../domain/servers.js';
+import { configForAppResult, configForServer, FLEET_PORT, getServerTargets, isFleet, resolveServerNames, resolveSingleServerNameResult } from '../../domain/servers.js';
 import { generateBackendCaddyfile, generateFleetCaddyfile, generateFrontendCaddyfile } from '../../services/caddy.service.js';
-import { appStateDir } from '../../domain/deploy/drain.js';
 import { type ServerTargetError } from '../../shared/result-errors.js';
 import { runDeployWatch } from './deploy-watch.js';
 import type { BuildLocation } from '../../domain/deploy/hot-sync.js';
@@ -77,8 +76,8 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
   // accessories, so cross-server dependencies are invisible from inside it.
   // Dependency warnings have to be resolved against the whole workspace.
   const workspaceConfig = config;
-  const fleetApps = targetConfig.apps.filter((candidate) => candidate.fleet);
-  const soloApps = targetConfig.apps.filter((candidate) => !candidate.fleet);
+  const fleetApps = targetConfig.apps.filter((candidate) => isFleet(targetConfig, candidate));
+  const soloApps = targetConfig.apps.filter((candidate) => !isFleet(targetConfig, candidate));
 
   // Naming a fleet app leaves the fan-out with nothing to do — rolling it is
   // the whole job, and visiting other servers would deploy things not asked for.
@@ -91,7 +90,7 @@ export async function cmdDeploy(cwd: string, options: { dryRun?: boolean; skipBu
   if (fanOut) await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor, serverName }) => {
-      const serverApps = config.apps.filter((candidate) => !candidate.fleet);
+      const serverApps = config.apps.filter((candidate) => !isFleet(config, candidate));
       const app = options.app ? serverApps.find((candidate) => candidate.name === options.app) : undefined;
       const deployConfig = options.app
         ? { ...config, apps: app ? [app] : [] }
@@ -172,8 +171,6 @@ async function rollFleetApp(
   for (const warning of renderDependencyWarnings(config, app)) ui.warn(warning);
 
   const result = await rollFleet({
-    app,
-    fleet: app.fleet!,
     replicas,
     // One release id for the whole roll, so `status` can tell a converged fleet
     // from a half-rolled one.
@@ -181,7 +178,6 @@ async function rollFleetApp(
     // From the full list, not the narrowed one: `--on web-b` must not promote
     // web-b to primary and start a second copy of the scheduler alongside web-a's.
     primary: allReplicas[0],
-    remotePath: appConfig.remotePath,
     connect: async (serverName) => {
       const ssh = new SshConnection();
       await ssh.connect(configForServer(appConfig, serverName).ssh);
@@ -197,7 +193,7 @@ async function rollFleetApp(
 
   if (result.failed) {
     ui.error(
-      `${app.name}: ${result.failed.server} failed and is out of rotation. ` +
+      `${app.name}: ${result.failed.server} failed to deploy. ` +
       `${result.applied.length ? `${result.applied.join(', ')} now on ${result.releaseId}; ` : ''}` +
       `${result.skipped.length ? `${result.skipped.join(', ')} still on the previous release. ` : ''}` +
       `The fleet is running mixed versions.`,
@@ -214,14 +210,11 @@ async function rollFleetApp(
 
 function reportFleetEvent(app: ShipnodeApp, event: FleetEvent): void {
   switch (event.type) {
-    case 'drained':
-      ui.info(`${event.servers.join(', ')} draining — waiting ${event.waitSeconds}s for the load balancer`);
-      break;
     case 'applying':
       ui.step(`${app.name} → ${event.server}`);
       break;
-    case 'undrained':
-      ui.success(`${event.server} back in rotation`);
+    case 'applied':
+      ui.success(`${event.server} serving the new release`);
       break;
     case 'failed':
       ui.error(`${event.server}: ${event.message}`);
@@ -340,9 +333,8 @@ function renderAppPlan(
     ['Keep releases', String(app.keepReleases)],
   ];
 
-  if (app.fleet) {
-    serverRows.push(['Rolling', `${app.fleet.batch} at a time, ${app.fleet.drainWait}s drain`]);
-    serverRows.push(['Ready path', `:${app.fleet.port}${app.fleet.readyPath}`]);
+  if (replicas.length > 1) {
+    serverRows.push(['Rolling', 'one replica at a time, blue-green per replica']);
   }
 
   if (app.appType === 'backend') {
@@ -385,12 +377,8 @@ function renderAppPlan(
   }
 
   const steps: string[] = [];
-  if (app.fleet) {
-    const batch = app.fleet.batch === 1 ? 'one replica' : `${app.fleet.batch} replicas`;
-    steps.push(
-      `Drain ${batch} (${app.fleet.readyPath} → 503)`,
-      `Wait ${app.fleet.drainWait}s for the load balancer to notice`,
-    );
+  if (replicas.length > 1) {
+    steps.push('Roll replica 1 of ' + replicas.length);
   }
   steps.push(
     'Acquire deploy lock',
@@ -407,8 +395,8 @@ function renderAppPlan(
   if (app.hooks?.postDeploy) steps.push('Run postDeploy hook');
   if (app.hooks?.afterFleet) steps.push('Run afterFleet hook (last replica only)');
   steps.push('Clean old releases', 'Release lock');
-  if (app.fleet) {
-    steps.push(`Undrain (${app.fleet.readyPath} → 200)`, 'Repeat for the next batch');
+  if (replicas.length > 1) {
+    steps.push('Repeat for the next replica');
   }
 
   const flowRows: [string, string][] = steps.map((step, i) => [`${i + 1}.`, step]);
@@ -460,15 +448,11 @@ function renderDependencyWarnings(config: ShipnodeConfig, app: ShipnodeApp): str
     const strangers = appServers.filter((server) => server !== accessoryServer);
     if (strangers.length === 0) continue;
 
-    const privateHost = config.servers[accessoryServer]?.privateHost;
+    const address = config.servers[accessoryServer]?.host ?? accessoryServer;
     warnings.push(
-      privateHost
-        ? `${name} runs on ${accessoryServer}; ${app.name} runs on ${strangers.join(', ')}. ` +
-          `${accessoryHostVar(name)}=${privateHost} is set for ${app.name} — make sure your ` +
-          `connection string reads it, and that ${accessoryServer} accepts the connection.`
-        : `${name} runs on ${accessoryServer}; ${app.name} runs on ${strangers.join(', ')}, ` +
-          `and ${accessoryServer} has no privateHost — shipnode has no address to hand ${app.name}. ` +
-          `Add privateHost to ${accessoryServer}, or set the host yourself in ${app.envFile}.`,
+      `${name} runs on ${accessoryServer}; ${app.name} runs on ${strangers.join(', ')}. ` +
+      `${accessoryHostVar(name)}=${address} is set for ${app.name} — make sure your ` +
+      `connection string reads it, and that ${accessoryServer} accepts the connection.`,
     );
   }
   return warnings;
@@ -478,17 +462,13 @@ function renderCaddyPreview(config: ShipnodeConfig, app: ShipnodeApp): string | 
   const servePath = `${config.remotePath}/${app.name}/current`;
   const web = app.pm2?.apps.find((pm2App) => pm2App.port !== undefined);
 
-  // A replica serves a private port and never claims the domain — showing the
+  // A replica serves a plain port and never claims the domain — showing the
   // public site here would preview a file shipnode is not going to write.
-  if (app.fleet) {
-    const [firstReplica] = resolveServerNames(config, app.on);
+  if (isFleet(config, app)) {
     return generateFleetCaddyfile(app, {
-      listen: app.fleet.port,
-      bind: firstReplica ? config.servers[firstReplica]?.privateHost : undefined,
+      listen: FLEET_PORT,
       upstream: web?.port,
       servePath: app.appType === 'frontend' ? servePath : undefined,
-      readyPath: app.fleet.readyPath,
-      stateDir: appStateDir(config.remotePath, app.name),
     });
   }
 

@@ -8,25 +8,68 @@ export const SshConfigSchema = z.object({
   host: z.string().refine(isValidIpOrHostname, 'Must be a valid IP address or hostname'),
   user: z.string().min(1, 'SSH user is required'),
   port: z.number().int().min(1).max(65535).default(22),
-  privateHost: z.string().refine(isValidIpOrHostname, 'Must be a valid IP address or hostname').optional(),
   identityFile: z.string().optional(),
   proxyMode: z.enum(['cloudflare']).optional(),
   proxyCommand: z.string().optional(),
 });
 
-/** Where an app runs: a server name, a group name, or a list of either. */
+/** Where an app runs: a host, or a list of hosts. */
 export const ServerTargetSchema = z.union([
   z.string().min(1),
   z.array(z.string().min(1)).min(1),
 ]);
 
-export const FleetConfigSchema = z.object({
-  batch: z.number().int().min(1).default(1),
-  port: z.number().int().min(1).max(65535).default(80),
-  // Seconds, matching healthCheck.timeout and startupDelay.
-  drainWait: z.number().int().min(0).default(30),
-  readyPath: z.string().startsWith('/', 'readyPath must start with /').default('/_shipnode/ready'),
-}).default({});
+/** One `.servers({ hosts: [...] })` entry: a host string, or a per-host override. */
+export const ServerHostEntrySchema = z.union([
+  z.string().min(1),
+  z.object({
+    host: z.string().refine(isValidIpOrHostname, 'Must be a valid IP address or hostname'),
+    user: z.string().min(1).optional(),
+    port: z.number().int().min(1).max(65535).optional(),
+    identityFile: z.string().optional(),
+    proxyMode: z.enum(['cloudflare']).optional(),
+    proxyCommand: z.string().optional(),
+  }),
+]);
+
+/**
+ * The `.servers()` input: who to connect as, and which boxes. `user` applies to
+ * every host without its own `user@` prefix; `hosts` is one entry or a list.
+ */
+export const ServersInputSchema = z.object({
+  user: z.string().min(1).optional(),
+  hosts: z.union([ServerHostEntrySchema, z.array(ServerHostEntrySchema).min(1)]),
+});
+
+/**
+ * Collapse the `.servers()` object into the canonical record keyed by host —
+ * the host string is the server's identity everywhere else (`on`, `--on`,
+ * accessory `on`, status output), and `hosts` order is deployment order.
+ * Input is already validated; this only reshapes it.
+ */
+function normalizeServersInput(
+  input: z.infer<typeof ServersInputSchema>,
+): Record<string, z.input<typeof SshConfigSchema>> {
+  const entries = Array.isArray(input.hosts) ? input.hosts : [input.hosts];
+  const record: Record<string, z.input<typeof SshConfigSchema>> = {};
+
+  for (const entry of entries) {
+    if (typeof entry === 'string') {
+      // `user@host` overrides the shared user; `@` cannot appear in a hostname,
+      // so the last one separates them.
+      const at = entry.lastIndexOf('@');
+      const hasUser = at > 0;
+      const host = hasUser ? entry.slice(at + 1) : entry;
+      const user = hasUser ? entry.slice(0, at) : input.user ?? 'root';
+      record[host] = { host, user };
+      continue;
+    }
+    const { host, user, ...rest } = entry;
+    record[host] = { ...rest, host, user: user ?? input.user ?? 'root' };
+  }
+
+  return record;
+}
 
 export const RegistryConfigSchema = z.object({
   server: z.string().min(1, 'Registry server is required'),
@@ -177,7 +220,6 @@ export const ShipnodeAppSchema = z.object({
   name: z.string().refine(isValidPm2Name, 'app name must be alphanumeric, dash, or underscore (max 64 chars)').default('app'),
   appType: z.enum(['backend', 'frontend']).default('backend'),
   on: ServerTargetSchema.optional(),
-  fleet: FleetConfigSchema.optional(),
   appRoot: z.string().optional(),
   domain: z.string().refine(isValidDomain, 'Must be a valid domain (no protocol)').optional(),
   caddy: z.object({
@@ -220,14 +262,7 @@ export const ShipnodeAppSchema = z.object({
     return webPort === undefined || cfg.altPort !== webPort;
   },
   { message: 'altPort must differ from the web app port (blue and green need distinct ports)', path: ['altPort'] },
-).transform((cfg) => ({
-  ...cfg,
-  zeroDowntime: cfg.zeroDowntime ?? (
-      cfg.appType === 'backend' &&
-      cfg.domain !== undefined &&
-      (cfg.pm2?.apps.some((app) => app.port !== undefined) ?? false)
-    ),
-}));
+);
 
 // A z.preprocess wrapper synthesizes `apps[0]` from the legacy top-level fields when
 // the input doesn't carry `apps`. This lets every 2.x config (including the existing
@@ -236,8 +271,16 @@ export const ShipnodeAppSchema = z.object({
 const ShipnodeConfigBaseSchema = z.object({
   // workspace-level
   ssh: SshConfigSchema.optional(),
-  servers: z.record(z.string().min(1), SshConfigSchema).optional(),
-  groups: z.record(z.string().min(1), z.array(z.string().min(1)).min(1, 'a group must contain at least one server')).optional(),
+  servers: z.preprocess(
+    // The `.servers({ user, hosts })` object collapses to the canonical record
+    // keyed by host; the legacy record form (keyed however the user named them)
+    // passes through untouched.
+    (input: unknown) =>
+      typeof input === 'object' && input !== null && !Array.isArray(input) && 'hosts' in input
+        ? normalizeServersInput(ServersInputSchema.parse(input))
+        : input,
+    z.record(z.string().min(1), SshConfigSchema).optional(),
+  ),
   remotePath: z.string().min(1, 'Remote path is required').default('/var/www/app'),
   nodeVersion: z.string().default('lts'),
   pkgManager: z.enum(['npm', 'yarn', 'pnpm', 'bun']).optional(),
@@ -273,31 +316,9 @@ const ShipnodeConfigBaseSchema = z.object({
     return;
   }
 
-  const groups = cfg.groups ?? {};
-  const groupNames = new Set(Object.keys(groups));
+  const source = { servers };
 
-  for (const [name, members] of Object.entries(groups)) {
-    if (serverNames.has(name)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Group '${name}' collides with a server of the same name — targets would be ambiguous`,
-        path: ['groups', name],
-      });
-    }
-    for (const member of members) {
-      if (!serverNames.has(member)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Group '${name}' references unknown server '${member}'`,
-          path: ['groups', name],
-        });
-      }
-    }
-  }
-
-  const source = { servers, groups: cfg.groups };
-
-  /** Expand a target, reporting anything that names neither a server nor a group. */
+  /** Expand a target, reporting anything that names no known host. */
   const validateTarget = (
     target: string | string[] | undefined,
     path: (string | number)[],
@@ -314,7 +335,7 @@ const ShipnodeConfigBaseSchema = z.object({
     }
 
     for (const entry of Array.isArray(target) ? target : [target]) {
-      if (serverNames.has(entry) || groupNames.has(entry)) continue;
+      if (serverNames.has(entry)) continue;
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `Unknown server target '${entry}'`,
@@ -344,22 +365,7 @@ const ShipnodeConfigBaseSchema = z.object({
   };
 
   cfg.apps.forEach((app, index) => {
-    const targets = validateTarget(app.on, ['apps', index, 'on']);
-
-    // A replicated app sits behind a load balancer that must reach each replica
-    // directly, and replicas talk to each other's accessories over the same
-    // network. Neither works off the public SSH host alone.
-    if (targets.length <= 1 && !app.fleet) return;
-    const missing = targets.filter((name) => !servers[name]?.privateHost);
-    if (missing.length > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          `App '${app.name}' runs on ${targets.length} servers, so the load balancer must be able ` +
-          `to reach each one. Add privateHost to: ${missing.join(', ')}`,
-        path: ['apps', index, 'on'],
-      });
-    }
+    validateTarget(app.on, ['apps', index, 'on']);
   });
 
   Object.entries(cfg.accessories ?? {}).forEach(([name, accessory]) => {
@@ -389,24 +395,22 @@ const ShipnodeConfigBaseSchema = z.object({
 
       const strangers = appServers.filter((server) => server !== host);
 
-      // A missing privateHost is only a warning (deploy and --dry-run raise it):
-      // the user may be supplying the address themselves in .env, and refusing
-      // to parse a config that works today would be overreach. A loopback bind
-      // is different — no connection string can reach it from another machine.
+      // Only a dependency the app cannot reach over loopback needs an address,
+      // and only then does the bind matter.
       if (isLoopbackOnly(accessory)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
             `Accessory '${name}' publishes only on loopback, so ${app.name} on ` +
             `${strangers.join(', ')} can never reach it across the network. ` +
-            `Bind it to ${servers[host]?.privateHost ?? host}'s private address instead of 127.0.0.1.`,
+            `Bind it to a reachable address on ${host} instead of 127.0.0.1.`,
           path: ['accessories', name, 'port'],
         });
       }
     }
   });
 }).transform((cfg) => {
-  const servers = cfg.servers ?? (cfg.ssh === undefined ? undefined : { default: cfg.ssh });
+  const servers = cfg.servers ?? (cfg.ssh === undefined ? undefined : { [cfg.ssh.host]: cfg.ssh });
   if (servers === undefined) throw new Error('Either ssh or servers must be configured');
 
   const firstServer = Object.values(servers)[0];
@@ -414,11 +418,7 @@ const ShipnodeConfigBaseSchema = z.object({
 
   const ssh = cfg.ssh ?? servers.default ?? firstServer;
 
-  // An app on more than one server is a fleet whether or not it said so, and a
-  // fleet has to be rolled rather than deployed everywhere at once. Fill in the
-  // rolling defaults here so nothing downstream has to ask "is this a fleet?"
-  // twice and get two answers.
-  const source = { servers, groups: cfg.groups };
+  const source = { servers };
 
   const apps = cfg.apps.map((app) => {
     const replicas = expandTarget(source, app.on);
@@ -429,8 +429,11 @@ const ShipnodeConfigBaseSchema = z.object({
     const hostEnv = accessoryHostEnv(app.dependsOn, replicas, (name) => {
       const accessory = cfg.accessories?.[name];
       if (!accessory) return undefined;
-      const [host] = expandTarget(source, accessory.on);
-      return host === undefined ? undefined : { server: host, privateHost: servers[host]?.privateHost };
+      const [server] = expandTarget(source, accessory.on);
+      if (server === undefined) return undefined;
+      // In the host-keyed record the key *is* the address; a legacy record
+      // carries the address in the value's `host` field.
+      return { server, address: servers[server]?.host ?? server };
     });
 
     const withEnv = Object.keys(hostEnv).length === 0 || !app.pm2
@@ -442,8 +445,20 @@ const ShipnodeConfigBaseSchema = z.object({
           pm2: { ...app.pm2, apps: app.pm2.apps.map((p) => ({ ...p, env: { ...hostEnv, ...p.env } })) },
         };
 
-    if (replicas.length <= 1 && !withEnv.fleet) return withEnv;
-    return { ...withEnv, fleet: withEnv.fleet ?? FleetConfigSchema.parse(undefined) };
+    // Blue-green is what makes a roll safe: a replica keeps serving the old
+    // colour until the new one passes health, and only then does traffic move —
+    // so nothing is restarted in place while it is serving. On a fleet that is
+    // not optional; the alternative is restarting the app under the load
+    // balancer. A single-server app keeps the opt-in (it needs a domain, since
+    // its Caddy site is the domain's).
+    const hasWebPort = withEnv.pm2?.apps.some((a) => a.port !== undefined) ?? false;
+    const zeroDowntime = withEnv.zeroDowntime ?? (
+      withEnv.appType === 'backend' &&
+      hasWebPort &&
+      (withEnv.domain !== undefined || replicas.length > 1)
+    );
+
+    return { ...withEnv, zeroDowntime };
   });
 
   return { ...cfg, ssh, servers, apps };

@@ -1,4 +1,11 @@
-import type { BlueGreenRetention, ShipnodeConfig, Pm2App, Pm2Config, ShipnodeApp } from '../shared/types.js';
+import type {
+  BlueGreenRetention,
+  ShipnodeConfig,
+  Pm2App,
+  Pm2Config,
+  ShipnodeApp,
+  ServersInput,
+} from '../shared/types.js';
 import { ShipnodeConfigSchema } from './schema.js';
 
 // Loose input shape: also accepts the pre-multi-process `pm2: { name, instances, maxMemory }`
@@ -12,8 +19,7 @@ type LegacyPm2Input = {
 
 type AssembleInput = {
   ssh?: ShipnodeConfig['ssh'];
-  servers?: ShipnodeConfig['servers'];
-  groups?: ShipnodeConfig['groups'];
+  servers?: ShipnodeConfig['servers'] | ServersInput;
   remotePath?: string;
   nodeVersion?: string;
   pkgManager?: ShipnodeConfig['pkgManager'];

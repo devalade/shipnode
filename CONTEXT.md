@@ -59,6 +59,15 @@ User-provided function that runs at a fixed point in the deployment lifecycle. `
 ### HealthCheck
 A remote curl-based check that verifies the backend application is responding after a deployment. Only runs for backend apps in zero-downtime mode.
 
+### Fleet
+An app whose `on` target resolves to more than one host. Deployed by rolling through the replicas one at a time; blue-green stays intra-replica, so the composition is blue-green within a replica, rolling across replicas. The app's domain terminates TLS at the load balancer the user provisions — shipnode configures nothing provider-specific.
+
+### Roll
+`rollFleet` — the sequential loop above `DeployOrchestrator`. The per-replica operation is a callback (`applyToReplica`), so a deploy and a rollback drive the same roll with the same ordering and partial-failure reporting. Resolves rather than throws when a replica fails: a partly-rolled fleet is a state for `status` to report, not an exception to unwind.
+
+### Servers
+The workspace's server declaration: `.servers({ user, hosts })`. The host string is the server's identity everywhere — `on`, `--on`, accessory `on`, status output — and `hosts` order is the roll order. `user` is the SSH user for hosts without their own `user@` prefix (default `root`).
+
 ### Pm2Config
 The process-supervision section of a `ShipnodeConfig`. Contains an `apps` list — one entry per long-running process PM2 should supervise (web server, workers, etc.). Backend-only; frontend apps don't have one.
 
@@ -76,5 +85,6 @@ Owns config-loading and SSH lifecycle for CLI commands. Each command is pure bus
 - **Config seam**: `assembleConfig` is the only entry point from raw config → trusted config.
 - **Remote seam**: `RemoteExecutor` is the only way services talk to the remote host.
 - **Deployment seam**: `DeployOrchestrator` + `DeploymentStrategy` split invariant sequence from app-specific behaviour.
+- **Fleet seam**: `rollFleet` sits above the orchestrator; the per-replica operation is injected, so deploy and rollback share ordering and partial-failure reporting. Fleet-ness is derived from the `on` target, not declared.
 - **Watch seam**: `ProjectWatcher` (local file events) and `HotSync` (remote patch + reload) are independent; the watch session owns the deploy lock, cycle serialisation, and reconnection.
 - **CLI seam**: `runRemoteCommand` / `runLocalCommand` separate connection ceremony from command logic.

@@ -31,43 +31,27 @@ export interface SshConfig {
   host: string;
   user: string;
   port: number;
-  /**
-   * The address other servers and the load balancer use to reach this box —
-   * typically a private-network IP. SSH still connects over `host`. Required
-   * for every server a fleet app runs on, since the LB has to reach each
-   * replica directly.
-   */
-  privateHost?: string;
   identityFile?: string;
   proxyMode?: 'cloudflare';
   proxyCommand?: string;
 }
 
 /**
- * How an app is rolled across the servers it runs on.
- *
- * shipnode does not manage the load balancer. It owns one thing — a readiness
- * endpoint that answers 200 normally and 503 while a replica is being
- * deployed — and relies on the LB's own health check to pull that replica out
- * of rotation and put it back.
+ * One entry of `.servers({ hosts: [...] })`. A bare string is the host, with
+ * the user coming from the servers object (`user@host` overrides it); the
+ * object form is the escape hatch for non-default ports and identities.
  */
-export interface FleetConfig {
-  /** Replicas updated at a time. 1 (the default) is the safest roll. */
-  batch: number;
-  /** Port replicas serve on. TLS terminates at the load balancer, not here. */
-  port: number;
-  /**
-   * Seconds to wait after flipping the readiness endpoint to 503 before
-   * touching the app.
-   *
-   * shipnode cannot know your LB's health-check interval or unhealthy
-   * threshold, so it cannot detect when traffic has actually stopped. This is
-   * the one number you must match to your LB: too low and the roll drops
-   * requests that were already in flight.
-   */
-  drainWait: number;
-  /** Path the load balancer's health check polls. */
-  readyPath: string;
+export type ServerHostEntry = string | Omit<SshConfig, 'user'> & { user?: string };
+
+/**
+ * The whole servers declaration: who to connect as, and which boxes. The host
+ * string is the server's identity everywhere else — `on`, `--on`, accessory
+ * `on`, status output — and declaration order is deployment order.
+ */
+export interface ServersInput {
+  /** SSH user for every host without its own `user@` prefix. Defaults to `root`. */
+  user?: string;
+  hosts: ServerHostEntry | ServerHostEntry[];
 }
 
 export interface Pm2App {
@@ -211,9 +195,9 @@ export interface HooksConfig {
   beforeFleet?: HookFn;
   /**
    * Runs **once per roll**, on the last replica, after its `postDeploy`. Every
-   * replica is on the new release by then (the last one is still drained), so
-   * this is the place for the contract half of an expand/contract migration, or
-   * for announcing the release. A roll that fails partway never reaches it.
+   * replica is on the new release by then, so this is the place for the
+   * contract half of an expand/contract migration, or for announcing the
+   * release. A roll that fails partway never reaches it.
    */
   afterFleet?: HookFn;
 }
@@ -227,16 +211,12 @@ export interface ShipnodeApp {
   name: string;
   appType: AppType;
   /**
-   * Where this app runs: a server name, a group name, or a list of either.
-   * Resolving to more than one server makes it a fleet — see {@link fleet}.
+   * Where this app runs: a host, or a list of hosts — the same strings the
+   * servers object is keyed by. Resolving to more than one host makes it a
+   * fleet: deployed by rolling through the replicas one at a time, blue-green
+   * per replica.
    */
   on?: string | string[];
-  /**
-   * Rolling-deploy settings. Populated by assembly whenever the app resolves to
-   * more than one server, or declared explicitly to put a single-server app
-   * behind the same drain contract (useful before scaling out).
-   */
-  fleet?: FleetConfig;
   appRoot?: string;
   domain?: string;
   caddy?: {
@@ -277,9 +257,8 @@ export interface ShipnodeApp {
 export interface ShipnodeConfig {
   // workspace-level
   ssh: SshConfig;
+  /** Every server, keyed by host — the same strings `on` and `--on` accept. */
   servers: Record<string, SshConfig>;
-  /** Named sets of servers, usable anywhere a single server name is. */
-  groups?: Record<string, string[]>;
   remotePath: string;
   nodeVersion: string;
   pkgManager?: PkgManager;

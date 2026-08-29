@@ -37,17 +37,17 @@ export default shipnode
   .build();
 ```
 
-## Named servers and accessories
+## Multiple servers and accessories
 
-Use `.ssh(...)` for a single server. It remains shorthand for the `default` target. Use `.servers(...)` when apps and Docker accessories should live on different hosts.
+Use `.ssh(...)` for a single server. Use `.servers({ user, hosts })` when apps and Docker accessories should live on different hosts — one object, a shared SSH user, and the list of hosts. The host string is each server's identity everywhere else.
 
 ```ts
 import { shipnode } from '@devalade/shipnode';
 
 export default shipnode
   .servers({
-    app: { host: '203.0.113.10', user: 'deploy' },
-    data: { host: '203.0.113.20', user: 'deploy' },
+    user: 'deploy',
+    hosts: ['203.0.113.10', '203.0.113.20'],
   })
   .deployTo('/var/www/api')
   .registry({
@@ -58,7 +58,7 @@ export default shipnode
   .accessories({
     redis: {
       image: 'redis:7',
-      on: 'data',
+      on: '203.0.113.20',
       port: '127.0.0.1:6379:6379',
       directories: ['api-redis:/data'],
       healthCheck: { command: 'redis-cli ping' },
@@ -68,7 +68,7 @@ export default shipnode
     shipnode.app()
       .name('api')
       .backend()
-      .on('app')
+      .on('203.0.113.10')
       .domain('api.example.com')
       .pm2('api')
       .port(3000)
@@ -79,7 +79,7 @@ export default shipnode
   .build();
 ```
 
-Targets are single-host in this version. Apps and accessories are not replicated, ShipNode does not provision a load balancer, and Docker Compose is not used.
+Targets are single-host in this version (one host per app or accessory — an app on *several* hosts is a fleet, see the [load balancer guide](/docs/load-balancer)). ShipNode does not provision a load balancer, and Docker Compose is not used.
 
 Accessory management commands:
 
@@ -101,9 +101,9 @@ Registry passwords are read from environment variables on the remote host. If `R
 |---|---|
 | `.backend()` / `.frontend()` | App type. Backend uses PM2; frontend is served as static files by Caddy. |
 | `.ssh({ host, user, port? })` | SSH target. Port defaults to 22. |
-| `.servers({ name: sshConfig })` | Named SSH targets for app/accessory placement. |
+| `.servers({ user, hosts })` | All servers: a shared SSH user and the list of hosts. |
 | `.deployTo(path)` | Absolute path on the server (e.g. `/var/www/api`). |
-| `.on(name)` | Assign an app to a named server target. |
+| `.on(...hosts)` | Assign an app to one or more hosts. More than one is a fleet. |
 | `.registry({ server, username, passwordEnv })` | Docker registry auth used by accessories. |
 | `.accessories({ name: config })` | Workspace-level Docker containers shared by apps. |
 | `.caddy({ append })` | Append raw Caddy directives inside the generated site block. |

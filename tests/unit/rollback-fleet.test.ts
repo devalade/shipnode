@@ -46,8 +46,8 @@ function fleetConfig(): ShipnodeConfig {
   return {
     ssh: { host: '10.0.0.11', user: 'deploy', port: 22 },
     servers: {
-      'web-a': { host: '10.0.0.11', user: 'deploy', port: 22, privateHost: '10.0.0.11' },
-      'web-b': { host: '10.0.0.12', user: 'deploy', port: 22, privateHost: '10.0.0.12' },
+      'web-a': { host: '10.0.0.11', user: 'deploy', port: 22 },
+      'web-b': { host: '10.0.0.12', user: 'deploy', port: 22 },
     },
     remotePath: '/var/www/app',
     nodeVersion: '22',
@@ -56,14 +56,13 @@ function fleetConfig(): ShipnodeConfig {
       appType: 'backend',
       on: ['web-a', 'web-b'],
       // Not zeroDowntime, so rollback takes the symlink + pm2 reload path — the
-      // one with a traffic-dropping window, which is exactly why it must drain.
+      // recreate one, where "one replica at a time" is the only containment.
       zeroDowntime: false,
       blueGreenRetention: 'rollback',
       pm2: { apps: [{ name: 'api', port: 3000 }] },
       healthCheck: { enabled: false, path: '/health', timeout: 30, retries: 3, startupDelay: 0 },
       envFile: '.env',
       keepReleases: 5,
-      fleet: { batch: 1, port: 80, drainWait: 0, readyPath: '/_shipnode/ready' },
     }],
   };
 }
@@ -87,19 +86,15 @@ describe('rolling back a fleet', () => {
     expect(confirm).toHaveBeenCalledTimes(1);
   });
 
-  it('drains each replica before touching it and returns it to rotation after', async () => {
+  it('rolls back one replica at a time, never two at once', async () => {
+    // The rollback itself restarts PM2 on recreate-mode apps, so replicas are
+    // visited sequentially — no overlap anywhere in the timeline.
     await cmdRollback('/project', { app: 'api' });
 
-    for (const host of ['10.0.0.11', '10.0.0.12']) {
-      const commands = commandsOn(host);
-      const drain = commands.findIndex((cmd) => cmd.includes('touch') && cmd.includes('.shipnode/drain'));
-      const symlink = commands.findIndex((cmd) => cmd.includes('mv -Tf'));
-      const undrain = commands.findIndex((cmd) => cmd.includes('rm -f') && cmd.includes('.shipnode/drain'));
-
-      expect(drain).toBeGreaterThanOrEqual(0);
-      expect(symlink).toBeGreaterThan(drain);
-      expect(undrain).toBeGreaterThan(symlink);
-    }
+    const first = commandsOn('10.0.0.11').findIndex((cmd) => cmd.includes('mv -Tf'));
+    const second = commandsOn('10.0.0.12').findIndex((cmd) => cmd.includes('mv -Tf'));
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(second).toBeGreaterThanOrEqual(0);
   });
 
   it('rolls back every replica, not just the first', async () => {

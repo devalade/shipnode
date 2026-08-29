@@ -1,7 +1,7 @@
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import { getDeploymentName, getPm2Name } from '../../domain/pm2/apps.js';
-import { isDrained } from '../../domain/deploy/drain.js';
+import { isFleet } from '../../domain/servers.js';
 import {
   assessConvergence,
   describeConvergence,
@@ -84,26 +84,16 @@ export async function cmdStatus(cwd: string, options: { config?: string; app?: s
           ui.warn('  No active release');
         }
 
-        let drained: boolean | null = null;
-        if (app.fleet) {
-          fleetApps.add(app.name);
-          drained = await isDrained(executor, config.remotePath, app.name);
-          if (drained) {
-            ui.warn(`  Rotation: draining (${app.fleet.readyPath} answers 503)`);
-          } else {
-            ui.success('  Rotation: in rotation');
-          }
-        }
-
         const entries = observed.get(app.name) ?? [];
         entries.push({
           server: serverName,
           // The symlink is absolute; only the release directory name is
           // comparable between replicas.
           release: hasRelease ? currentResult.stdout.split('/').pop() ?? null : null,
-          drained,
         });
         observed.set(app.name, entries);
+
+        if (isFleet(config, app)) fleetApps.add(app.name);
 
         const releasesResult = await executor.exec(`ls -1t "${appPath}/releases/" 2>/dev/null | head -5`);
         if (releasesResult.stdout) {
@@ -141,7 +131,7 @@ function reportFleetConvergence(
       '  Replicas',
       observations.map((o) => [
         o.server,
-        `${o.release ?? 'no release'}${o.drained ? ' (draining)' : ''}`,
+        o.release ?? 'no release',
       ]),
     );
 

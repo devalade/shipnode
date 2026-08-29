@@ -1,21 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { app, shipnode } from '../../src/config/builder.js';
 import { ShipnodeConfigSchema } from '../../src/config/schema.js';
-import { expandTarget, getAppsForServer, resolveServerNames, resolveSingleServerNameResult } from '../../src/domain/servers.js';
+import { expandTarget, getAppsForServer, isFleet, resolveServerNames, resolveSingleServerNameResult } from '../../src/domain/servers.js';
 import type { ShipnodeConfig } from '../../src/shared/types.js';
 
 function fleetWorkspace(overrides: Record<string, unknown> = {}): unknown {
   return {
-    servers: {
-      'web-a': { host: '10.0.0.11', user: 'deploy', privateHost: '10.0.0.11' },
-      'web-b': { host: '10.0.0.12', user: 'deploy', privateHost: '10.0.0.12' },
-      'db-1': { host: '10.0.0.20', user: 'deploy', privateHost: '10.0.0.20' },
-    },
-    groups: { web: ['web-a', 'web-b'] },
+    servers: { user: 'deploy', hosts: ['10.0.0.11', '10.0.0.12', '10.0.0.20'] },
     apps: [{
       name: 'api',
       appType: 'backend',
-      on: 'web',
+      on: ['10.0.0.11', '10.0.0.12'],
       domain: 'api.example.com',
       pm2: { apps: [{ name: 'api', port: 3333 }] },
     }],
@@ -23,18 +18,93 @@ function fleetWorkspace(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
-describe('fleet config', () => {
-  it('expands a group into its members', () => {
-    const config = ShipnodeConfigSchema.parse(fleetWorkspace()) as ShipnodeConfig;
+describe('servers input', () => {
+  it('keys servers by host and applies the shared user', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: { user: 'deploy', hosts: ['10.0.0.11', '10.0.0.12'] },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
 
-    expect(resolveServerNames(config, config.apps[0].on)).toEqual(['web-a', 'web-b']);
+    expect(Object.keys(config.servers)).toEqual(['10.0.0.11', '10.0.0.12']);
+    expect(config.servers['10.0.0.11']?.user).toBe('deploy');
+    expect(config.servers['10.0.0.11']?.port).toBe(22);
   });
 
-  it('accepts a list mixing servers and groups, deduped and in order', () => {
+  it('defaults the user to root', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: { hosts: ['10.0.0.11'] },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    expect(config.servers['10.0.0.11']?.user).toBe('root');
+  });
+
+  it('accepts user@host per-entry overrides', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: { user: 'deploy', hosts: ['root@10.0.0.11', '10.0.0.12'] },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    expect(config.servers['10.0.0.11']?.user).toBe('root');
+    expect(config.servers['10.0.0.12']?.user).toBe('deploy');
+  });
+
+  it('accepts a single host string', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: { user: 'deploy', hosts: '10.0.0.11' },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    expect(resolveServerNames(config, undefined)).toEqual(['10.0.0.11']);
+  });
+
+  it('accepts per-host objects for non-default ports and identities', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: {
+        user: 'deploy',
+        hosts: ['10.0.0.11', { host: 'example.com', port: 2222, identityFile: '~/.ssh/id_ed25519' }],
+      },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    expect(config.servers['example.com']?.port).toBe(2222);
+    expect(config.servers['example.com']?.identityFile).toBe('~/.ssh/id_ed25519');
+    expect(config.servers['example.com']?.user).toBe('deploy');
+  });
+
+  it('still accepts the legacy record form', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: { 'web-a': { host: '10.0.0.11', user: 'deploy', port: 22 } },
+      apps: [{ name: 'api', appType: 'backend', on: 'web-a' }],
+    }) as ShipnodeConfig;
+
+    expect(config.servers['web-a']?.host).toBe('10.0.0.11');
+  });
+
+  it('keys a workspace declared only with .ssh() by its host', () => {
+    const config = ShipnodeConfigSchema.parse({
+      ssh: { host: '10.0.0.11', user: 'deploy', port: 22 },
+      apps: [{ name: 'api', appType: 'backend' }],
+    }) as ShipnodeConfig;
+
+    expect(Object.keys(config.servers)).toEqual(['10.0.0.11']);
+    // A sole server needs no target.
+    expect(resolveServerNames(config, undefined)).toEqual(['10.0.0.11']);
+  });
+});
+
+describe('fleet config', () => {
+  it('treats an app on more than one host as a fleet', () => {
     const config = ShipnodeConfigSchema.parse(fleetWorkspace()) as ShipnodeConfig;
 
-    expect(expandTarget(config, ['db-1', 'web'])).toEqual(['db-1', 'web-a', 'web-b']);
-    expect(expandTarget(config, ['web', 'web-a'])).toEqual(['web-a', 'web-b']);
+    expect(isFleet(config, config.apps[0]!)).toBe(true);
+    expect(resolveServerNames(config, config.apps[0].on)).toEqual(['10.0.0.11', '10.0.0.12']);
+  });
+
+  it('expands a list of hosts, deduped and in order', () => {
+    const config = ShipnodeConfigSchema.parse(fleetWorkspace()) as ShipnodeConfig;
+
+    expect(expandTarget(config, ['10.0.0.20', '10.0.0.11', '10.0.0.11'])).toEqual(['10.0.0.20', '10.0.0.11']);
   });
 
   it('reports a fleet app under each of its replicas', () => {
@@ -42,92 +112,89 @@ describe('fleet config', () => {
     // has to show up on every server it runs on, or deploy skips replicas.
     const config = ShipnodeConfigSchema.parse(fleetWorkspace()) as ShipnodeConfig;
 
-    expect(getAppsForServer(config, 'web-a').map((a) => a.name)).toEqual(['api']);
-    expect(getAppsForServer(config, 'web-b').map((a) => a.name)).toEqual(['api']);
-    expect(getAppsForServer(config, 'db-1')).toEqual([]);
+    expect(getAppsForServer(config, '10.0.0.11').map((a) => a.name)).toEqual(['api']);
+    expect(getAppsForServer(config, '10.0.0.12').map((a) => a.name)).toEqual(['api']);
+    expect(getAppsForServer(config, '10.0.0.20')).toEqual([]);
   });
 
-  it('fills in rolling defaults for an app on more than one server', () => {
+  it('auto-enables blue-green for a fleet backend with a web port', () => {
     const config = ShipnodeConfigSchema.parse(fleetWorkspace()) as ShipnodeConfig;
 
-    expect(config.apps[0].fleet).toEqual({
-      batch: 1,
-      port: 80,
-      drainWait: 30,
-      readyPath: '/_shipnode/ready',
-    });
+    expect(config.apps[0].zeroDowntime).toBe(true);
+  });
+
+  it('auto-enables blue-green for a fleet backend without a domain', () => {
+    // The replica serves the load balancer directly; the health-gated colour
+    // flip does not need a domain.
+    const config = ShipnodeConfigSchema.parse(fleetWorkspace({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        on: ['10.0.0.11', '10.0.0.12'],
+        pm2: { apps: [{ name: 'api', port: 3333 }] },
+      }],
+    })) as ShipnodeConfig;
+
+    expect(config.apps[0].zeroDowntime).toBe(true);
+  });
+
+  it('keeps an explicit noZeroDowntime on a fleet', () => {
+    const config = ShipnodeConfigSchema.parse(fleetWorkspace({
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        on: ['10.0.0.11', '10.0.0.12'],
+        domain: 'api.example.com',
+        zeroDowntime: false,
+        pm2: { apps: [{ name: 'api', port: 3333 }] },
+      }],
+    })) as ShipnodeConfig;
+
+    expect(config.apps[0].zeroDowntime).toBe(false);
+  });
+
+  it('honours the single-server default: blue-green needs a domain', () => {
+    const config = ShipnodeConfigSchema.parse(fleetWorkspace({
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11', pm2: { apps: [{ name: 'api', port: 3333 }] } }],
+    })) as ShipnodeConfig;
+
+    expect(config.apps[0].zeroDowntime).toBe(false);
   });
 
   it('leaves a single-server app alone', () => {
     const config = ShipnodeConfigSchema.parse(
-      fleetWorkspace({ groups: undefined, apps: [{ name: 'api', appType: 'backend', on: 'web-a' }] }),
+      fleetWorkspace({ apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }] }),
     ) as ShipnodeConfig;
 
-    expect(config.apps[0].fleet).toBeUndefined();
+    expect(isFleet(config, config.apps[0]!)).toBe(false);
   });
 
-  it('honours an explicit fleet block on a single-server app', () => {
-    const config = ShipnodeConfigSchema.parse(
-      fleetWorkspace({
-        groups: undefined,
-        apps: [{ name: 'api', appType: 'backend', on: 'web-a', fleet: { drainWait: 5 } }],
-      }),
-    ) as ShipnodeConfig;
-
-    expect(config.apps[0].fleet).toMatchObject({ drainWait: 5, batch: 1, port: 80 });
-  });
-
-  it('refuses a fleet whose servers cannot be reached privately', () => {
-    // The load balancer talks to each replica directly; the public SSH host is
-    // not necessarily that address.
+  it('rejects an unknown target', () => {
     const result = ShipnodeConfigSchema.safeParse(fleetWorkspace({
-      servers: {
-        'web-a': { host: '10.0.0.11', user: 'deploy', privateHost: '10.0.0.11' },
-        'web-b': { host: '10.0.0.12', user: 'deploy' },
-      },
-      groups: { web: ['web-a', 'web-b'] },
+      apps: [{ name: 'api', appType: 'backend', on: 'ghost' }],
     }));
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0]?.message).toContain('Add privateHost to: web-b');
+      expect(result.error.issues.some((issue) => issue.message.includes("Unknown server target 'ghost'"))).toBe(true);
     }
   });
 
-  it('rejects a group named after a server', () => {
+  it('allows an accessory to name exactly one host', () => {
+    // Managed services cannot be replicated — `on` is a single host, never a list.
     const result = ShipnodeConfigSchema.safeParse(fleetWorkspace({
-      groups: { 'db-1': ['web-a'] },
-      apps: [{ name: 'api', appType: 'backend', on: 'web-a' }],
+      accessories: { postgres: { image: 'postgres:16', on: '10.0.0.20' } },
     }));
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.message.includes('collides with a server'))).toBe(true);
-    }
+    expect(result.success).toBe(true);
   });
 
-  it('rejects a group referencing an unknown server', () => {
+  it('rejects an accessory pointed at a list of hosts', () => {
     const result = ShipnodeConfigSchema.safeParse(fleetWorkspace({
-      groups: { web: ['web-a', 'ghost'] },
+      accessories: { postgres: { image: 'postgres:16', on: ['10.0.0.11', '10.0.0.12'] } },
     }));
 
     expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.message.includes("unknown server 'ghost'"))).toBe(true);
-    }
-  });
-
-  it('refuses to replicate an accessory', () => {
-    // shipnode does not replicate managed services — pointing Postgres at a
-    // group would start two unrelated databases, not a cluster.
-    const result = ShipnodeConfigSchema.safeParse(fleetWorkspace({
-      accessories: { postgres: { image: 'postgres:16', on: 'web' } },
-    }));
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.message.includes('exactly one server'))).toBe(true);
-    }
   });
 
   it('names the servers when a single-server operation hits a fleet', () => {
@@ -138,7 +205,7 @@ describe('fleet config', () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error._tag).toBe('AmbiguousServerTargetError');
-      expect(result.error.message).toContain('web-a, web-b');
+      expect(result.error.message).toContain('10.0.0.11, 10.0.0.12');
       expect(result.error.message).toContain('--on');
     }
   });
@@ -150,7 +217,7 @@ describe('worker placement', () => {
       apps: [{
         name: 'api',
         appType: 'backend',
-        on: 'web',
+        on: ['10.0.0.11', '10.0.0.12'],
         domain: 'api.example.com',
         pm2: { apps: [{ name: 'api', port: 3333 }, { name: 'cron', command: 'node cron.js', placement: 'primary' }] },
       }],
@@ -165,7 +232,7 @@ describe('worker placement', () => {
       apps: [{
         name: 'api',
         appType: 'backend',
-        on: 'web',
+        on: ['10.0.0.11', '10.0.0.12'],
         domain: 'api.example.com',
         pm2: { apps: [{ name: 'api', port: 3333, placement: 'primary' }] },
       }],
@@ -179,21 +246,18 @@ describe('worker placement', () => {
 });
 
 describe('fleet builder', () => {
-  it('round-trips groups and fleet settings', () => {
+  it('round-trips the servers object and fleet detection', () => {
     const config = shipnode
-      .servers({
-        'web-a': { host: '10.0.0.11', user: 'deploy', port: 22, privateHost: '10.0.0.11' },
-        'web-b': { host: '10.0.0.12', user: 'deploy', port: 22, privateHost: '10.0.0.12' },
-      })
-      .group('web', ['web-a', 'web-b'])
+      .servers({ user: 'deploy', hosts: ['10.0.0.11', '10.0.0.12'] })
       .deployTo('/var/www/app')
       .apps([
-        app().backend().name('api').on('web').port(3333).domain('api.example.com').fleet({ batch: 2, drainWait: 10 }),
+        app().backend().name('api').on('10.0.0.11', '10.0.0.12').port(3333).domain('api.example.com'),
       ])
       .build();
 
-    expect(config.groups).toEqual({ web: ['web-a', 'web-b'] });
-    expect(config.apps[0].fleet).toMatchObject({ batch: 2, drainWait: 10, port: 80 });
-    expect(resolveServerNames(config, config.apps[0].on)).toEqual(['web-a', 'web-b']);
+    expect(Object.keys(config.servers)).toEqual(['10.0.0.11', '10.0.0.12']);
+    expect(config.apps[0].zeroDowntime).toBe(true);
+    expect(isFleet(config, config.apps[0]!)).toBe(true);
+    expect(resolveServerNames(config, config.apps[0].on)).toEqual(['10.0.0.11', '10.0.0.12']);
   });
 });

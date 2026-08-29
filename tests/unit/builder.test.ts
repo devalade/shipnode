@@ -434,8 +434,8 @@ describe('ShipnodeAppBuilder + workspace .apps([])', () => {
       .accessories({ redis: { image: 'redis:7', on: 'data' } })
       .build();
 
-    expect(config.servers.app.host).toBe('1.1.1.1');
-    expect(config.apps[0].on).toBe('app');
+    expect(config.servers.app!.host).toBe('1.1.1.1');
+    expect(config.apps[0].on).toEqual(['app']);
     expect(config.apps[0].dependsOn).toEqual(['redis']);
     expect(config.apps[0].caddy?.append).toContain('nosniff');
     expect(config.accessories?.redis?.on).toBe('data');

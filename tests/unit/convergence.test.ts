@@ -5,14 +5,10 @@ import {
   type ReplicaObservation,
 } from '../../src/domain/deploy/convergence.js';
 
-const replica = (
-  server: string,
-  release: string | null,
-  drained: boolean | null = false,
-): ReplicaObservation => ({ server, release, drained });
+const replica = (server: string, release: string | null): ReplicaObservation => ({ server, release });
 
 describe('assessConvergence', () => {
-  it('is converged when every replica serves the same release and is in rotation', () => {
+  it('is converged when every replica serves the same release', () => {
     const result = assessConvergence([
       replica('web-a', '2026-01-02'),
       replica('web-b', '2026-01-02'),
@@ -41,25 +37,6 @@ describe('assessConvergence', () => {
     expect(result.converged).toBe(false);
     expect(result.undeployed).toEqual(['web-b']);
   });
-
-  it('counts a drained replica as not converged even on the right release', () => {
-    // A failed roll leaves the replica drained. It is out of rotation and will
-    // stay there until someone notices.
-    const result = assessConvergence([
-      replica('web-a', '2026-01-02'),
-      replica('web-b', '2026-01-02', true),
-    ]);
-
-    expect(result.converged).toBe(false);
-    expect(result.drained).toEqual(['web-b']);
-  });
-
-  it('ignores drain state for an app with no drain contract', () => {
-    const result = assessConvergence([replica('web-a', '2026-01-02', null)]);
-
-    expect(result.converged).toBe(true);
-    expect(result.drained).toEqual([]);
-  });
 });
 
 describe('describeConvergence', () => {
@@ -83,11 +60,11 @@ describe('describeConvergence', () => {
     expect(line).toContain('redeploy to converge');
   });
 
-  it('tells the reader how to put a drained replica back', () => {
-    const observations = [replica('web-a', '2026-01-02'), replica('web-b', '2026-01-02', true)];
+  it('names a replica with no release', () => {
+    const observations = [replica('web-a', '2026-01-02'), replica('web-b', null)];
 
     const lines = describeConvergence('api', observations, assessConvergence(observations));
 
-    expect(lines.join(' ')).toContain("shipnode undrain --app api");
+    expect(lines.join(' ')).toContain('no release on web-b');
   });
 });

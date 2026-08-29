@@ -6,20 +6,15 @@ import type { ShipnodeConfig } from '../../src/shared/types.js';
 
 function workspace(overrides: Record<string, unknown> = {}): unknown {
   return {
-    servers: {
-      'web-a': { host: '1.1.1.1', user: 'deploy', privateHost: '10.0.0.11' },
-      'web-b': { host: '1.1.1.2', user: 'deploy', privateHost: '10.0.0.12' },
-      'db-1': { host: '1.1.1.3', user: 'deploy', privateHost: '10.0.0.20' },
-    },
-    groups: { web: ['web-a', 'web-b'] },
+    servers: { user: 'deploy', hosts: ['1.1.1.1', '1.1.1.2', '1.1.1.3'] },
     remotePath: '/var/www/app',
     accessories: {
-      postgres: { image: 'postgres:16', on: 'db-1', port: '0.0.0.0:5432:5432' },
+      postgres: { image: 'postgres:16', on: '1.1.1.3', port: '0.0.0.0:5432:5432' },
     },
     apps: [{
       name: 'api',
       appType: 'backend',
-      on: 'web',
+      on: ['1.1.1.1', '1.1.1.2'],
       domain: 'api.example.com',
       dependsOn: ['postgres'],
       pm2: { apps: [{ name: 'api', port: 3333 }] },
@@ -62,56 +57,38 @@ describe('fleetFirewallRules', () => {
   it('opens an accessory port only to the servers that depend on it', () => {
     // Not `ufw allow 5432/tcp` — a database reachable from the whole internet is
     // a worse outcome than one that is unreachable.
-    const rules = fleetFirewallRules(parsed(), 'db-1');
+    const rules = fleetFirewallRules(parsed(), '1.1.1.3');
 
     expect(rules).toEqual([
-      { port: 5432, from: '10.0.0.11', comment: 'shipnode postgres accessory', docker: true },
-      { port: 5432, from: '10.0.0.12', comment: 'shipnode postgres accessory', docker: true },
+      { port: 5432, from: '1.1.1.1', comment: 'shipnode postgres accessory', docker: true },
+      { port: 5432, from: '1.1.1.2', comment: 'shipnode postgres accessory', docker: true },
     ]);
   });
 
   it('opens nothing for an accessory whose only consumer is co-located', () => {
     const rules = fleetFirewallRules(parsed({
-      accessories: { postgres: { image: 'postgres:16', on: 'web-a', port: '5432:5432' } },
+      accessories: { postgres: { image: 'postgres:16', on: '1.1.1.1', port: '5432:5432' } },
       apps: [{
         name: 'api',
         appType: 'backend',
-        on: 'web-a',
+        on: '1.1.1.1',
         dependsOn: ['postgres'],
         pm2: { apps: [{ name: 'api', port: 3333 }] },
       }],
-    }), 'web-a');
+    }), '1.1.1.1');
 
     expect(rules).toEqual([]);
   });
 
-  it('leaves the replica port alone when it is already an open port', () => {
-    // The base rules allow 80 and 443; repeating them would be noise.
-    expect(fleetFirewallRules(parsed(), 'web-a').filter((rule) => rule.from === undefined)).toEqual([]);
-  });
-
-  it('opens a non-standard replica port for the load balancer', () => {
-    const rules = fleetFirewallRules(parsed({
-      apps: [{
-        name: 'api',
-        appType: 'backend',
-        on: 'web',
-        domain: 'api.example.com',
-        pm2: { apps: [{ name: 'api', port: 3333 }] },
-        fleet: { port: 8080 },
-      }],
-    }), 'web-a');
-
-    expect(rules).toContainEqual({
-      port: 8080,
-      comment: 'shipnode api replica port',
-    });
+  it('opens nothing for the fleet port itself', () => {
+    // Replicas serve the load balancer on 80, which the base rules already allow.
+    expect(fleetFirewallRules(parsed(), '1.1.1.1')).toEqual([]);
   });
 
   it('ignores a mapping with no host port to name', () => {
     const rules = fleetFirewallRules(parsed({
-      accessories: { postgres: { image: 'postgres:16', on: 'db-1', port: '5432' } },
-    }), 'db-1');
+      accessories: { postgres: { image: 'postgres:16', on: '1.1.1.3', port: '5432' } },
+    }), '1.1.1.3');
 
     expect(rules).toEqual([]);
   });
@@ -136,20 +113,21 @@ describe('ufwConfigureCommands', () => {
 
 describe('cross-server accessory addressing', () => {
   it('injects the accessory host into every process of the app', () => {
+    // With servers keyed by host, the host string *is* the address.
     const config = ShipnodeConfigSchema.parse(workspace()) as ShipnodeConfig;
 
-    expect(envOf(config)).toMatchObject({ SHIPNODE_POSTGRES_HOST: '10.0.0.20' });
+    expect(envOf(config)).toMatchObject({ SHIPNODE_POSTGRES_HOST: '1.1.1.3' });
   });
 
   it('uses loopback when the accessory is on the same server as the app', () => {
     // The variable exists either way, so moving the database to its own box is
     // a config change and not a code change.
     const config = ShipnodeConfigSchema.parse(workspace({
-      accessories: { postgres: { image: 'postgres:16', on: 'web-a', port: '5432:5432' } },
+      accessories: { postgres: { image: 'postgres:16', on: '1.1.1.1', port: '5432:5432' } },
       apps: [{
         name: 'api',
         appType: 'backend',
-        on: 'web-a',
+        on: '1.1.1.1',
         dependsOn: ['postgres'],
         pm2: { apps: [{ name: 'api', port: 3333 }] },
       }],
@@ -163,7 +141,7 @@ describe('cross-server accessory addressing', () => {
       apps: [{
         name: 'api',
         appType: 'backend',
-        on: 'web',
+        on: ['1.1.1.1', '1.1.1.2'],
         domain: 'api.example.com',
         dependsOn: ['postgres'],
         pm2: { apps: [{ name: 'api', port: 3333, env: { SHIPNODE_POSTGRES_HOST: 'db.managed.example' } }] },
@@ -173,23 +151,11 @@ describe('cross-server accessory addressing', () => {
     expect(envOf(config).SHIPNODE_POSTGRES_HOST).toBe('db.managed.example');
   });
 
-  it('injects nothing when the accessory server has no private address', () => {
-    const config = ShipnodeConfigSchema.parse(workspace({
-      servers: {
-        'web-a': { host: '1.1.1.1', user: 'deploy', privateHost: '10.0.0.11' },
-        'web-b': { host: '1.1.1.2', user: 'deploy', privateHost: '10.0.0.12' },
-        'db-1': { host: '1.1.1.3', user: 'deploy' },
-      },
-    })) as ShipnodeConfig;
-
-    expect(envOf(config).SHIPNODE_POSTGRES_HOST).toBeUndefined();
-  });
-
   it('rejects a cross-server accessory published only on loopback', () => {
     // No connection string can reach 127.0.0.1 on another machine, so this is
     // broken however the user configures the app.
     const parsed = ShipnodeConfigSchema.safeParse(workspace({
-      accessories: { postgres: { image: 'postgres:16', on: 'db-1', port: '127.0.0.1:5432:5432' } },
+      accessories: { postgres: { image: 'postgres:16', on: '1.1.1.3', port: '127.0.0.1:5432:5432' } },
     }));
 
     expect(parsed.success).toBe(false);
@@ -200,11 +166,11 @@ describe('cross-server accessory addressing', () => {
 
   it('allows a loopback bind when the app is on the same server', () => {
     const parsed = ShipnodeConfigSchema.safeParse(workspace({
-      accessories: { postgres: { image: 'postgres:16', on: 'web-a', port: '127.0.0.1:5432:5432' } },
+      accessories: { postgres: { image: 'postgres:16', on: '1.1.1.1', port: '127.0.0.1:5432:5432' } },
       apps: [{
         name: 'api',
         appType: 'backend',
-        on: 'web-a',
+        on: '1.1.1.1',
         dependsOn: ['postgres'],
         pm2: { apps: [{ name: 'api', port: 3333 }] },
       }],

@@ -22,15 +22,14 @@ export interface ServerTarget {
  */
 export interface ServerTargetSource {
   servers: Record<string, unknown>;
-  groups?: Record<string, string[]>;
 }
 
 /**
- * Expand an `on` target into server names, in declaration order and deduped.
+ * Expand an `on` target into server keys, in declaration order and deduped.
  *
- * A target may name a server, name a group, or be a list of either. Unknown
- * names are dropped rather than reported — the schema is what tells the user
- * about typos; callers here have already parsed.
+ * A target may name one server or a list of them. Unknown names are dropped
+ * rather than reported — the schema is what tells the user about typos; callers
+ * here have already parsed.
  */
 export function expandTarget(
   source: ServerTargetSource,
@@ -44,19 +43,21 @@ export function expandTarget(
   }
 
   const entries = Array.isArray(on) ? on : [on];
-  const resolved: string[] = [];
-
-  for (const entry of entries) {
-    const group = source.groups?.[entry];
-    if (group) {
-      resolved.push(...group.filter((member) => known.includes(member)));
-      continue;
-    }
-    if (known.includes(entry)) resolved.push(entry);
-  }
-
-  return [...new Set(resolved)];
+  return [...new Set(entries.filter((entry) => known.includes(entry)))];
 }
+
+/** The servers an app runs on, in declaration order. */
+export function fleetReplicas(config: ServerTargetSource, app: { on?: string | string[] }): string[] {
+  return expandTarget(config, app.on);
+}
+
+/** An app resolving to more than one server is a fleet: deployed by rolling through its replicas. */
+export function isFleet(config: ServerTargetSource, app: { on?: string | string[] }): boolean {
+  return fleetReplicas(config, app).length > 1;
+}
+
+/** The port a fleet replica serves the load balancer on. TLS terminates at the LB. */
+export const FLEET_PORT = 80;
 
 /** Every server an app or accessory runs on. Empty is never returned — it errors. */
 export function resolveServerNamesResult(

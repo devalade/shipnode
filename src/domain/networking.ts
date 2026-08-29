@@ -10,11 +10,10 @@ import { expandTarget } from './servers.js';
  * database across two servers and every connection string silently points at
  * the wrong machine.
  *
- * shipnode's answer is a declared address, not discovery: each server may
- * declare a `privateHost`, and every app is handed
+ * shipnode's answer is a declared address, not discovery: every app is handed
  * `SHIPNODE_<ACCESSORY>_HOST` for each accessory it depends on. Co-located
- * accessories get `127.0.0.1`, remote ones get the host's `privateHost`, so the
- * app reads the same variable either way and moving an accessory to its own
+ * accessories get `127.0.0.1`, remote ones get the accessory server's host, so
+ * the app reads the same variable either way and moving an accessory to its own
  * server is a config change rather than a code change.
  */
 
@@ -54,14 +53,15 @@ export function isLoopbackOnly(accessory: AccessoryConfig): boolean {
 /**
  * The `SHIPNODE_<NAME>_HOST` variables one app should be given.
  *
- * `hostOf` resolves an accessory to the server it runs on; returning undefined
- * means the accessory is unplaceable and is skipped rather than injected with a
- * wrong address.
+ * `resolve` maps an accessory to the server it runs on: `server` is the record
+ * key used for co-location checks, `address` is the reachable host to inject.
+ * Returning undefined means the accessory is unplaceable and is skipped rather
+ * than injected with a wrong address.
  */
 export function accessoryHostEnv(
   dependsOn: string[] | undefined,
   appServers: string[],
-  resolve: (accessoryName: string) => { server: string; privateHost?: string } | undefined,
+  resolve: (accessoryName: string) => { server: string; address: string } | undefined,
 ): Record<string, string> {
   const env: Record<string, string> = {};
 
@@ -70,13 +70,13 @@ export function accessoryHostEnv(
     if (!placement) continue;
 
     // Co-located with every replica of this app: loopback is both correct and
-    // the tighter bind, so prefer it over the private address.
+    // the tighter bind, so prefer it over the network address.
     if (appServers.length > 0 && appServers.every((server) => server === placement.server)) {
       env[accessoryHostVar(name)] = LOCAL_ACCESSORY_HOST;
       continue;
     }
 
-    if (placement.privateHost) env[accessoryHostVar(name)] = placement.privateHost;
+    env[accessoryHostVar(name)] = placement.address;
   }
 
   return env;
@@ -111,14 +111,10 @@ function publishedHostPort(mapping: string): number | undefined {
 /**
  * Firewall rules a server needs because of how the workspace is laid out.
  *
- * Two things stop working the moment an app is split across servers. A replica
- * serves plain HTTP on `fleet.port` for the load balancer to reach, and an
- * accessory has to accept connections from the servers whose apps depend on it.
- * Both are holes `ufw default deny incoming` closes.
- *
- * Accessory rules name the consuming server's `privateHost` rather than opening
- * the port outright — a database reachable from the whole internet is a worse
- * outcome than one that is unreachable.
+ * An accessory has to accept connections from the servers whose apps depend on
+ * it — a hole `ufw default deny incoming` closes. The rules name the consuming
+ * servers rather than opening the port outright: a database reachable from the
+ * whole internet is a worse outcome than one that is unreachable.
  */
 export function fleetFirewallRules(config: ShipnodeConfig, serverName: string): FirewallRule[] {
   const rules: FirewallRule[] = [];
@@ -130,17 +126,6 @@ export function fleetFirewallRules(config: ShipnodeConfig, serverName: string): 
     seen.add(key);
     rules.push(rule);
   };
-
-  for (const app of config.apps) {
-    const replicas = expandTarget(config, app.on);
-    if (!app.fleet || !replicas.includes(serverName)) continue;
-    // 80 and 443 are already opened by the base rules.
-    if (app.fleet.port === 80 || app.fleet.port === 443) continue;
-    add({
-      port: app.fleet.port,
-      comment: `shipnode ${app.name} replica port`,
-    });
-  }
 
   for (const [name, accessory] of Object.entries(config.accessories ?? {})) {
     if (!expandTarget(config, accessory.on).includes(serverName)) continue;
@@ -158,8 +143,7 @@ export function fleetFirewallRules(config: ShipnodeConfig, serverName: string): 
       if (!app.dependsOn?.includes(name)) continue;
       for (const replica of expandTarget(config, app.on)) {
         if (replica === serverName) continue;
-        const privateHost = config.servers[replica]?.privateHost;
-        if (privateHost) consumers.add(privateHost);
+        consumers.add(replica);
       }
     }
 

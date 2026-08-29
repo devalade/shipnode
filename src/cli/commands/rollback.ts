@@ -16,6 +16,7 @@ import {
   coloredWebName,
 } from '../../domain/deploy/blue-green.js';
 import { rollFleet, type FleetEvent } from '../../domain/deploy/fleet.js';
+import { isFleet } from '../../domain/servers.js';
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
 import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
 import { configForAppResult, configForServer, getServerTargets } from '../../domain/servers.js';
@@ -53,7 +54,7 @@ export async function cmdRollback(
   const app = getActiveApp(appConfig, options.app);
   const stepsBack = options.steps ?? 1;
 
-  if (app.fleet) {
+  if (isFleet(appConfig, app)) {
     await rollbackFleet(appConfig, app, stepsBack, options.on);
     return;
   }
@@ -64,9 +65,9 @@ export async function cmdRollback(
 }
 
 /**
- * Roll a fleet back one replica at a time, through the same drain/wait/undrain
- * machinery a deploy uses — a rollback that restarts PM2 has the same
- * traffic-dropping window a deploy does.
+ * Roll a fleet back one replica at a time, through the same roll a deploy
+ * uses — a rollback that restarts PM2 has the same traffic-dropping window a
+ * deploy does.
  *
  * Each replica re-reads its own state and rolls itself back one step rather than
  * being told what to do by a plan computed elsewhere. After a roll that failed
@@ -90,21 +91,15 @@ async function rollbackFleet(
     replicas = [on];
   }
 
-  ui.warn(
-    `Rolling ${app.name} back ${stepsBack} release(s) across ${replicas.join(', ')}, ` +
-    `${app.fleet!.batch} at a time.`,
-  );
+  ui.warn(`Rolling ${app.name} back ${stepsBack} release(s) across ${replicas.join(', ')}, one replica at a time.`);
   if (!(await confirm('Proceed with rollback?'))) {
     ui.info('Rollback cancelled.');
     return;
   }
 
   const result = await rollFleet({
-    app,
-    fleet: app.fleet!,
     replicas,
     primary: allReplicas[0],
-    remotePath: appConfig.remotePath,
     connect: async (serverName) => {
       const ssh = new SshConnection();
       await ssh.connect(configForServer(appConfig, serverName).ssh);
@@ -119,7 +114,7 @@ async function rollbackFleet(
 
   if (result.failed) {
     ui.error(
-      `${app.name}: ${result.failed.server} failed to roll back and is out of rotation. ` +
+      `${app.name}: ${result.failed.server} failed to roll back. ` +
       `${result.applied.length ? `${result.applied.join(', ')} rolled back; ` : ''}` +
       `${result.skipped.length ? `${result.skipped.join(', ')} untouched. ` : ''}` +
       `The fleet is running mixed versions.`,
@@ -133,14 +128,11 @@ async function rollbackFleet(
 
 function reportRollbackEvent(app: ShipnodeApp, event: FleetEvent): void {
   switch (event.type) {
-    case 'drained':
-      ui.info(`${event.servers.join(', ')} draining — waiting ${event.waitSeconds}s for the load balancer`);
-      break;
     case 'applying':
       ui.step(`Rolling back ${app.name} on ${event.server}`);
       break;
-    case 'undrained':
-      ui.success(`${event.server} back in rotation`);
+    case 'applied':
+      ui.success(`${event.server} rolled back`);
       break;
     case 'failed':
       ui.error(`${event.server}: ${event.message}`);
