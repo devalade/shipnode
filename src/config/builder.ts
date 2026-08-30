@@ -82,11 +82,18 @@ export class ShipnodeBuilder {
   }
 
   /**
-   * Every server shipnode touches, in one object. `user` is the SSH user for
-   * every host without its own `user@` prefix (default `root`); `hosts` is one
-   * host string, or a list of them. The host string is the server's identity
-   * everywhere else — `on`, `--on`, accessory `on`, status output — and the
-   * order of `hosts` is deployment order.
+   * Every server shipnode touches, in one object. `hosts` is one host string,
+   * or a list of them; every other key — `user`, `port`, `identityFile`,
+   * `proxyMode`, `proxyCommand` — is the default for all of them.
+   *
+   * A host departs from the defaults by being an object instead of a string:
+   * `hosts: ['1.1.1.1', { host: '1.1.1.2', port: 2222 }]` keeps the shared user
+   * and identity on both boxes and moves the port on one. (`user@host` on a
+   * string is the shorthand for overriding just the user.)
+   *
+   * The host string is the server's identity everywhere else — `on`, `--on`,
+   * accessory `on`, status output — and the order of `hosts` is deployment
+   * order.
    */
   servers(input: ServersInput | Record<string, SshConfig>): this {
     this.config.servers = input;

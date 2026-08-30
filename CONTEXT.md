@@ -66,7 +66,7 @@ An app whose `on` target resolves to more than one host. Deployed by rolling thr
 `rollFleet` — the sequential loop above `DeployOrchestrator`. The per-replica operation is a callback (`applyToReplica`), so a deploy and a rollback drive the same roll with the same ordering and partial-failure reporting. Resolves rather than throws when a replica fails: a partly-rolled fleet is a state for `status` to report, not an exception to unwind.
 
 ### Servers
-The workspace's server declaration: `.servers({ user, hosts })`. The host string is the server's identity everywhere — `on`, `--on`, accessory `on`, status output — and `hosts` order is the roll order. `user` is the SSH user for hosts without their own `user@` prefix (default `root`).
+The workspace's server declaration: `.servers({ user, hosts })`. The host string is the server's identity everywhere — `on`, `--on`, accessory `on`, status output — and `hosts` order is the roll order. Every key beside `hosts` (`user`, `port`, `identityFile`, `proxyMode`, `proxyCommand`) is the default for all of them; a host given as an object instead of a string overrides what it names and keeps the rest.
 
 ### Pm2Config
 The process-supervision section of a `ShipnodeConfig`. Contains an `apps` list — one entry per long-running process PM2 should supervise (web server, workers, etc.). Backend-only; frontend apps don't have one.

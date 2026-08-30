@@ -19,27 +19,43 @@ export const ServerTargetSchema = z.union([
   z.array(z.string().min(1)).min(1),
 ]);
 
+/**
+ * The SSH settings a `.servers()` block can declare once for every host. Each
+ * is also accepted on a single host, where it wins — a fleet is usually
+ * homogeneous, and the one box on a different port should cost one line rather
+ * than turn every other host into an object.
+ */
+const serverDefaultsShape = {
+  user: z.string().min(1).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  identityFile: z.string().optional(),
+  proxyMode: z.enum(['cloudflare']).optional(),
+  proxyCommand: z.string().optional(),
+};
+
 /** One `.servers({ hosts: [...] })` entry: a host string, or a per-host override. */
 export const ServerHostEntrySchema = z.union([
   z.string().min(1),
   z.object({
     host: z.string().refine(isValidIpOrHostname, 'Must be a valid IP address or hostname'),
-    user: z.string().min(1).optional(),
-    port: z.number().int().min(1).max(65535).optional(),
-    identityFile: z.string().optional(),
-    proxyMode: z.enum(['cloudflare']).optional(),
-    proxyCommand: z.string().optional(),
+    ...serverDefaultsShape,
   }),
 ]);
 
 /**
- * The `.servers()` input: who to connect as, and which boxes. `user` applies to
- * every host without its own `user@` prefix; `hosts` is one entry or a list.
+ * The `.servers()` input: how to connect, and which boxes. Every key beside
+ * `hosts` is a default for each host that does not override it; `hosts` is one
+ * entry or a list.
  */
 export const ServersInputSchema = z.object({
-  user: z.string().min(1).optional(),
+  ...serverDefaultsShape,
   hosts: z.union([ServerHostEntrySchema, z.array(ServerHostEntrySchema).min(1)]),
 });
+
+/** Drop absent keys, so spreading an override cannot erase the shared default. */
+function defined<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
 
 /**
  * Collapse the `.servers()` object into the canonical record keyed by host —
@@ -50,7 +66,9 @@ export const ServersInputSchema = z.object({
 function normalizeServersInput(
   input: z.infer<typeof ServersInputSchema>,
 ): Record<string, z.input<typeof SshConfigSchema>> {
-  const entries = Array.isArray(input.hosts) ? input.hosts : [input.hosts];
+  const { hosts, ...shared } = input;
+  const defaults = defined(shared);
+  const entries = Array.isArray(hosts) ? hosts : [hosts];
   const record: Record<string, z.input<typeof SshConfigSchema>> = {};
 
   for (const entry of entries) {
@@ -60,12 +78,13 @@ function normalizeServersInput(
       const at = entry.lastIndexOf('@');
       const hasUser = at > 0;
       const host = hasUser ? entry.slice(at + 1) : entry;
-      const user = hasUser ? entry.slice(0, at) : input.user ?? 'root';
-      record[host] = { host, user };
+      const user = hasUser ? entry.slice(0, at) : defaults.user ?? 'root';
+      record[host] = { ...defaults, host, user };
       continue;
     }
-    const { host, user, ...rest } = entry;
-    record[host] = { ...rest, host, user: user ?? input.user ?? 'root' };
+    const { host, ...overrides } = entry;
+    const merged = { ...defaults, ...defined(overrides) };
+    record[host] = { ...merged, host, user: merged.user ?? 'root' };
   }
 
   return record;

@@ -37,20 +37,32 @@ export interface SshConfig {
 }
 
 /**
- * One entry of `.servers({ hosts: [...] })`. A bare string is the host, with
- * the user coming from the servers object (`user@host` overrides it); the
- * object form is the escape hatch for non-default ports and identities.
+ * How to connect. Declared on the servers object it applies to every host;
+ * declared on one host it applies to that host only, and wins.
  */
-export type ServerHostEntry = string | Omit<SshConfig, 'user'> & { user?: string };
+export interface ServerDefaults {
+  /** SSH user. On the servers object, `user@host` on a host overrides it. Defaults to `root`. */
+  user?: string;
+  /** SSH port. Defaults to 22. */
+  port?: number;
+  identityFile?: string;
+  proxyMode?: 'cloudflare';
+  proxyCommand?: string;
+}
 
 /**
- * The whole servers declaration: who to connect as, and which boxes. The host
+ * One entry of `.servers({ hosts: [...] })`. A bare string is the host, taking
+ * every setting from the servers object (`user@host` overrides the user); the
+ * object form is how one host departs from the shared settings.
+ */
+export type ServerHostEntry = string | (ServerDefaults & { host: string });
+
+/**
+ * The whole servers declaration: how to connect, and which boxes. The host
  * string is the server's identity everywhere else — `on`, `--on`, accessory
  * `on`, status output — and declaration order is deployment order.
  */
-export interface ServersInput {
-  /** SSH user for every host without its own `user@` prefix. Defaults to `root`. */
-  user?: string;
+export interface ServersInput extends ServerDefaults {
   hosts: ServerHostEntry | ServerHostEntry[];
 }
 

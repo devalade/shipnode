@@ -72,6 +72,65 @@ describe('servers input', () => {
     expect(config.servers['example.com']?.user).toBe('deploy');
   });
 
+  it('applies every shared setting, not just the user, to each host', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: {
+        user: 'deploy',
+        port: 2222,
+        identityFile: '~/.ssh/id_ed25519',
+        proxyMode: 'cloudflare',
+        hosts: ['10.0.0.11', '10.0.0.12'],
+      },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    for (const host of ['10.0.0.11', '10.0.0.12']) {
+      expect(config.servers[host]).toMatchObject({
+        host,
+        user: 'deploy',
+        port: 2222,
+        identityFile: '~/.ssh/id_ed25519',
+        proxyMode: 'cloudflare',
+      });
+    }
+  });
+
+  it('lets one host override a shared setting and keep the rest', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: {
+        user: 'deploy',
+        port: 2222,
+        identityFile: '~/.ssh/id_ed25519',
+        hosts: ['10.0.0.11', { host: '10.0.0.12', port: 22 }],
+      },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    expect(config.servers['10.0.0.12']?.port).toBe(22);
+    // Overriding the port must not drop back to the schema defaults for the rest.
+    expect(config.servers['10.0.0.12']?.user).toBe('deploy');
+    expect(config.servers['10.0.0.12']?.identityFile).toBe('~/.ssh/id_ed25519');
+    expect(config.servers['10.0.0.11']?.port).toBe(2222);
+  });
+
+  it('keeps a shared port under a user@host string', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: { user: 'deploy', port: 2222, hosts: ['root@10.0.0.11'] },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    expect(config.servers['10.0.0.11']).toMatchObject({ user: 'root', port: 2222 });
+  });
+
+  it('falls back to the SSH defaults when nothing is shared or overridden', () => {
+    const config = ShipnodeConfigSchema.parse({
+      servers: { hosts: [{ host: '10.0.0.11', user: 'deploy' }] },
+      apps: [{ name: 'api', appType: 'backend', on: '10.0.0.11' }],
+    }) as ShipnodeConfig;
+
+    expect(config.servers['10.0.0.11']?.port).toBe(22);
+  });
+
   it('still accepts the legacy record form', () => {
     const config = ShipnodeConfigSchema.parse({
       servers: { 'web-a': { host: '10.0.0.11', user: 'deploy', port: 22 } },
@@ -259,5 +318,21 @@ describe('fleet builder', () => {
     expect(config.apps[0].zeroDowntime).toBe(true);
     expect(isFleet(config, config.apps[0]!)).toBe(true);
     expect(resolveServerNames(config, config.apps[0].on)).toEqual(['10.0.0.11', '10.0.0.12']);
+  });
+
+  it('carries shared connection settings through the builder, one host overriding', () => {
+    const config = shipnode
+      .servers({
+        user: 'deploy',
+        port: 2222,
+        identityFile: '~/.ssh/id_ed25519',
+        hosts: ['10.0.0.11', { host: '10.0.0.12', port: 22 }],
+      })
+      .deployTo('/var/www/app')
+      .apps([app().backend().name('api').on('10.0.0.11', '10.0.0.12').port(3333)])
+      .build();
+
+    expect(config.servers['10.0.0.11']).toMatchObject({ user: 'deploy', port: 2222, identityFile: '~/.ssh/id_ed25519' });
+    expect(config.servers['10.0.0.12']).toMatchObject({ user: 'deploy', port: 22, identityFile: '~/.ssh/id_ed25519' });
   });
 });

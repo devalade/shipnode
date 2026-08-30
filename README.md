@@ -255,7 +255,8 @@ Each replica installs and builds, so a three-replica roll takes roughly three ti
 
 | Setting | Default | Description |
 |---|---|---|
-| `.servers({ user, hosts })` | user `root` | Every server: `user` is the SSH user for each host without its own `user@` prefix; `hosts` is one string or a list |
+| `.servers({ user, hosts, ... })` | user `root`, port `22` | Every server: `hosts` is one string or a list, and `user`, `port`, `identityFile`, `proxyMode`, `proxyCommand` beside it are the defaults for all of them |
+| `hosts: [{ host, ... }]` | the shared settings | One host departing from the defaults. `user@host` on a plain string is the shorthand for overriding just the user |
 | `on` | — | The hosts an app runs on. More than one = fleet |
 
 #### Hooks that must run once
