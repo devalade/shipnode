@@ -131,6 +131,32 @@ describe('servers input', () => {
     expect(config.servers['10.0.0.11']?.port).toBe(22);
   });
 
+  it('reads a legacy record whose server is named hosts as a record, when it cannot be host declarations', () => {
+    // `hosts` is not enough to tell the two forms apart — a legacy record may
+    // name a server anything. Its value has to look like host declarations too.
+    const config = ShipnodeConfigSchema.parse({
+      servers: { hosts: { host: '10.0.0.11', user: 'deploy' }, db: { host: '10.0.0.20', user: 'deploy' } },
+      apps: [{ name: 'api', appType: 'backend', on: 'hosts' }],
+    }) as ShipnodeConfig;
+
+    expect(Object.keys(config.servers)).toEqual(['hosts', 'db']);
+    expect(config.servers['hosts']?.host).toBe('10.0.0.11');
+  });
+
+  it('names the known targets when a multi-server workspace omits on', () => {
+    const result = ShipnodeConfigSchema.safeParse({
+      servers: { user: 'deploy', hosts: ['10.0.0.11', '10.0.0.12'] },
+      apps: [{ name: 'api', appType: 'backend' }],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = JSON.stringify(result.error.issues);
+      expect(message).toContain('more than one server');
+      expect(message).toContain('10.0.0.11, 10.0.0.12');
+    }
+  });
+
   it('still accepts the legacy record form', () => {
     const config = ShipnodeConfigSchema.parse({
       servers: { 'web-a': { host: '10.0.0.11', user: 'deploy', port: 22 } },

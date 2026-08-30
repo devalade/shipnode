@@ -52,6 +52,25 @@ export const ServersInputSchema = z.object({
   hosts: z.union([ServerHostEntrySchema, z.array(ServerHostEntrySchema).min(1)]),
 });
 
+const SERVERS_INPUT_KEYS = new Set(['hosts', ...Object.keys(serverDefaultsShape)]);
+
+/** Does this `.servers()` argument declare hosts, rather than being a legacy record? */
+function isServersInput(input: unknown): input is z.input<typeof ServersInputSchema> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return false;
+  const keys = Object.keys(input);
+
+  // A legacy record's keys are server names, so any key that is not one of the
+  // settings settles it — without this, `{ hosts: {...}, db: {...} }` parsed as
+  // the new form and zod stripped `db`, losing a server silently.
+  if (!keys.every((key) => SERVERS_INPUT_KEYS.has(key))) return false;
+
+  const hosts = (input as Record<string, unknown>).hosts;
+  if (hosts === undefined) return false;
+  return typeof hosts === 'string'
+    || Array.isArray(hosts)
+    || (typeof hosts === 'object' && hosts !== null && 'host' in hosts);
+}
+
 /** Drop absent keys, so spreading an override cannot erase the shared default. */
 function defined<T extends object>(value: T): Partial<T> {
   return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
@@ -294,10 +313,14 @@ const ShipnodeConfigBaseSchema = z.object({
     // The `.servers({ user, hosts })` object collapses to the canonical record
     // keyed by host; the legacy record form (keyed however the user named them)
     // passes through untouched.
+    //
+    // `hosts` alone does not separate them — a legacy record may name a server
+    // anything, `hosts` included — so every key has to be a known setting and
+    // `hosts` has to look like host declarations. That leaves one irreducible
+    // collision: a legacy record whose *only* server is named `hosts` reads as
+    // the new form, since `{ hosts: { host, user } }` is valid in both.
     (input: unknown) =>
-      typeof input === 'object' && input !== null && !Array.isArray(input) && 'hosts' in input
-        ? normalizeServersInput(ServersInputSchema.parse(input))
-        : input,
+      isServersInput(input) ? normalizeServersInput(ServersInputSchema.parse(input)) : input,
     z.record(z.string().min(1), SshConfigSchema).optional(),
   ),
   remotePath: z.string().min(1, 'Remote path is required').default('/var/www/app'),
@@ -346,7 +369,8 @@ const ShipnodeConfigBaseSchema = z.object({
       if (!serverNames.has('default') && serverNames.size !== 1) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Server target is required when no 'default' server is configured",
+          message: 'Server target is required when the workspace has more than one server. '
+            + `Known targets: ${[...serverNames].join(', ')}`,
           path,
         });
       }

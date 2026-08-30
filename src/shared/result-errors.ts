@@ -3,8 +3,11 @@ import { TaggedError } from 'better-result';
 export class MissingServerTargetError extends TaggedError('MissingServerTargetError')<{
   message: string;
 }>() {
-  constructor() {
-    super({ message: "Server target is required when no 'default' server is configured" });
+  constructor(args: { known?: string } = {}) {
+    super({
+      message: 'Server target is required when the workspace has more than one server.'
+        + (args.known ? ` Known targets: ${args.known}` : ''),
+    });
   }
 }
 

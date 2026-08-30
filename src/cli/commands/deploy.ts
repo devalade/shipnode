@@ -378,7 +378,7 @@ function renderAppPlan(
 
   const steps: string[] = [];
   if (replicas.length > 1) {
-    steps.push('Roll replica 1 of ' + replicas.length);
+    steps.push(`Roll replica 1 of ${replicas.length}`);
   }
   steps.push(
     'Acquire deploy lock',

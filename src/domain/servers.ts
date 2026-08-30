@@ -67,9 +67,10 @@ export function resolveServerNamesResult(
   const resolved = expandTarget(config, target);
   if (resolved.length > 0) return Result.ok(resolved);
 
-  if (target === undefined) return Result.err(new MissingServerTargetError());
-
   const known = Object.keys(config.servers).join(', ') || '(none)';
+
+  if (target === undefined) return Result.err(new MissingServerTargetError({ known }));
+
   const named = Array.isArray(target) ? target.join(', ') : target;
   return Result.err(new UnknownServerTargetError({ target: named, known }));
 }
