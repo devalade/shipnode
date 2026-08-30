@@ -143,7 +143,11 @@ export function fleetFirewallRules(config: ShipnodeConfig, serverName: string): 
       if (!app.dependsOn?.includes(name)) continue;
       for (const replica of expandTarget(config, app.on)) {
         if (replica === serverName) continue;
-        consumers.add(replica);
+        // `expandTarget` yields server *keys*, and a rule needs a reachable
+        // address. In the host-keyed record the key *is* the address; a legacy
+        // record carries the address in the value's `host` field. Two keys can
+        // resolve to the same address, which the set collapses.
+        consumers.add(config.servers[replica]?.host ?? replica);
       }
     }
 

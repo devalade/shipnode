@@ -85,6 +85,35 @@ describe('fleetFirewallRules', () => {
     expect(fleetFirewallRules(parsed(), '1.1.1.1')).toEqual([]);
   });
 
+  it('names the address of a legacy named server, never its record key', () => {
+    // The legacy record is keyed by arbitrary names, so the key is not routable:
+    // `ufw allow from web-a` is a rule ufw cannot act on. Two keys sharing an
+    // address collapse to one rule, since the dedupe key is port plus source.
+    const config = ShipnodeConfigSchema.parse({
+      servers: {
+        'web-a': { host: '10.0.0.11', user: 'deploy' },
+        'web-b': { host: '10.0.0.11', user: 'deploy' },
+        db: { host: '10.0.0.20', user: 'deploy' },
+      },
+      remotePath: '/var/www/app',
+      accessories: {
+        postgres: { image: 'postgres:16', on: 'db', port: '0.0.0.0:5432:5432' },
+      },
+      apps: [{
+        name: 'api',
+        appType: 'backend',
+        on: ['web-a', 'web-b'],
+        domain: 'api.example.com',
+        dependsOn: ['postgres'],
+        pm2: { apps: [{ name: 'api', port: 3333 }] },
+      }],
+    }) as ShipnodeConfig;
+
+    expect(fleetFirewallRules(config, 'db')).toEqual([
+      { port: 5432, from: '10.0.0.11', comment: 'shipnode postgres accessory', docker: true },
+    ]);
+  });
+
   it('ignores a mapping with no host port to name', () => {
     const rules = fleetFirewallRules(parsed({
       accessories: { postgres: { image: 'postgres:16', on: '1.1.1.3', port: '5432' } },
