@@ -40,14 +40,31 @@ export function ufwInstallCommand(): string {
  * in before `enable` so the firewall is never briefly up with the holes closed.
  */
 export function ufwConfigureCommands(extra: FirewallRule[] = []): string[] {
+  return ufwConfigurePlan(extra).map((step) => step.command);
+}
+
+/**
+ * The same commands, each still carrying the rule it came from.
+ *
+ * ufw answers a bad rule with a non-zero exit and adds nothing, so the caller
+ * has to be able to say *which* rule was refused rather than report the whole
+ * batch as applied. `harden` pairs each command's exit code back to its rule.
+ */
+export interface UfwStep {
+  command: string;
+  /** Present only for the workspace rules; the defaults carry no rule. */
+  rule?: FirewallRule;
+}
+
+export function ufwConfigurePlan(extra: FirewallRule[] = []): UfwStep[] {
   return [
-    `${SUDO}; $SUDO ufw default deny incoming`,
-    `${SUDO}; $SUDO ufw default allow outgoing`,
-    `${SUDO}; $SUDO ufw allow ssh`,
-    `${SUDO}; $SUDO ufw allow 80/tcp`,
-    `${SUDO}; $SUDO ufw allow 443/tcp`,
-    ...extra.map((rule) => `${SUDO}; $SUDO ${ufwAllowRule(rule)}`),
-    `${SUDO}; $SUDO ufw --force enable`,
+    { command: `${SUDO}; $SUDO ufw default deny incoming` },
+    { command: `${SUDO}; $SUDO ufw default allow outgoing` },
+    { command: `${SUDO}; $SUDO ufw allow ssh` },
+    { command: `${SUDO}; $SUDO ufw allow 80/tcp` },
+    { command: `${SUDO}; $SUDO ufw allow 443/tcp` },
+    ...extra.map((rule) => ({ command: `${SUDO}; $SUDO ${ufwAllowRule(rule)}`, rule })),
+    { command: `${SUDO}; $SUDO ufw --force enable` },
   ];
 }
 
@@ -146,9 +163,13 @@ export function dockerUserRules(rules: FirewallRule[]): string[] {
     }
     commands.push(`$SUDO iptables -D DOCKER-USER -p tcp --dport ${port} -j DROP 2>/dev/null || true`);
 
-    commands.push(`$SUDO iptables -I DOCKER-USER 1 -p tcp --dport ${port} -j DROP`);
+    // `|| exit 1` on every insert: the commands are joined with `;`, so without
+    // it a refused insert (no DOCKER-USER chain, a source iptables cannot parse)
+    // would be masked by the persist step's exit code and the port would be
+    // reported as restricted while standing wide open.
+    commands.push(`$SUDO iptables -I DOCKER-USER 1 -p tcp --dport ${port} -j DROP || exit 1`);
     for (const source of [...sources].reverse()) {
-      commands.push(`$SUDO iptables -I DOCKER-USER 1 -p tcp --dport ${port} -s ${source} -j RETURN`);
+      commands.push(`$SUDO iptables -I DOCKER-USER 1 -p tcp --dport ${port} -s ${source} -j RETURN || exit 1`);
     }
   }
 

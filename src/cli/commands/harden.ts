@@ -3,6 +3,67 @@ import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import * as sec from '../../infrastructure/provisioning/security.js';
 import { fleetFirewallRules } from '../../domain/networking.js';
+import type { FirewallRule } from '../../domain/networking.js';
+import type { ExecResult } from '../../shared/types.js';
+
+/** One ufw command as it was actually run, with the rule it came from. */
+export interface UfwAttempt {
+  command: string;
+  rule?: FirewallRule;
+  result: ExecResult;
+}
+
+export interface UfwOutcome {
+  /** Rules ufw accepted — the only ones the operator may be told are in place. */
+  applied: FirewallRule[];
+  failures: { label: string; detail: string }[];
+  summary: string;
+}
+
+function describeRule(rule: FirewallRule): string {
+  return `${rule.port}/tcp${rule.from ? ` from ${rule.from}` : ''}`;
+}
+
+/**
+ * Turn what ufw actually did into what the operator is told.
+ *
+ * `executor.exec` resolves on a non-zero exit, so a rule ufw refuses — an
+ * `allow from <value>` whose value is not an IP or CIDR, say — used to be
+ * discarded silently while the run still printed `allowed 5432/tcp from
+ * <value>`. A port meant to be restricted to its consumers would then be left
+ * open and reported as closed. Only exit code 0 counts as applied; re-running
+ * harden over an existing rule prints "Skipping adding existing rule" and exits
+ * 0, so idempotent re-runs still count as successes.
+ */
+export function summarizeUfwRun(attempts: UfwAttempt[]): UfwOutcome {
+  const applied: FirewallRule[] = [];
+  const failures: { label: string; detail: string }[] = [];
+
+  for (const attempt of attempts) {
+    if (attempt.result.exitCode === 0) {
+      if (attempt.rule) applied.push(attempt.rule);
+      continue;
+    }
+    const detail = (attempt.result.stderr || attempt.result.stdout).trim()
+      || `exited ${attempt.result.exitCode} with no output`;
+    failures.push({
+      label: attempt.rule ? `${describeRule(attempt.rule)} — ${attempt.rule.comment}` : attempt.command,
+      detail,
+    });
+  }
+
+  const total = attempts.filter((a) => a.rule).length;
+  let summary: string;
+  if (failures.length > 0) {
+    summary = `UFW: configured with errors (${applied.length}/${total} workspace rule(s) applied, ${failures.length} command(s) failed)`;
+  } else if (total === 0) {
+    summary = 'UFW: configured (SSH, 80, 443 allowed)';
+  } else {
+    summary = `UFW: configured (SSH, 80, 443, plus ${total} workspace rule(s))`;
+  }
+
+  return { applied, failures, summary };
+}
 
 /**
  * What the operator wants done, decided once.
@@ -102,27 +163,41 @@ export async function cmdHarden(cwd: string, options: { config?: string; on?: st
         // Rules derived from the workspace, not from this server alone: which
         // holes this box needs depends on where the apps that consume it run.
         const extra = fleetFirewallRules(workspace, serverName);
-        for (const cmd of sec.ufwConfigureCommands(extra)) {
-          await executor.exec(cmd);
+        // A refused rule must not abort the run — harden does many independent
+        // things and is meant to be re-runnable — but it must not be reported
+        // as applied either, so every result is collected and judged.
+        const attempts: UfwAttempt[] = [];
+        for (const step of sec.ufwConfigurePlan(extra)) {
+          attempts.push({ command: step.command, rule: step.rule, result: await executor.exec(step.command) });
         }
-        changes.push(
-          extra.length === 0
-            ? 'UFW: configured (SSH, 80, 443 allowed)'
-            : `UFW: configured (SSH, 80, 443, plus ${extra.length} workspace rule(s))`,
-        );
-        for (const rule of extra) {
-          ui.info(`  allowed ${rule.port}/tcp${rule.from ? ` from ${rule.from}` : ''} — ${rule.comment}`);
+        const outcome = summarizeUfwRun(attempts);
+
+        changes.push(outcome.summary);
+        for (const rule of outcome.applied) {
+          ui.info(`  allowed ${describeRule(rule)} — ${rule.comment}`);
+        }
+        for (const failure of outcome.failures) {
+          ui.error(`  ufw refused: ${failure.label}\n  ${failure.detail}`);
+        }
+        if (outcome.failures.length > 0) {
+          ui.warn('Those ports were left in whatever state they were in — not restricted. Fix the values above and re-run `shipnode harden`.');
         }
 
         // Accessory ports are Docker's, and Docker's own FORWARD rules are
         // consulted before ufw's — so the rules above are accepted, appear in
         // `ufw status`, and restrict nothing. DOCKER-USER is what actually holds.
         const dockerRules = sec.dockerUserRules(extra);
+        const dockerFailures: string[] = [];
         for (const cmd of dockerRules) {
-          await executor.exec(cmd);
+          const result = await executor.exec(cmd);
+          if (result.exitCode !== 0) {
+            dockerFailures.push((result.stderr || result.stdout).trim() || `exited ${result.exitCode} with no output`);
+          }
         }
-        if (dockerRules.length > 0) {
+        if (dockerRules.length > 0 && dockerFailures.length === 0) {
           changes.push('DOCKER-USER: container ports restricted to their declared consumers');
+        } else if (dockerFailures.length > 0) {
+          ui.error(`DOCKER-USER rules failed — the container ports above are still reachable from anywhere:\n  ${dockerFailures.join('\n  ')}`);
         }
       }
 
