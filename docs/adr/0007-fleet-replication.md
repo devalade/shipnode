@@ -1,5 +1,7 @@
 # Fleet replication: one app on N servers behind a load balancer you own
 
+> **Partly superseded by [ADR-0008](0008-reactive-health.md).** The shape below is current — a fleet is still an `on` target resolving to more than one server, still rolled one replica at a time, still blue-green within a replica. What went away is the drain machinery this document builds that roll on: there is no readiness endpoint, no drain sentinel, no `drainWait`, no `batch`, and no `drain`/`undrain` commands. A replica is never taken out of rotation to deploy it. ADR-0008 lists section by section what it replaces; read it before treating anything here as the contract.
+
 An app whose `on` target resolves to more than one server is a **fleet**. Deploys roll through its replicas a batch at a time, draining each out of rotation before touching it. Everything about a single-server deploy is unchanged; a fleet is a loop above it.
 
 ## Shipnode does not manage the load balancer
