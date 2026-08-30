@@ -2,9 +2,9 @@
 
 All notable changes to `@devalade/shipnode` will be documented here.
 
-## [Unreleased]
+## [3.2.0-beta.0] - 2026-08-30
 
-### Breaking (3.2.0 alphas)
+### Breaking
 
 - **`.servers({ user, hosts })` replaces the named-servers record.** The host string is the server's identity everywhere — `on`, `--on`, accessory `on`, status output — and the order of `hosts` is deployment order. Every key beside `hosts` — `user`, `port`, `identityFile`, `proxyMode`, `proxyCommand` — is the default for all of them, and one host departs from the defaults by being an object (`{ host: '1.2.3.4', port: 2222 }`) rather than a string, keeping every default it does not name. `user@host` on a string is the shorthand for overriding just the user; a host settling for nothing gets `root` on port 22. The old record form still parses but is undocumented.
 - **`privateHost` is removed.** Everything it did works over `host`: the load balancer dials the public address, replicas answer on every interface, and cross-server accessory traffic uses the accessory server's host. Cross-region fleets — which have no private network — are now possible.
@@ -56,6 +56,9 @@ All notable changes to `@devalade/shipnode` will be documented here.
 - **An accessory published only on loopback but consumed from another server** is now a config error rather than a runtime connection failure: no connection string can reach `127.0.0.1` on another machine.
 - **SSH keepalives on long-lived sessions** — `deploy --watch` and `monitor` sit idle between commands, where a NAT or firewall timeout would silently drop the connection and fail the next exec. Connections now send keepalives every 15s, and `connect` starts from a fresh client so reconnecting doesn't accumulate listeners.
 - **`.env` symlinks survive a rebuild** — the build-output symlink logic moved to `envSymlinkCommand` and now re-runs after every hot-sync build, since a build that wipes and recreates its output directory takes the symlink with it. The initial deploy path is unchanged.
+- **Accessory firewall rules named a server's config key instead of its address.** The rule source came from the `servers` record key. Under `.servers({ hosts })` the key *is* the host, so this was accidentally right; under the legacy named record it emitted `ufw allow from web-a`, which is not an address ufw can act on.
+- **`harden` reported firewall rules it never applied.** The executor resolves on a non-zero exit, so a rule ufw refused was discarded silently while the run still printed `allowed 5432/tcp from ...` and summarised the count as applied — an open accessory port reported as a closed one. Every ufw command's exit code is now checked, failures are shown with ufw's own stderr, and the summary counts only what landed. The `DOCKER-USER` script had the same hole behind its trailing persist step and now fails closed.
+- **A legacy `servers` record could lose a server silently.** The parser decided between the two forms by testing for a `hosts` key alone, so a record that happened to name a server `hosts` was read as the new form and its sibling servers were stripped by validation without an error.
 
 ## [3.2.0-alpha.0] - 2026-07-11
 
