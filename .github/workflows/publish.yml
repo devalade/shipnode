@@ -11,6 +11,15 @@ on:
           - patch
           - minor
           - major
+          - prerelease
+          - prepatch
+          - preminor
+          - premajor
+      preid:
+        description: 'Prerelease identifier, for the pre* bumps (alpha, beta, rc)'
+        required: false
+        type: string
+        default: 'beta'
 
 jobs:
   release:
@@ -40,19 +49,50 @@ jobs:
 
       - name: Bump version and tag
         id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          PREID: ${{ inputs.preid }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          VERSION=$(npm version ${{ github.event.inputs.bump }} --no-git-tag-version)
+
+          if [[ "$BUMP" == pre* ]]; then
+            VERSION=$(npm version "$BUMP" --preid "$PREID" --no-git-tag-version)
+          else
+            VERSION=$(npm version "$BUMP" --no-git-tag-version)
+          fi
+
+          # The npm dist-tag. A prerelease must never take `latest`: that is the
+          # version every plain `npm install` resolves to, and pointing it at a
+          # beta ships an unfinished release to everyone. 3.2.0-beta.0 publishes
+          # under `beta`, and `latest` stays on the current stable line.
+          if [[ "$VERSION" == *-* ]]; then
+            SUFFIX="${VERSION#*-}"
+            DIST_TAG="${SUFFIX%%.*}"
+            PRERELEASE=true
+          else
+            DIST_TAG=latest
+            PRERELEASE=false
+          fi
+
           git add package.json
-          git commit -m "chore: release ${VERSION}"
+          git commit -m "Release ${VERSION}"
           git tag "${VERSION}"
-          git push origin HEAD:v2
+          # The branch this run was dispatched from, not a hardcoded one: the
+          # release line moves (v2, v3, …) and pushing the commit onto a branch
+          # the release did not come from puts an untested bump on it.
+          git push origin "HEAD:${GITHUB_REF_NAME}"
           git push origin "${VERSION}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "version=${VERSION}"
+            echo "dist_tag=${DIST_TAG}"
+            echo "prerelease=${PRERELEASE}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm
-        run: pnpm publish --access public --no-git-checks
+        run: pnpm publish --access public --no-git-checks --tag "${{ steps.version.outputs.dist_tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -60,4 +100,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: true
