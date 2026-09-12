@@ -90,11 +90,20 @@ export class CloudflareApi {
   }
 
   /**
-   * Idempotent: creates a record if none exists for the hostname, or updates
-   * the existing one to point at `content`. Returns the resulting record.
+   * Idempotent: creates a record if none exists for the hostname *and type*,
+   * or updates the existing one to point at `content`. Returns the resulting
+   * record.
+   *
+   * Matching on type as well as name matters: a hostname commonly carries
+   * several records. An apex with Cloudflare Email Routing has MX and TXT
+   * records, and matching on name alone would hand back an MX record to be
+   * rewritten as the tunnel's CNAME — which Cloudflare rejects with "This
+   * record is managed by Email Routing", failing `cloudflare init` on any
+   * domain that receives mail.
    */
   async upsertDnsRecord(zoneId: string, record: { type: string; name: string; content: string; proxied?: boolean }): Promise<CfDnsRecord> {
-    const existing = await this.getDnsRecords(zoneId, record.name);
+    const forHostname = await this.getDnsRecords(zoneId, record.name);
+    const existing = forHostname.filter((r) => r.type === record.type);
     if (existing.length === 0) return this.createDnsRecord(zoneId, record);
     return this.updateDnsRecord(zoneId, existing[0].id, record);
   }
