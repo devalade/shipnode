@@ -134,6 +134,7 @@ shipnode secret set POSTGRES_PASSWORD
 
 ### Backups
 ```ts
+.database({ type: 'sqlite', name: 'storage/db.sqlite3' }) // or postgres / mysql
 .backup({
   s3Bucket: 'my-backups',
   s3Endpoint: 'https://<account>.r2.cloudflarestorage.com',
@@ -148,6 +149,17 @@ shipnode backup run
 shipnode backup list
 shipnode backup restore latest --target /tmp/restore
 ```
+
+**SQLite backup mechanics:**
+- Uses `sqlite3 ... ".backup"` so the copy is WAL-safe, not a raw file copy.
+- Relative paths resolve to `$DEPLOY_PATH/shared/...` first (survives releases), then `$DEPLOY_PATH/current/...`. Absolute paths are left as-is.
+- **Snapshot:** uploads `db_*.sqlite` to S3 under the `db/` prefix.
+- **Restic:** restic snapshot tagged `db`.
+- `backup.env` gets `DB_TYPE=sqlite` and `DB_NAME`.
+- `shipnode backup setup` installs `sqlite3` when the config is SQLite.
+- Restore help includes `sqlite3 /path/to/app.db ".restore 'db.sqlite'"`.
+- If the file is missing, the run logs a skip and continues with `shared/` files.
+- **Operational rule:** Put the DB under `shared/` (or an absolute path) so it is not tied to a single release. After changing database or backup config, re-run `shipnode backup setup` so the remote script and env pick up the change.
 
 ### Security / Cloudflare
 ```bash
