@@ -8,18 +8,36 @@ const BACKUP_SCRIPT_PATH = '/usr/local/bin/shipnode-backup.sh';
 const BACKUP_ENV_PATH = '/etc/shipnode/backup.env';
 const TIMER_NAME = 'shipnode-backup';
 
-interface ScriptContext {
+export interface ScriptContext {
   remotePath: string;
   hostname: string;
   db?: NetworkDatabaseConfig | { type: 'sqlite'; name: string };
   cfg: Required<Pick<BackupConfig, 's3Bucket'>> & BackupConfig;
 }
 
+/** Prefer shared/ (survives releases) then current/; leave absolute paths alone. */
+function sqliteResolveSnippet(): string {
+  return `
+resolve_sqlite() {
+  local n="$1"
+  case "$n" in
+    /*) echo "$n" ;;
+    *)
+      n="\${n#./}"
+      if [ -f "$DEPLOY_PATH/shared/$n" ]; then echo "$DEPLOY_PATH/shared/$n"
+      else echo "$DEPLOY_PATH/current/$n"
+      fi
+      ;;
+  esac
+}
+`.trim();
+}
+
 // ─────────────────────────────────────────────────────────────
 // Snapshot strategy (original, back-compat)
 // ─────────────────────────────────────────────────────────────
 
-function buildSnapshotScript(ctx: ScriptContext): string {
+export function buildSnapshotScript(ctx: ScriptContext): string {
   const { cfg, db, remotePath } = ctx;
   const prefix = cfg.s3Prefix ? cfg.s3Prefix.replace(/\/$/, '') + '/' : '';
   const endpointFlag = cfg.s3Endpoint ? `--endpoint-url "${cfg.s3Endpoint}"` : '';
@@ -35,7 +53,21 @@ ${netDb.type === 'mysql' ? `mysqldump -h "${netDb.host}" -P "${netDb.port ?? 330
 aws s3 cp "$DB_FILE" "s3://${cfg.s3Bucket}/${prefix}db/$(basename "$DB_FILE")" ${endpointFlag}
 rm -f "$DB_FILE"
 `
-    : '';
+    : db?.type === 'sqlite'
+      ? `
+# SQLite backup (consistent copy via the backup API — WAL-safe)
+${sqliteResolveSnippet()}
+SQLITE_SRC="$(resolve_sqlite "${db.name}")"
+if [ -f "$SQLITE_SRC" ]; then
+  DB_FILE="/tmp/db_${ts}.sqlite"
+  sqlite3 "$SQLITE_SRC" ".backup '$DB_FILE'"
+  aws s3 cp "$DB_FILE" "s3://${cfg.s3Bucket}/${prefix}db/$(basename "$DB_FILE")" ${endpointFlag}
+  rm -f "$DB_FILE"
+else
+  echo "[shipnode-backup] SQLite file not found: $SQLITE_SRC — skipping db"
+fi
+`
+      : '';
 
   return `#!/bin/bash
 set -euo pipefail
@@ -60,7 +92,7 @@ echo "[shipnode-backup] Done"
 // Restic strategy (incremental, block-dedup, encrypted)
 // ─────────────────────────────────────────────────────────────
 
-function buildResticScript(ctx: ScriptContext): string {
+export function buildResticScript(ctx: ScriptContext): string {
   const { cfg, db, remotePath, hostname } = ctx;
   const netDb = db && db.type !== 'sqlite' ? db : undefined;
   const keepDaily = cfg.keepDaily ?? 7;
@@ -78,7 +110,23 @@ elif [ "$DB_TYPE" = "mysql" ]; then
     | restic backup --stdin --stdin-filename db.sql --tag db --host "${hostname}"
 fi
 `
-    : '';
+    : db?.type === 'sqlite'
+      ? `
+# Consistent SQLite copy via the backup API, then restic (WAL-safe)
+${sqliteResolveSnippet()}
+if [ "$DB_TYPE" = "sqlite" ]; then
+  SQLITE_SRC="$(resolve_sqlite "$DB_NAME")"
+  if [ -f "$SQLITE_SRC" ]; then
+    SQLITE_COPY="/tmp/db_$(date +%Y%m%d_%H%M%S).sqlite"
+    sqlite3 "$SQLITE_SRC" ".backup '$SQLITE_COPY'"
+    restic backup "$SQLITE_COPY" --tag db --host "${hostname}"
+    rm -f "$SQLITE_COPY"
+  else
+    echo "[shipnode-backup] SQLite file not found: $SQLITE_SRC — skipping db"
+  fi
+fi
+`
+      : '';
 
   return `#!/bin/bash
 set -euo pipefail
@@ -116,7 +164,7 @@ echo "[shipnode-backup] Done"
 // Env file passed to the script via systemd EnvironmentFile
 // ─────────────────────────────────────────────────────────────
 
-function buildBackupEnv(
+export function buildBackupEnv(
   strategy: 'snapshot' | 'restic',
   db: ShipnodeConfig['database'],
   creds: { awsKeyId?: string; awsSecret?: string; resticPassword?: string; resticRepository?: string },
@@ -133,7 +181,10 @@ function buildBackupEnv(
     // /root/.cache/restic across runs.
     lines.push(`HOME='/root'`);
   }
-  if (db && db.type !== 'sqlite') {
+  if (db?.type === 'sqlite') {
+    lines.push(`DB_TYPE='sqlite'`);
+    lines.push(`DB_NAME='${db.name}'`);
+  } else if (db) {
     lines.push(`DB_TYPE='${db.type}'`);
     lines.push(`DB_HOST='${db.host}'`);
     lines.push(`DB_PORT='${db.port}'`);
@@ -283,6 +334,14 @@ export async function cmdBackupSetup(
         );
       }
 
+      if (config.database?.type === 'sqlite') {
+        await ensureCommand(
+          executor,
+          'sqlite3',
+          'SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"; $SUDO apt-get update -qq && $SUDO apt-get install -y -qq sqlite3',
+        );
+      }
+
       const ctx: ScriptContext = {
         remotePath: config.remotePath,
         hostname: config.ssh.host,
@@ -411,6 +470,7 @@ export async function cmdBackupRestore(
         'Nothing has been applied — restored files are under the target dir. ' +
         'Apply manually, e.g.:\n' +
         '  psql -U <user> -d <db> < db.sql\n' +
+        '  sqlite3 /path/to/app.db ".restore \'db.sqlite\'"\n' +
         '  rsync -a shared/ /var/www/<app>/shared/',
       );
     },

@@ -2,6 +2,14 @@
 
 All notable changes to `@devalade/shipnode` will be documented here.
 
+## [3.2.0-beta.1] - 2026-09-18
+
+### Added
+- **SQLite in `shipnode backup`.** Snapshot and restic both copy the configured SQLite file with `sqlite3 .backup` (WAL-safe). Relative paths resolve under `shared/` first, then `current/`. `backup setup` installs `sqlite3` when the database is SQLite; restore notes include a `.restore` example.
+
+### Fixed
+- **Cloudflare DNS matched records by name alone**, so an existing record of the wrong type could be updated instead of the intended one.
+
 ## [3.2.0-beta.0] - 2026-08-30
 
 ### Breaking
