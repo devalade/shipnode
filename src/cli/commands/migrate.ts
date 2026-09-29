@@ -82,7 +82,11 @@ export async function cmdMigrate(cwd: string, options: { config?: string }): Pro
 
       // Reload PM2 if applicable
       const namespace = getDeploymentName(config);
-      if (app.appType === 'backend' && namespace) {
+      if (app.appType === 'backend' && app.runtime === 'watt') {
+        // Units and launchers embed the deploy path, so a restart would keep
+        // running from the old location. A deploy regenerates them.
+        ui.warn(`'${app.name}' uses the watt runtime: run 'shipnode deploy --app ${app.name}' to regenerate its systemd units for the new path.`);
+      } else if (app.appType === 'backend' && namespace) {
         const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
         const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
         ui.info('Reloading PM2 from new path...');

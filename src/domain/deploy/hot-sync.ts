@@ -12,6 +12,7 @@ import { DeployError } from '../../shared/errors.js';
 import { readDeployState, portFor } from './blue-green.js';
 import { runWithDotenv } from './dotenv.js';
 import { envSymlinkCommand } from './env-links.js';
+import { isWatt, resolveWattUnits, restartUnitCommand } from '../runtime/watt.js';
 
 /**
  * The `deploy --watch` inner loop: patch the *live* release in place and reload.
@@ -336,6 +337,18 @@ export class HotSync {
    */
   private async reload(): Promise<boolean> {
     if (!this.app.pm2) return false;
+
+    if (isWatt(this.app)) {
+      // Restart the serving colour's unit and the workers in place. Launchers
+      // and configs live in the live release, so a restart re-reads them.
+      const units = await resolveWattUnits(this.executor, this.appPath, this.app, { colors: 'active' });
+      try {
+        for (const unit of units) await this.executor.execOrThrow(restartUnitCommand(unit));
+      } catch (error) {
+        throw new DeployError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`, 'start');
+      }
+      return true;
+    }
 
     const files = this.app.zeroDowntime
       ? [`${this.liveDir}/ecosystem.web.config.cjs`, `${this.liveDir}/ecosystem.workers.config.cjs`]

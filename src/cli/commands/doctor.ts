@@ -42,6 +42,10 @@ function checkLocal(config: ShipnodeConfig): void {
     issues.push('PM2 apps are not configured for backend app');
   }
 
+  for (const app of config.apps) {
+    if (app.runtime === 'watt' && !app.watt?.main) issues.push(`App '${app.name}' uses runtime 'watt' but has no watt.main`);
+  }
+
   if (issues.length === 0) {
     ui.success('Local configuration looks good');
   } else {
@@ -59,7 +63,8 @@ export async function checkRemote(
   ui.info('Checking remote server...');
 
   const needsNode = config.apps.length > 0;
-  const needsPm2 = config.apps.some((app) => app.appType === 'backend' && app.pm2);
+  const needsPm2 = config.apps.some((app) => app.appType === 'backend' && app.pm2 && app.runtime !== 'watt');
+  const needsSystemd = config.apps.some((app) => app.appType === 'backend' && app.runtime === 'watt');
   const needsCaddy = config.apps.some((app) => app.domain);
   const needsDocker = Object.keys(config.accessories ?? {}).length > 0;
 
@@ -68,6 +73,7 @@ export async function checkRemote(
   const checks = [
     ...(needsNode ? [{ name: 'Node', cmd: `${mise}; mise exec "node@${nodeVersion}" -- node --version` }] : []),
     ...(needsPm2 ? [{ name: 'PM2', cmd: `${mise}; mise exec "node@${nodeVersion}" -- pm2 --version` }] : []),
+    ...(needsSystemd ? [{ name: 'systemd', cmd: 'systemctl --version' }] : []),
     ...(needsCaddy ? [{ name: 'Caddy', cmd: 'caddy version' }] : []),
     ...(needsDocker ? [{ name: 'Docker', cmd: 'docker --version' }] : []),
     { name: 'rsync', cmd: 'rsync --version' },

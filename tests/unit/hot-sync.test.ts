@@ -231,6 +231,30 @@ describe('HotSync — remote install and build', () => {
   });
 });
 
+describe('HotSync — reload on the watt runtime', () => {
+  it('restarts the serving colour and workers via systemd, never PM2', async () => {
+    const config = makeConfig({
+      pm2: { apps: [{ name: 'api', port: 3000 }, { name: 'mailer', command: 'node mailer.js' }] },
+      runtime: 'watt',
+      watt: { main: 'dist/server.js' },
+      zeroDowntime: true,
+      domain: 'example.com',
+    });
+    const executor = healthyExecutor().when(
+      (cmd) => cmd.includes('deploy-state.json'),
+      { stdout: JSON.stringify({ activeColor: 'green', bluePort: 3000, greenPort: 13000 }), stderr: '', exitCode: 0 },
+    );
+
+    const result = await makeHotSync(executor, config).run(['src/index.ts']);
+
+    const commands = executor.getHistory().map((entry) => entry.command);
+    expect(commands.some((c) => c.includes('systemctl restart shipnode-api-green'))).toBe(true);
+    expect(commands.some((c) => c.includes('systemctl restart shipnode-api-mailer'))).toBe(true);
+    expect(commands.some((c) => c.includes('pm2 reload'))).toBe(false);
+    expect(result.reloaded).toBe(true);
+  });
+});
+
 describe('HotSync — reload', () => {
   it('reloads the recreate ecosystem file for a non-blue-green app', async () => {
     const executor = healthyExecutor();
