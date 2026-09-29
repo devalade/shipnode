@@ -32,6 +32,7 @@ export default defineConfig({
             { label: 'shipnode.config.ts', slug: 'docs/configuration' },
             { label: 'Multi-environment', slug: 'docs/environments' },
             { label: 'Workers', slug: 'docs/workers' },
+            { label: 'wattpm runtime', slug: 'docs/watt' },
           ],
         },
         {

@@ -127,6 +127,7 @@ Registry passwords are read from environment variables on the remote host. If `R
 | `.accessories({ name: config })` | Workspace-level Docker containers shared by apps. |
 | `.caddy({ append })` | Append raw Caddy directives inside the generated site block. |
 | `.pm2(name, opts?)` | PM2 app name + options (`{ instances, exec_mode }`). Backend only. |
+| `.runtime('watt', { main })` | Opt in to the [wattpm runtime](/docs/watt/): the web app runs as worker threads sharing one port. PM2 is the default. |
 | `.port(n)` | App's listening port. Caddy reverse-proxies to it. |
 | `.domain(host)` | Public hostname. Caddy issues + renews certs. |
 | `.healthCheck(path, opts?)` | GET path the deploy must hit after reload. |

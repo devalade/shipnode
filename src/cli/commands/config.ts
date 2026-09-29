@@ -15,17 +15,27 @@ function showApp(app: ShipnodeApp, nodeVersion: string): void {
     ['keepReleases', String(app.keepReleases)],
   ]);
 
+  if (app.runtime === 'watt' && app.watt) {
+    ui.section('Runtime: watt (wattpm)', [
+      ['main', app.watt.main],
+      ['module', app.watt.module ?? '@platformatic/node'],
+      ['maxHeapUsed', app.watt.maxHeapUsed ?? '(from maxMemory)'],
+    ]);
+  }
+
   if (app.pm2) {
+    const watt = app.runtime === 'watt';
     for (const pm2App of app.pm2.apps) {
       const rows: [string, string][] = [['name', pm2App.name]];
       if (pm2App.command) rows.push(['command', pm2App.command]);
       if (pm2App.port !== undefined) rows.push(['port', String(pm2App.port)]);
-      if (pm2App.instances !== undefined) rows.push(['instances', String(pm2App.instances)]);
+      if (pm2App.instances !== undefined) rows.push([watt && pm2App.port !== undefined ? 'threads' : 'instances', String(pm2App.instances)]);
       if (pm2App.maxMemory !== undefined) rows.push(['maxMemory', pm2App.maxMemory]);
       if (pm2App.env) {
         for (const [k, v] of Object.entries(pm2App.env)) rows.push([`env.${k}`, v]);
       }
-      ui.section(pm2App.port !== undefined ? `PM2 process: ${pm2App.name} (web)` : `PM2 process: ${pm2App.name}`, rows);
+      const label = watt ? 'Process' : 'PM2 process';
+      ui.section(pm2App.port !== undefined ? `${label}: ${pm2App.name} (web)` : `${label}: ${pm2App.name}`, rows);
     }
   }
 

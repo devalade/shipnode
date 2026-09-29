@@ -120,7 +120,7 @@ program
   .command('env')
   .description('Upload local .env file to the server')
   .option('--file <path>', 'Path to .env file to upload (default: .env from config)')
-  .option('--no-reload', 'Upload without reloading running PM2 processes')
+  .option('--no-reload', 'Upload without reloading running processes')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
@@ -140,7 +140,7 @@ program
   .command('logs')
   .description('Show application logs')
   .option('--lines <n>', 'Number of log lines to show', '100')
-  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--process <name>', 'Target a specific process (PM2 app or watt unit)')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
@@ -149,7 +149,7 @@ program
 program
   .command('restart')
   .description('Restart the application')
-  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--process <name>', 'Target a specific process (PM2 app or watt unit)')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
@@ -158,7 +158,7 @@ program
 program
   .command('stop')
   .description('Stop the application')
-  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--process <name>', 'Target a specific process (PM2 app or watt unit)')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
@@ -166,7 +166,7 @@ program
 
 program
   .command('metrics')
-  .description('Open unfiltered PM2 monit over SSH (escape hatch; shipnode monitor is namespaced)')
+  .description('Open PM2 monit (or systemctl status for watt apps) over SSH (escape hatch; shipnode monitor is namespaced)')
   .option('--app <name>', 'Target a specific app')
   .option('--on <server>', 'Target a specific replica of a fleet')
   .option('--config <path>', 'Use a specific config file')
@@ -174,7 +174,7 @@ program
 
 program
   .command('monitor')
-  .description('Live TUI dashboard with PM2 stats, system metrics, and logs')
+  .description('Live TUI dashboard with process stats (PM2 or systemd), system metrics, and logs')
   .option('--interval <seconds>', 'Polling interval in seconds (default: 2)', '2')
   .option('--app <name>', 'Target a specific app')
   .option('--on <server>', 'Watch one replica (required for a live TUI on a fleet)')

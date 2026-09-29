@@ -87,6 +87,7 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
   cancelIfNeeded(remotePath);
 
   let pm2Name = '';
+  let wattMain: string | undefined;
   let backendPort = defaultPort;
   let domain = '';
   let healthCheckPath = '/health';
@@ -104,6 +105,24 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     const pm2Val = await text({ message: 'PM2 app name', initialValue: appName });
     cancelIfNeeded(pm2Val);
     pm2Name = pm2Val as string;
+
+    const runtimeVal = await select({
+      message: 'Process runtime',
+      options: [
+        { value: 'pm2', label: 'PM2 (default)' },
+        { value: 'watt', label: 'wattpm — worker threads sharing one port (Linux, opt-in)' },
+      ],
+      initialValue: 'pm2',
+    });
+    cancelIfNeeded(runtimeVal);
+    if (runtimeVal === 'watt') {
+      const mainVal = await text({
+        message: 'Entry file each worker thread loads (must listen on process.env.PORT)',
+        initialValue: 'dist/server.js',
+      });
+      cancelIfNeeded(mainVal);
+      wattMain = mainVal as string;
+    }
 
     const portVal = await text({ message: 'Backend port', initialValue: String(defaultPort) });
     cancelIfNeeded(portVal);
@@ -203,6 +222,7 @@ export async function cmdInit(cwd: string, options: { nonInteractive?: boolean; 
     sshPort,
     remotePath: remotePath as string,
     pm2Name,
+    wattMain,
     backendPort,
     domain: domain || undefined,
     healthCheckPath,
@@ -252,6 +272,7 @@ interface ConfigOptions {
   sshPort?: number;
   remotePath?: string;
   pm2Name?: string;
+  wattMain?: string;
   backendPort?: number;
   domain?: string;
   healthCheckPath?: string;
@@ -334,6 +355,10 @@ function generateConfig(opts: ConfigOptions): string {
 
   if (opts.app === 'backend') {
     lines.push(`  .port(${opts.backendPort ?? 3000})`);
+  }
+
+  if (opts.wattMain) {
+    lines.push(`  .runtime('watt', { main: '${opts.wattMain}' })`);
   }
 
   if (opts.domain) {
