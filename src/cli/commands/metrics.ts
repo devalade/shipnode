@@ -1,21 +1,24 @@
 import { execa } from 'execa';
 import { loadConfig } from '../../config/loader.js';
 import { getActiveApp } from '../../domain/workspace.js';
-import { getDeploymentName } from '../../domain/pm2/apps.js';
 import { getServerTargetResult } from '../../domain/servers.js';
 import { ui } from '../ui.js';
 
-export async function cmdMetrics(cwd: string, options: { config?: string; app?: string }): Promise<void> {
+export async function cmdMetrics(cwd: string, options: { config?: string; app?: string; on?: string }): Promise<void> {
   const config = await loadConfig(cwd, options.config);
   const app = options.app ? getActiveApp(config, options.app) : config.apps[0];
-  const target = getServerTargetResult(config, app.on);
+  const target = getServerTargetResult(
+    config,
+    options.on ?? app.on,
+    `App '${app.name}'`,
+  );
   if (target.isErr()) {
     ui.error(target.error.message);
     process.exit(1);
     return;
   }
 
-  if (app.appType !== 'backend' || !getDeploymentName({ ...config, apps: [app] } as any)) {
+  if (app.appType !== 'backend' || app.pm2?.apps[0]?.name === undefined) {
     throw new Error('Metrics only available for backend apps with PM2');
   }
 

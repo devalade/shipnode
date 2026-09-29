@@ -19,14 +19,20 @@ vi.mock('../../src/infrastructure/ssh/connection.js', () => ({
 
     async connect(ssh: { host: string }): Promise<void> {
       const release = releaseByHost.get(ssh.host) ?? null;
-      this.delegate
-        .when((cmd) => cmd.includes('pm2 jlist'), { stdout: '[]', stderr: '', exitCode: 0 })
-        .when((cmd) => cmd.includes('readlink'), {
-          stdout: release === null ? 'no current symlink' : `/var/www/app/api/releases/${release}`,
-          stderr: '',
-          exitCode: 0,
-        })
-        .when((cmd) => cmd.includes('ls -1t'), { stdout: '', stderr: '', exitCode: 0 });
+      const current = release === null ? 'none' : `/var/www/app/api/releases/${release}`;
+      const stdout = [
+        '@@SHIPNODE:sys@@',
+        'mem:2048 1024\nload:0.5 0.4 0.3\ncores:2\nuptime:1000\ndisk:40 10',
+        '@@SHIPNODE:lock@@',
+        '',
+        '@@SHIPNODE:a0-pm2@@',
+        '[]',
+        '@@SHIPNODE:a0-current@@',
+        current,
+        '@@SHIPNODE:a0-releases@@',
+        '',
+      ].join('\n');
+      this.delegate.when(() => true, { stdout, stderr: '', exitCode: 0 });
     }
 
     disconnect(): void {}

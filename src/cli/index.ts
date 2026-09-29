@@ -144,7 +144,7 @@ program
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
-  .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), process: opts.process, app: opts.app, config: opts.config }));
+  .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), process: opts.process, app: opts.app, config: opts.config, on: opts.on }));
 
 program
   .command('restart')
@@ -166,8 +166,9 @@ program
 
 program
   .command('metrics')
-  .description('Open PM2 monitoring dashboard')
+  .description('Open unfiltered PM2 monit over SSH (escape hatch; shipnode monitor is namespaced)')
   .option('--app <name>', 'Target a specific app')
+  .option('--on <server>', 'Target a specific replica of a fleet')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdMetrics(process.cwd(), opts));
 
@@ -176,6 +177,9 @@ program
   .description('Live TUI dashboard with PM2 stats, system metrics, and logs')
   .option('--interval <seconds>', 'Polling interval in seconds (default: 2)', '2')
   .option('--app <name>', 'Target a specific app')
+  .option('--on <server>', 'Watch one replica (required for a live TUI on a fleet)')
+  .option('--once', 'Collect one snapshot and exit')
+  .option('--json', 'Print one snapshot as JSON (implies --once)')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdMonitor(process.cwd(), opts));
 
