@@ -79,6 +79,90 @@ function belongsToNamespace(pm2Name: string, namespace: string): boolean {
   return pm2Name === namespace || pm2Name.startsWith(`${namespace}-`);
 }
 
+const UNIT_PREFIX = 'shipnode-';
+const NS_UNSET = 18446744073709551615n;
+
+function bigOrNull(raw: string | undefined): bigint | null {
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return null;
+  return BigInt(raw.trim());
+}
+
+/** Map systemd's ActiveState onto the PM2 vocabulary the dashboard already colours. */
+function unitStatus(active: string, sub: string): string {
+  if (active === 'active') return 'online';
+  if (active === 'failed') return 'errored';
+  if (active === 'inactive') return 'stopped';
+  if (active === 'activating' && sub === 'auto-restart') return 'errored';
+  if (active === 'deactivating') return 'stopping';
+  return active === '' ? 'unknown' : active;
+}
+
+/**
+ * Parse the watt `units` observe section. `web` identifies the wattpm unit(s)
+ * (any colour) so they can be labelled as threads; every other unit is a
+ * plain worker process.
+ */
+export function parseSystemdUnits(
+  stdout: string,
+  namespace: string,
+  web?: { unitBase: string; instances: number },
+): ProcessInfo[] {
+  const props = new Map<string, Record<string, string>>();
+  const cpuAfter = new Map<string, bigint>();
+  let wallNs = 0n;
+  let current: Record<string, string> | null = null;
+
+  for (const line of stdout.split('\n')) {
+    if (line.startsWith('@unit ')) {
+      current = {};
+      props.set(line.slice(6).trim(), current);
+    } else if (line.startsWith('@wall ')) {
+      wallNs = bigOrNull(line.slice(6)) ?? 0n;
+      current = null;
+    } else if (line.startsWith('@cpu ')) {
+      const [unit, value] = line.slice(5).trim().split(/\s+/);
+      const parsed = bigOrNull(value);
+      if (unit !== undefined && parsed !== null) cpuAfter.set(unit, parsed);
+    } else if (current !== null) {
+      const eq = line.indexOf('=');
+      if (eq > 0) current[line.slice(0, eq)] = line.slice(eq + 1).trim();
+    }
+  }
+
+  const result: ProcessInfo[] = [];
+  for (const [unit, p] of props) {
+    if (p.LoadState !== 'loaded') continue;
+    const before = bigOrNull(p.CPUUsageNSec);
+    const after = cpuAfter.get(unit);
+    const cpu =
+      before !== null && before !== NS_UNSET && after !== undefined && after >= before && wallNs > 0n
+        ? Math.round(Number(((after - before) * 1000n) / wallNs)) / 10
+        : 0;
+    const mem = bigOrNull(p.MemoryCurrent);
+    const pid = Number(p.MainPID);
+    const started = Number(p.started);
+    const isWeb = web !== undefined && (unit === web.unitBase || unit === `${web.unitBase}-blue` || unit === `${web.unitBase}-green`);
+    const exit = Number(p.ExecMainStatus);
+
+    result.push({
+      name: resolveShortName(unit.startsWith(UNIT_PREFIX) ? unit.slice(UNIT_PREFIX.length) : unit, namespace),
+      pm2Name: unit,
+      supervisor: 'systemd',
+      pid: Number.isFinite(pid) && pid > 0 ? pid : null,
+      status: unitStatus(p.ActiveState ?? '', p.SubState ?? ''),
+      cpu,
+      memory: mem === null || mem === NS_UNSET ? 0 : Math.round(Number(mem) / (1024 * 1024)),
+      uptime: Number.isFinite(started) && started > 0 && p.ActiveState === 'active' ? started * 1000 : 0,
+      restarts: Number(p.NRestarts) || 0,
+      execMode: isWeb ? 'threads' : 'fork',
+      instances: isWeb ? web.instances : 1,
+      unstableRestarts: 0,
+      exitCode: Number.isFinite(exit) ? exit : null,
+    });
+  }
+  return result;
+}
+
 export function parseSystemStats(stdout: string): SystemInfo {
   const lines = stdout.trim().split('\n').flatMap((line) => line ? [line] : []);
   const result: SystemInfo = {

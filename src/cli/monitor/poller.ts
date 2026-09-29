@@ -79,7 +79,19 @@ export async function collectLogs(
   executor: RemoteExecutor,
   namespace: string,
   lines: number = 20,
+  supervisor?: 'systemd',
 ): Promise<string> {
+  if (supervisor === 'systemd') {
+    // `namespace` is a unit name when a single process is selected, or the
+    // deployment namespace when tailing everything (matches its units by glob).
+    const units = namespace.startsWith('shipnode-')
+      ? `-u ${shellQuote(namespace)}`
+      : `-u ${shellQuote(`shipnode-${namespace}`)} -u ${shellQuote(`shipnode-${namespace}-*`)}`;
+    const journal = await executor.exec(
+      `S=$([ "$(id -u)" = 0 ] || echo sudo); $S journalctl ${units} -n ${lines} --no-pager 2>&1 || echo "(no logs)"`,
+    );
+    return journal.stdout;
+  }
   const result = await executor.exec(
     `${MISE} && pm2 logs ${shellQuote(namespace)} --lines ${lines} --nostream 2>&1 || echo "(no logs)"`,
   );

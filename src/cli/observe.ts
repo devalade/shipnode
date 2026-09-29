@@ -169,7 +169,7 @@ function printServer(server: ServerSnapshot): void {
       continue;
     }
     for (const process of app.processes) {
-      ui.section(`    PM2: ${process.name}`, [
+      ui.section(`    ${process.supervisor === 'systemd' ? 'systemd' : 'PM2'}: ${process.name}`, [
         ['Status', process.status],
         ['PID', String(process.pid ?? 'N/A')],
         ['Restarts', String(process.restarts)],

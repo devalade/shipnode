@@ -3,6 +3,7 @@ import { loadConfig } from '../../config/loader.js';
 import { getActiveApp } from '../../domain/workspace.js';
 import { getServerTargetResult } from '../../domain/servers.js';
 import { ui } from '../ui.js';
+import { isWatt } from '../../domain/runtime/watt.js';
 
 export async function cmdMetrics(cwd: string, options: { config?: string; app?: string; on?: string }): Promise<void> {
   const config = await loadConfig(cwd, options.config);
@@ -21,10 +22,15 @@ export async function cmdMetrics(cwd: string, options: { config?: string; app?: 
   if (app.appType !== 'backend' || app.pm2?.apps[0]?.name === undefined) {
     throw new Error('Metrics only available for backend apps with PM2');
   }
+  const namespace = app.pm2.apps[0].name;
 
   const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
   const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-  const remoteCmd = `${mise}; mise exec "node@${nodeVersion}" -- pm2 monit`;
+  // systemd has no `pm2 monit`; a refreshing `systemctl status` shows the same
+  // essentials per unit (state, memory, CPU time, cgroup processes, recent log).
+  const remoteCmd = isWatt(app)
+    ? `watch -n 2 -t "systemctl status --no-pager 'shipnode-${namespace}' 'shipnode-${namespace}-*'"`
+    : `${mise}; mise exec "node@${nodeVersion}" -- pm2 monit`;
 
   const sshArgs = [
     '-t',

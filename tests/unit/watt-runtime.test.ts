@@ -173,3 +173,128 @@ describe('resolveWattUnits', () => {
     await expect(resolveWattUnits(new FakeRemoteExecutor(), '/x', cfg.apps[0], { colors: 'active', process: 'nope' })).rejects.toThrow(/No process named/);
   });
 });
+
+// ── observe / health / monitor on watt ───────────────────────────────────────
+
+import { parseSystemdUnits } from '../../src/domain/observe/parse.js';
+import { buildObserveScript, wattCandidateUnits } from '../../src/domain/observe/script.js';
+import { HealthCheckService } from '../../src/services/health.service.js';
+import { restartProcess } from '../../src/cli/monitor/actions.js';
+import { collectLogs } from '../../src/cli/monitor/poller.js';
+
+const UNITS_OUTPUT = `@unit shipnode-api-green
+LoadState=loaded
+ActiveState=active
+SubState=running
+MainPID=4242
+MemoryCurrent=268435456
+NRestarts=0
+ExecMainStatus=0
+CPUUsageNSec=1000000000
+started=1790000000
+@unit shipnode-api-blue
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+MainPID=0
+MemoryCurrent=[not set]
+NRestarts=0
+ExecMainStatus=0
+CPUUsageNSec=[not set]
+started=
+@unit shipnode-api-mailer
+LoadState=loaded
+ActiveState=activating
+SubState=auto-restart
+MainPID=0
+MemoryCurrent=[not set]
+NRestarts=3
+ExecMainStatus=1
+CPUUsageNSec=5
+started=
+@wall 200000000
+@cpu shipnode-api-green 1100000000
+@cpu shipnode-api-mailer 5
+`;
+
+describe('parseSystemdUnits', () => {
+  const procs = parseSystemdUnits(UNITS_OUTPUT, 'api', { unitBase: 'shipnode-api', instances: 4 });
+
+  it('drops units that do not exist', () => {
+    expect(procs.map((p) => p.pm2Name)).toEqual(['shipnode-api-green', 'shipnode-api-mailer']);
+  });
+  it('maps state, memory, pid and uptime onto the dashboard vocabulary', () => {
+    const web = procs[0];
+    expect(web).toMatchObject({ status: 'online', pid: 4242, memory: 256, supervisor: 'systemd', execMode: 'threads', instances: 4, uptime: 1790000000_000 });
+  });
+  it('derives CPU% from two samples of the cumulative counter', () => {
+    // 100ms of CPU over a 200ms window = 50%
+    expect(procs[0].cpu).toBe(50);
+  });
+  it('reports a crash-looping worker as errored with its restart count', () => {
+    expect(procs[1]).toMatchObject({ status: 'errored', restarts: 3, pid: null, execMode: 'fork', exitCode: 1 });
+  });
+  it('tolerates empty output', () => {
+    expect(parseSystemdUnits('', 'api')).toEqual([]);
+  });
+});
+
+describe('observe script for watt apps', () => {
+  it('samples systemd units instead of pm2', () => {
+    const cfg = config();
+    const script = buildObserveScript(cfg, { apps: [cfg.apps[0]] });
+    expect(script).toContain('systemctl show');
+    expect(script).not.toContain('pm2 jlist');
+    expect(wattCandidateUnits(cfg.apps[0])).toEqual([
+      'shipnode-api', 'shipnode-api-blue', 'shipnode-api-green', 'shipnode-api-mailer',
+    ]);
+  });
+});
+
+describe('deploy health check on watt', () => {
+  const app = () => config({ zeroDowntime: false }).apps[0];
+  const svc = (e: FakeRemoteExecutor) => new HealthCheckService(e, config());
+  const ok = (e: FakeRemoteExecutor) => e.when((c) => c.includes('curl'), { stdout: '200 5', stderr: '', exitCode: 0 });
+
+  it('passes when every unit is active with no restarts', async () => {
+    const e = ok(new FakeRemoteExecutor()).when((c) => c.includes('systemctl show'), { stdout: 'active 0', stderr: '', exitCode: 0 });
+    await expect(svc(e).perform({ ...app(), healthCheck: { ...app().healthCheck, startupDelay: 0 } })).resolves.toBeDefined();
+    expect(e.getHistory().some((h) => h.command.includes('pm2'))).toBe(false);
+  });
+  it('fails on an inactive unit and includes journal output', async () => {
+    const e = ok(new FakeRemoteExecutor())
+      .when((c) => c.includes('journalctl'), { stdout: 'boom: cannot find module', stderr: '', exitCode: 0 })
+      .when((c) => c.includes('systemctl show'), { stdout: 'failed 0', stderr: '', exitCode: 0 });
+    await expect(svc(e).perform({ ...app(), healthCheck: { ...app().healthCheck, startupDelay: 0 } })).rejects.toThrow(/state=failed[\s\S]*cannot find module/);
+  });
+  it('fails a unit that systemd already restarted (crash loop)', async () => {
+    const e = ok(new FakeRemoteExecutor()).when((c) => c.includes('systemctl show'), { stdout: 'active 2', stderr: '', exitCode: 0 });
+    await expect(svc(e).perform({ ...app(), healthCheck: { ...app().healthCheck, startupDelay: 0 } })).rejects.toThrow(/NRestarts=2/);
+  });
+  it('checks the coloured unit during blue-green', async () => {
+    const e = ok(new FakeRemoteExecutor()).when((c) => c.includes('systemctl show'), { stdout: 'active 0', stderr: '', exitCode: 0 });
+    const a = app();
+    await svc(e).perform({ ...a, healthCheck: { ...a.healthCheck, startupDelay: 0 } }, {
+      httpPort: 13000,
+      pm2Apps: [a.pm2!.apps[0]],
+      resolvePm2Name: (p) => `${p.name}-green`,
+    });
+    expect(e.getHistory().some((h) => h.command.includes('shipnode-api-green'))).toBe(true);
+  });
+});
+
+describe('monitor actions on watt', () => {
+  it('restarts a single unit through systemd', async () => {
+    const e = new FakeRemoteExecutor();
+    const result = await restartProcess(e, 'shipnode-api-green', 'systemd');
+    expect(result.isOk()).toBe(true);
+    expect(e.getLastCommand()?.command).toContain('systemctl restart shipnode-api-green');
+    expect(e.getLastCommand()?.command).not.toContain('pm2');
+  });
+  it('tails the journal for a whole deployment by glob', async () => {
+    const e = new FakeRemoteExecutor();
+    await collectLogs(e, 'api', 20, 'systemd');
+    const cmd = e.getLastCommand()!.command;
+    expect(cmd).toContain("journalctl -u 'shipnode-api' -u 'shipnode-api-*'");
+  });
+});

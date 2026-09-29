@@ -8,14 +8,17 @@
 
 export interface ProcessInfo {
   name: string;
+  /** Supervisor-level name: the PM2 process name, or the systemd unit for watt. */
   pm2Name: string;
+  /** Absent means PM2. `systemd` marks a unit of the watt runtime. */
+  supervisor?: 'systemd';
   pid: number | null;
   status: string;
   cpu: number;
   memory: number;
   uptime: number;
   restarts: number;
-  execMode: 'cluster' | 'fork' | 'unknown';
+  execMode: 'cluster' | 'fork' | 'threads' | 'unknown';
   instances: number;
   unstableRestarts: number;
   nodeVersion?: string;

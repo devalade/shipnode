@@ -19,4 +19,6 @@ Blue-green (ADR-0005) works unchanged in shape: the idle colour is a separate un
 - **Thread isolation is weaker than processes.** A native crash or OOM takes down every worker in the process; `health.maxHeapUsed` (from `maxMemory`) recycles a bloated worker before that.
 - **`shipnode restart` is an in-place systemd restart**, not PM2's rolling `reload`. Use `deploy` (blue-green) for a zero-drop roll.
 - **Load spread is kernel-hashed**, so clients that share few source ports (e.g. a local proxy over loopback) can land unevenly. Validate with a real traffic split before rolling out widely.
-- **Not yet ported:** `status` and the monitor still read PM2 state; `harden`'s `pm2 save` step is skipped for watt apps because units are enabled at install time.
+- **Observation reads systemd, not PM2.** `status`, the monitor and `--json` sample `systemctl show` for each candidate unit. CPU is a rate but systemd only exposes a cumulative counter, so the observe script samples it twice ~200ms apart (adds ~0.2s per poll on hosts running watt apps). `metrics` shows a refreshing `systemctl status` since there is no `pm2 monit` equivalent.
+- **Deploy health is systemd-aware.** A unit must be `active` with `NRestarts=0`; a crash loop under `Restart=always` would otherwise look healthy between crashes. Failures include the last journal lines.
+- `harden`'s PM2 steps do not apply to watt apps: units are enabled at install time and start at boot without a saved process list.

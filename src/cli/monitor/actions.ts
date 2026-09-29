@@ -4,6 +4,7 @@ import type { ShipnodeApp, ShipnodeConfig } from '../../shared/types.js';
 import { ProcessRestartError, ReleaseRollbackError } from '../../shared/result-errors.js';
 import { getEcosystemPath } from '../../domain/pm2/apps.js';
 import { MISE, shellQuote } from './poller.js';
+import { isWatt, resolveWattUnits, restartUnitCommand } from '../../domain/runtime/watt.js';
 
 /**
  * Restart exactly one PM2 process by its full pm2 name — never a bare
@@ -12,9 +13,12 @@ import { MISE, shellQuote } from './poller.js';
 export async function restartProcess(
   executor: RemoteExecutor,
   pm2Name: string,
+  supervisor?: 'systemd',
 ): Promise<ResultType<void, ProcessRestartError>> {
   const result = await executor.exec(
-    `${MISE} && pm2 restart ${shellQuote(pm2Name)} --update-env`,
+    supervisor === 'systemd'
+      ? restartUnitCommand(pm2Name)
+      : `${MISE} && pm2 restart ${shellQuote(pm2Name)} --update-env`,
   );
   if (result.exitCode !== 0) {
     return Result.err(new ProcessRestartError({
@@ -54,7 +58,16 @@ export async function rollbackToRelease(
   }
 
   const namespace = app.pm2?.apps[0]?.name;
-  if (app.appType === 'backend' && namespace !== undefined) {
+  if (app.appType === 'backend' && isWatt(app)) {
+    // Launchers and configs are per-release; restarting the units re-reads them.
+    const units = await resolveWattUnits(executor, appPath, app, { colors: 'active' });
+    for (const unit of units) {
+      const restarted = await executor.exec(restartUnitCommand(unit));
+      if (restarted.exitCode !== 0) {
+        return fail(`symlink switched but restarting ${unit} failed: ${(restarted.stderr || restarted.stdout).trim() || `exit code ${restarted.exitCode}`}`);
+      }
+    }
+  } else if (app.appType === 'backend' && namespace !== undefined) {
     const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
     const ecosystem = getEcosystemPath(config, app.name);
     // Prefer the rolled-back release's ecosystem file (ADR-0001); fall back to

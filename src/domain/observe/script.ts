@@ -1,4 +1,5 @@
 import type { ShipnodeApp, ShipnodeConfig } from '../../shared/types.js';
+import { isWatt, wattUnitName } from '../runtime/watt.js';
 
 export const MISE = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 export const PM2_FAILED = '##SHIPNODE_PM2_FAILED##';
@@ -53,6 +54,43 @@ function buildHealthSection(port: number, path: string, maxTimeSeconds: number):
   );
 }
 
+/**
+ * Every unit that could exist for a watt app: the web app in each colour plus
+ * the uncoloured form (recreate mode, or pre-blue-green), and each worker.
+ * Units that do not exist report `LoadState=not-found` and are dropped by the
+ * parser, so the script needs no state file lookup.
+ */
+export function wattCandidateUnits(app: ShipnodeApp): string[] {
+  const procs = app.pm2?.apps ?? [];
+  const namespace = procs[0]?.name ?? '';
+  return procs.flatMap((proc) =>
+    proc.port === undefined
+      ? [wattUnitName(namespace, proc.name)]
+      : [
+          wattUnitName(namespace, proc.name),
+          wattUnitName(namespace, proc.name, 'blue'),
+          wattUnitName(namespace, proc.name, 'green'),
+        ],
+  );
+}
+
+/**
+ * systemd's answer to `pm2 jlist`. CPU is a rate, and systemd only exposes a
+ * cumulative counter, so the section samples it twice ~200ms apart within the
+ * one script — a stateless collector cannot diff against a previous tick.
+ */
+function buildUnitsSection(units: string[]): string {
+  const list = units.map(shellQuote).join(' ');
+  const props = '-p LoadState -p ActiveState -p SubState -p MainPID -p MemoryCurrent -p NRestarts -p ExecMainStatus -p CPUUsageNSec';
+  return (
+    `t0=$(date +%s%N); ` +
+    `for u in ${list}; do echo "@unit $u"; systemctl show "$u" ${props} 2>/dev/null; ` +
+    `s=$(systemctl show "$u" -p ActiveEnterTimestamp --value 2>/dev/null); echo "started=$(date -d "$s" +%s 2>/dev/null)"; done; ` +
+    `sleep 0.2; t1=$(date +%s%N); echo "@wall $((t1-t0))"; ` +
+    `for u in ${list}; do echo "@cpu $u $(systemctl show "$u" -p CPUUsageNSec --value 2>/dev/null)"; done`
+  );
+}
+
 function buildAccessoriesSection(names: string[]): string {
   const containers = names.map((name) => shellQuote(`shipnode-${name}`)).join(' ');
   // `sudo -n` fails instantly without a NOPASSWD rule instead of hanging the poll.
@@ -98,10 +136,14 @@ export function buildObserveScript(config: ShipnodeConfig, request: ObserveReque
     const appPath = `${config.remotePath}/${app.name}`;
     const named = (section: string): string => appSectionName(index, section);
 
-    sections.push([
-      named('pm2'),
-      app.appType === 'backend' && app.pm2 ? `pm2 jlist 2>/dev/null || echo "${PM2_FAILED}"` : `echo "[]"`,
-    ]);
+    if (app.appType === 'backend' && app.pm2 && isWatt(app)) {
+      sections.push([named('units'), buildUnitsSection(wattCandidateUnits(app))]);
+    } else {
+      sections.push([
+        named('pm2'),
+        app.appType === 'backend' && app.pm2 ? `pm2 jlist 2>/dev/null || echo "${PM2_FAILED}"` : `echo "[]"`,
+      ]);
+    }
     sections.push([named('current'), `readlink "${appPath}/current" 2>/dev/null || echo "none"`]);
     sections.push([named('releases'), `cat "${appPath}/.shipnode/releases.json" 2>/dev/null || echo "[]"`]);
 

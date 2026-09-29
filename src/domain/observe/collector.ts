@@ -6,11 +6,13 @@ import {
   parseDeployLock,
   parseHealthProbe,
   parsePm2Jlist,
+  parseSystemdUnits,
   parseReleaseRecords,
   parseSystemStats,
   splitSections,
 } from './parse.js';
 import { appSectionName, buildObserveScript, PM2_FAILED } from './script.js';
+import { isWatt, wattUnitName } from '../runtime/watt.js';
 import type { AppSnapshot, ServerSnapshot } from './snapshot.js';
 
 export interface CollectRequest {
@@ -98,7 +100,9 @@ function readApp(app: ShipnodeApp, index: number, sections: Map<string, string>)
   return {
     app: app.name,
     appType: app.appType,
-    processes: parsePm2Jlist(pm2Section, namespace),
+    processes: isWatt(app)
+      ? parseSystemdUnits(at('units') ?? '', namespace, wattWeb(app, namespace))
+      : parsePm2Jlist(pm2Section, namespace),
     currentRelease: currentRaw === 'none' || currentRaw === '' ? null : currentRaw,
     releases: parseReleaseRecords(at('releases') ?? ''),
     health: healthSection === undefined ? undefined : parseHealthProbe(healthSection) ?? undefined,
@@ -107,8 +111,13 @@ function readApp(app: ShipnodeApp, index: number, sections: Map<string, string>)
         ? parseCaddyInfo(at('caddy-status') ?? '', at('caddy-log') ?? '')
         : undefined,
     error:
-      app.appType === 'backend' && app.pm2 && pm2Section.includes(PM2_FAILED)
+      app.appType === 'backend' && app.pm2 && !isWatt(app) && pm2Section.includes(PM2_FAILED)
         ? 'PM2 command failed'
         : undefined,
   };
+}
+
+function wattWeb(app: ShipnodeApp, namespace: string): { unitBase: string; instances: number } | undefined {
+  const web = app.pm2?.apps.find((p) => p.port !== undefined);
+  return web === undefined ? undefined : { unitBase: wattUnitName(namespace, web.name), instances: web.instances ?? 1 };
 }

@@ -37,7 +37,7 @@ export function Pm2Panel({ processes, cpuHistory, memHistory, health, responseHi
   if (processes.length === 0) {
     return (
       <Box borderStyle="round" borderColor="#30363d" padding={1} flexDirection="column" backgroundColor={BG}>
-        <Text bold color="#d6a85d">PM2 Processes</Text>
+        <Text bold color="#d6a85d">Processes</Text>
         <Text dimColor>  No PM2 processes (frontend app)</Text>
       </Box>
     );
@@ -45,7 +45,7 @@ export function Pm2Panel({ processes, cpuHistory, memHistory, health, responseHi
 
   return (
     <Box borderStyle="round" borderColor="#30363d" paddingX={1} paddingY={1} flexDirection="column" flexGrow={1} backgroundColor={BG}>
-      <Text bold color="#d6a85d">  PM2 Processes</Text>
+      <Text bold color="#d6a85d">  Processes</Text>
       {health !== undefined && <HealthRow health={health} responseHistory={responseHistory} />}
       {processes.map((p, index) => {
         const uptimeSeconds = p.uptime > 0 ? Math.floor((Date.now() - p.uptime) / 1000) : 0;
@@ -60,7 +60,7 @@ export function Pm2Panel({ processes, cpuHistory, memHistory, health, responseHi
               </Text>
               <Text dimColor>  pid:{p.pid ?? '—'}  {p.status}</Text>
               {p.execMode !== 'unknown' && (
-                <Text dimColor>  {p.execMode === 'cluster' ? `cluster×${p.instances}` : 'fork'}</Text>
+                <Text dimColor>  {p.execMode === 'cluster' ? `cluster×${p.instances}` : p.execMode === 'threads' ? `threads×${p.instances}` : 'fork'}</Text>
               )}
               {p.nodeVersion !== undefined && <Text dimColor>  node v{p.nodeVersion}</Text>}
               {p.restarts > 0 && <Text color="yellow">  restarts:{p.restarts}</Text>}
