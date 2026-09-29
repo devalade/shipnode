@@ -1,5 +1,6 @@
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
+import { isWatt, resolveWattUnits, restartUnitCommand } from '../../domain/runtime/watt.js';
 
 export async function cmdRestart(cwd: string, options: { config?: string; process?: string; app?: string; on?: string }): Promise<void> {
   await runRemoteCommandForTargets(
@@ -24,6 +25,12 @@ export async function cmdRestart(cwd: string, options: { config?: string; proces
       const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 
       for (const app of apps) {
+        if (isWatt(app)) {
+          const units = await resolveWattUnits(executor, `${config.remotePath}/${app.name}`, app, { process: options.process, colors: 'active' });
+          for (const unit of units) await executor.execOrThrow(restartUnitCommand(unit));
+          ui.success(`App '${app.name}' restarted (systemd; in-place restart — redeploy for a zero-downtime roll)`);
+          continue;
+        }
         const namespace = app.pm2!.apps[0].name;
         const target = options.process
           ? app.pm2!.apps.find((a) => a.name === options.process)?.name ?? namespace

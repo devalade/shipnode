@@ -14,6 +14,8 @@ import type {
   HookFn,
   HooksConfig,
   PkgManager,
+  AppRuntime,
+  WattConfig,
 } from '../shared/types.js';
 import { assembleConfig } from './assembly.js';
 
@@ -35,6 +37,8 @@ type BuilderState = {
   app?: string;
   on?: string | string[];
   pm2?: { apps: Pm2App[] };
+  runtime?: AppRuntime;
+  watt?: WattConfig;
   domain?: string;
   keepReleases?: number;
   healthCheck?: Partial<HealthCheckConfig>;
@@ -125,6 +129,19 @@ export class ShipnodeBuilder {
     app.name = name;
     if (opts?.instances !== undefined) app.instances = opts.instances;
     if (opts?.maxMemory !== undefined) app.maxMemory = opts.maxMemory;
+    return this;
+  }
+
+  /**
+   * Opt in to the wattpm runtime: the web app runs as worker threads sharing the
+   * port via SO_REUSEPORT (its `instances` becomes the thread count) instead of
+   * PM2 cluster/fork processes. `pm2` stays the default.
+   */
+  runtime(kind: 'watt', opts: WattConfig): this;
+  runtime(kind: 'pm2'): this;
+  runtime(kind: AppRuntime, opts?: WattConfig): this {
+    this.config.runtime = kind;
+    this.config.watt = kind === 'watt' ? opts : undefined;
     return this;
   }
 
@@ -352,6 +369,19 @@ export class ShipnodeAppBuilder {
     app.name = name;
     if (opts?.instances !== undefined) app.instances = opts.instances;
     if (opts?.maxMemory !== undefined) app.maxMemory = opts.maxMemory;
+    return this;
+  }
+
+  /**
+   * Opt in to the wattpm runtime: the web app runs as worker threads sharing the
+   * port via SO_REUSEPORT (its `instances` becomes the thread count) instead of
+   * PM2 cluster/fork processes. `pm2` stays the default.
+   */
+  runtime(kind: 'watt', opts: WattConfig): this;
+  runtime(kind: 'pm2'): this;
+  runtime(kind: AppRuntime, opts?: WattConfig): this {
+    this.state.runtime = kind;
+    this.state.watt = kind === 'watt' ? opts : undefined;
     return this;
   }
 

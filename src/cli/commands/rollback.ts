@@ -19,6 +19,7 @@ import { rollFleet, type FleetEvent } from '../../domain/deploy/fleet.js';
 import { isFleet } from '../../domain/servers.js';
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
 import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
+import { isActiveCommand, isWatt, resolveWattUnits, restartUnitCommand, wattUnitName } from '../../domain/runtime/watt.js';
 import { configForAppResult, configForServer, getServerTargets } from '../../domain/servers.js';
 
 /**
@@ -192,7 +193,13 @@ async function rollbackReplica(
   ui.success('Symlink switched');
 
   const namespace = getDeploymentName(config);
-  if (app.appType === 'backend' && namespace) {
+  if (app.appType === 'backend' && isWatt(app)) {
+    // Launchers and configs are per-release, so restarting the units re-reads
+    // the rolled-back release through the `current` symlink.
+    const units = await resolveWattUnits(executor, appPath, app, { colors: 'active' });
+    for (const unit of units) await executor.execOrThrow(restartUnitCommand(unit));
+    ui.success('systemd units restarted');
+  } else if (app.appType === 'backend' && namespace) {
     const nodeVersion = config.nodeVersion === 'lts' ? '24' : config.nodeVersion;
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
     // Prefer reloading from the rolled-back release's ecosystem file (ADR-0001 — it
@@ -263,14 +270,19 @@ async function rollbackBlueGreen(
   // The previous colour must still be online to serve traffic after the flip.
   // Parse pm2's JSON in-process rather than relying on `node` being on the
   // remote PATH at rollback time.
-  const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-  const jlist = await executor.exec(`${mise} && mise exec -- pm2 jlist`);
   let online = false;
-  try {
-    const entries = JSON.parse(jlist.stdout.trim()) as Array<{ name: string; pm2_env?: { status?: string } }>;
-    online = entries.some((e) => e.name === previousName && e.pm2_env?.status === 'online');
-  } catch {
-    online = false;
+  if (isWatt(app)) {
+    const unit = wattUnitName(namespace, webApp.name, previous);
+    online = (await executor.exec(isActiveCommand(unit))).exitCode === 0;
+  } else {
+    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    const jlist = await executor.exec(`${mise} && mise exec -- pm2 jlist`);
+    try {
+      const entries = JSON.parse(jlist.stdout.trim()) as Array<{ name: string; pm2_env?: { status?: string } }>;
+      online = entries.some((e) => e.name === previousName && e.pm2_env?.status === 'online');
+    } catch {
+      online = false;
+    }
   }
   if (!online) {
     throw new Error(

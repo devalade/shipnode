@@ -11,6 +11,12 @@ import { DeployError } from '../../shared/errors.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
 import { runWithDotenv } from './dotenv.js';
 import { envSymlinkCommand } from './env-links.js';
+import {
+  WATT_APP_FILE, WATT_RUNTIME_FILE, WATT_START_COMMAND,
+  installUnitCommand, isWatt, portFreeGuard, removeUnitCommand, renderAppConfig, renderRunScript,
+  renderRuntimeConfig, renderUnit, restartUnitCommand, runScriptName, stopUnitCommand, wattInstalledGuard, wattUnitName,
+} from '../runtime/watt.js';
+import type { DeployColor } from './blue-green.js';
 
 function escapeSingleQuotes(s: string): string {
   return s.replace(/'/g, "\\'");
@@ -143,6 +149,11 @@ export class BackendStrategy implements DeploymentStrategy {
     const cdPath = `${this.appPath}/current`;
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 
+    if (isWatt(this.app)) {
+      await this.startWatt(ctx, pkgManager, cdPath, mise);
+      return;
+    }
+
     if (this.app.zeroDowntime && ctx.deployTarget) {
       await this.startBlueGreen(ctx, pkgManager, cdPath, mise);
       return;
@@ -258,6 +269,17 @@ export class BackendStrategy implements DeploymentStrategy {
   async afterHealthy(ctx: StrategyContext): Promise<void> {
     if (!this.app.zeroDowntime || !ctx.deployTarget || !this.app.pm2) return;
 
+    if (isWatt(this.app)) {
+      // Workers are systemd units written (not started) by startWatt; start them
+      // now that the new release passed health.
+      const namespace = this.app.pm2.apps[0].name;
+      const workers = this.placedApps(ctx).filter((a) => a.port === undefined);
+      for (const worker of workers) {
+        await ctx.executor.execOrThrow(restartUnitCommand(wattUnitName(namespace, worker.name)));
+      }
+      return;
+    }
+
     const workers = this.placedApps(ctx).filter((a) => a.port === undefined);
     if (workers.length === 0) return;
 
@@ -275,6 +297,11 @@ export class BackendStrategy implements DeploymentStrategy {
   /** Remove processes that are safe to stop only once Caddy serves the new colour. */
   async afterTrafficSwitch(ctx: StrategyContext): Promise<void> {
     if (!this.app.zeroDowntime || !ctx.deployTarget || !this.app.pm2) return;
+
+    if (isWatt(this.app)) {
+      await this.reapPreviousWattColor(ctx);
+      return;
+    }
 
     const namespace = this.app.pm2.apps[0].name;
     const webApp = this.app.pm2.apps.find((app) => app.port !== undefined);
@@ -302,6 +329,139 @@ export class BackendStrategy implements DeploymentStrategy {
       `{ ${deleteExact}; } && ` +
       `mise exec -- pm2 save`,
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // watt runtime (opt-in). The web app runs under wattpm as worker threads;
+  // workers are plain systemd units. See ../runtime/watt.ts and ADR-0009.
+  // -------------------------------------------------------------------------
+
+  private get wattWebRoot(): string {
+    return this.app.appRoot ? `${this.appPath}/current/${this.app.appRoot}` : `${this.appPath}/current`;
+  }
+
+  /** Write one file into the release being staged. `printf` keeps content byte-exact. */
+  private async writeReleaseFile(ctx: StrategyContext, path: string, content: string): Promise<void> {
+    await ctx.executor.execOrThrow(`printf '%s' ${shellSingleQuote(content)} > "${path}"`);
+  }
+
+  /**
+   * Render and install everything one declared process needs: its launcher
+   * script (per release) and its systemd unit. Returns the unit name. Does not
+   * start it — callers decide when, so blue-green can hold workers back.
+   */
+  private async provisionWattProcess(
+    ctx: StrategyContext,
+    proc: Pm2App,
+    pkgManager: string,
+    color?: DeployColor,
+    portOverride?: number,
+  ): Promise<string> {
+    const namespace = this.app.pm2!.apps[0].name;
+    const isWeb = proc.port !== undefined;
+    const port = portOverride ?? proc.port;
+    const env: Record<string, string | number> = { NODE_ENV: 'production' };
+    if (port !== undefined) env.PORT = port;
+    for (const [k, v] of Object.entries(proc.env ?? {})) env[k] = v;
+
+    const command = isWeb
+      ? WATT_START_COMMAND
+      : (proc.command ?? `${pkgManager} start`);
+
+    const script = renderRunScript({
+      cwd: this.wattWebRoot,
+      command,
+      envFile: this.app.envFile ? `${this.appPath}/shared/${this.app.envFile}` : undefined,
+      env,
+    });
+    const scriptName = runScriptName(proc.name, color);
+    await this.writeReleaseFile(ctx, `${ctx.workDir}/${scriptName}`, script);
+
+    const unit = wattUnitName(namespace, proc.name, color);
+    await ctx.executor.execOrThrow(installUnitCommand(unit, renderUnit({
+      description: `shipnode ${namespace}/${proc.name}${color ? ` (${color})` : ''}`,
+      user: this.workspace.ssh.user,
+      workingDirectory: `${this.appPath}/current`,
+      script: `${this.appPath}/current/${scriptName}`,
+    })));
+    return unit;
+  }
+
+  /** Write wattpm's runtime + capability config into the release's app root. */
+  private async writeWattConfigs(ctx: StrategyContext, web: Pm2App): Promise<void> {
+    const watt = this.app.watt!;
+    const root = this.app.appRoot ? `${ctx.workDir}/${this.app.appRoot}` : ctx.workDir;
+    await this.writeReleaseFile(ctx, `${root}/${WATT_RUNTIME_FILE}`, renderRuntimeConfig(web, watt));
+    await this.writeReleaseFile(ctx, `${root}/${WATT_APP_FILE}`, renderAppConfig(watt));
+  }
+
+  private async startWatt(
+    ctx: StrategyContext,
+    pkgManager: PkgManager,
+    cdPath: string,
+    mise: string,
+  ): Promise<void> {
+    const pm2 = this.app.pm2!;
+    const watt = this.app.watt!;
+    const namespace = pm2.apps[0].name;
+    const web = pm2.apps.find((a) => a.port !== undefined)!;
+    const placed = this.placedApps(ctx);
+    const workers = placed.filter((a) => a.port === undefined);
+    const target = ctx.deployTarget;
+    const blueGreen = this.app.zeroDowntime && target !== undefined;
+
+    await this.writeWattConfigs(ctx, web);
+    await this.relinkPackages(ctx, pkgManager, cdPath, mise);
+    await ctx.executor.execOrThrow(wattInstalledGuard(this.wattWebRoot, watt));
+
+    // Web: the colour being booted under blue-green, or the single recreate unit.
+    const color = blueGreen ? target.color : undefined;
+    const webUnit = await this.provisionWattProcess(ctx, web, pkgManager, color, blueGreen ? target.port : undefined);
+    const workerUnits: string[] = [];
+    for (const worker of workers) {
+      workerUnits.push(await this.provisionWattProcess(ctx, worker, pkgManager));
+    }
+
+    const port = blueGreen ? target.port : web.port!;
+    // Reap a stale same-colour instance, then guard the port against a foreign
+    // process — but never the unit we are about to (re)start in recreate mode.
+    const reap = blueGreen ? `${stopUnitCommand(webUnit)} && ` : '';
+    await ctx.executor.execOrThrow(
+      reap +
+      (blueGreen ? `${portFreeGuard(port)} && ` : '') +
+      restartUnitCommand(webUnit),
+    );
+
+    // Recreate mode restarts workers with the web app. Blue-green holds them
+    // until the new colour is healthy (afterHealthy).
+    if (!blueGreen) {
+      for (const unit of workerUnits) await ctx.executor.execOrThrow(restartUnitCommand(unit));
+      // Adopting watt on a host that ran this app under PM2: retire the old
+      // process so it stops holding the port. A no-op when PM2 was never used.
+      await ctx.executor.execOrThrow(
+        `${mise} && { mise exec -- pm2 delete "${namespace}" 2>/dev/null || true; }`,
+      );
+    }
+  }
+
+  /** After the Caddy flip: stop what is no longer serving, per retention. */
+  private async reapPreviousWattColor(ctx: StrategyContext): Promise<void> {
+    const target = ctx.deployTarget!;
+    const namespace = this.app.pm2!.apps[0].name;
+    const web = this.app.pm2!.apps.find((a) => a.port !== undefined);
+    if (!web) return;
+
+    if (target.previousColor === null) {
+      // First blue-green deploy: retire the pre-blue-green process — an
+      // uncoloured watt unit, or a PM2 process when migrating from PM2.
+      const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+      await ctx.executor.execOrThrow(removeUnitCommand(wattUnitName(namespace, web.name)));
+      await ctx.executor.execOrThrow(`${mise} && { mise exec -- pm2 delete "${namespace}" 2>/dev/null || true; }`);
+      return;
+    }
+    if (this.app.blueGreenRetention === 'none') {
+      await ctx.executor.execOrThrow(stopUnitCommand(wattUnitName(namespace, web.name, target.previousColor)));
+    }
   }
 
   private async writeEcosystem(ctx: StrategyContext, writePath: string, content: string): Promise<void> {

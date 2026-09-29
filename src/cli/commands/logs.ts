@@ -1,4 +1,5 @@
 import { runRemoteCommandForTargets } from '../runner.js';
+import { isWatt, logsCommand, resolveWattUnits } from '../../domain/runtime/watt.js';
 
 /**
  * Prefix every line, not every block.
@@ -39,6 +40,16 @@ export async function cmdLogs(cwd: string, options: { lines?: number; config?: s
       const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 
       for (const app of apps) {
+        if (isWatt(app)) {
+          const units = await resolveWattUnits(executor, `${config.remotePath}/${app.name}`, app, { process: options.process, colors: 'active' });
+          for (const unit of units) {
+            const result = await executor.exec(logsCommand(unit, { lines }));
+            const label = `[${serverName} ${app.name} ${unit}]`;
+            if (result.stdout) process.stdout.write(`${prefixLines(result.stdout, label)}\n`);
+            if (result.stderr) process.stderr.write(`${prefixLines(result.stderr, label)}\n`);
+          }
+          continue;
+        }
         const namespace = app.pm2!.apps[0].name;
         const target = options.process
           ? app.pm2!.apps.find((a) => a.name === options.process)?.name ?? namespace
