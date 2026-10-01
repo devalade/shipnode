@@ -4,8 +4,20 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [3.2.0-beta.2] - 2026-10-01
+
 ### Added
-- **Opt-in `watt` runtime (wattpm).** `.runtime('watt', { main: 'dist/server.js' })` runs the web app as worker threads sharing one port via `SO_REUSEPORT` instead of PM2 processes — no supervisor in the request path and no per-process V8 duplication. `instances` becomes the thread count; workers run as systemd units (`shipnode-<app>[-<colour>]`). Blue-green, `rollback`, `restart`, `stop`, `logs`, `env`, `deploy --watch`, `doctor`, `status`, `metrics` and the monitor all support it. PM2 stays the default. Your app must depend on `wattpm` and `@platformatic/node`; scaling past one worker needs Linux. See [ADR-0009](docs/adr/0009-watt-runtime.md).
+- **Opt-in `watt` runtime (wattpm).** `.runtime('watt', { main: 'dist/server.js' })` runs the web app as worker threads sharing one port via `SO_REUSEPORT` instead of PM2 processes — no supervisor in the request path and no per-process V8 duplication. `instances` becomes the thread count; workers run as systemd units (`shipnode-<app>[-<colour>]`). Blue-green, `rollback`, `restart`, `stop`, `logs`, `env`, `deploy --watch`, `doctor`, `status`, `metrics` and the monitor all support it. PM2 stays the default. If your app does not list `wattpm` and `@platformatic/node`, shipnode installs both at the version it targets after the normal install; list them yourself to pin the versions. Scaling past one worker needs Linux. See [ADR-0009](docs/adr/0009-watt-runtime.md).
+- **`shipnode rollback --yes`** skips the confirmation prompts, so a rollback can run from CI or a script.
+
+### Fixed
+- **Moving an app from PM2 blue-green to `watt` failed with `EADDRINUSE`.** The previous release was still resident under PM2 on the idle colour's port, so the watt unit could not bind it. The idle colour's PM2 process is now deleted by exact name before the colour boots. The watt port guard also never failed (a trailing `|| true` swallowed it); it now stops the deploy when the port is bound.
+- **The monitor and `status` showed `0 / 0 MB` of host memory on Linux.** The observe script ran `free -mb`, which procps rejects, leaving the memory line empty.
+- **An unreachable server was blamed on every app in the fleet view.** A single-server app showed as a fleet with a missing replica whenever an unrelated server was down, and an app whose only server failed disappeared from the view. A failed poll now records the apps planned for that server and only those are marked unreachable.
+- **A `watt` systemd unit split its script path at a space** in `remotePath`, and a CR/LF/NUL in a rendered value could add directives. The path is now quoted and such values are rejected.
+
+### Documentation
+- The website's watt page now describes the dependency auto-install and that `watt.maxHeapUsed` overrides `maxMemory`.
 
 ## [3.2.0-beta.1] - 2026-09-18
 
