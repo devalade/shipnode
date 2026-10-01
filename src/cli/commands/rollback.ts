@@ -400,7 +400,18 @@ async function bootColourFromRelease(input: BootColourInput): Promise<void> {
     }
   } catch (error) {
     await executor.exec(reapColourCommand(app, namespace, webApp.name, color));
-    if (before !== '') await releases.switchSymlink(before);
+    if (before !== '') {
+      try {
+        await releases.switchSymlink(before);
+      } catch {
+        // Don't let a failed restore hide why the start failed: say where
+        // `current` is left and how to put it back, then rethrow the original.
+        ui.warn(
+          `Could not point current back at its previous release. It still points at ${appPath}/releases/${release}; ` +
+          `restore it with: ln -sfn "${before}" "${appPath}/current"`,
+        );
+      }
+    }
     throw error;
   }
 }

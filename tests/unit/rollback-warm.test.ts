@@ -147,6 +147,20 @@ describe('warm blue-green rollback (PM2)', () => {
     expect(history().some((c) => c.includes('deploy-state.json') && c.includes('base64 -d'))).toBe(false);
   });
 
+  it('reports the original failure, and how to recover, when restoring current also fails', async () => {
+    executor = host()
+      .when((c) => c.includes('pm2 start'), { stdout: '', stderr: 'boom', exitCode: 1 })
+      .when((c) => c.includes('ln -sfn') && c.includes('releases/R2'), { stdout: '', stderr: 'disk error', exitCode: 1 });
+
+    const reported = await rollback();
+
+    expect(reported).toContain('boom');
+    expect(reported).not.toContain('disk error');
+    const warning = vi.mocked(ui.warn).mock.calls.map((c) => String(c[0])).find((m) => m.includes('restore it with'));
+    expect(warning).toContain('releases/R1');
+    expect(warning).toContain('ln -sfn "/var/www/app/api/releases/R2"');
+  });
+
   it('declines cleanly and touches nothing', async () => {
     executor = host();
     vi.mocked(confirm).mockResolvedValue(false);
