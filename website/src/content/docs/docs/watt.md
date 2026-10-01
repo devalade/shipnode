@@ -20,7 +20,7 @@ export default shipnode
 
 ## Requirements
 
-- Add `wattpm` and `@platformatic/node` to your app's dependencies. Deploy stops with the install command if they are missing.
+- `wattpm` and `@platformatic/node` are installed for you at the version shipnode targets when your app doesn't list them. Add them to your own dependencies to pin the versions yourself; your versions are then used and nothing is installed.
 - `main` is the file each worker thread loads. It must start an HTTP server on `process.env.PORT`.
 - Scaling past one thread needs **Linux**. Elsewhere wattpm forces a single worker for the web app.
 
@@ -44,7 +44,7 @@ Add `.runtime('watt', { main })` and deploy. After the new release passes its he
 
 ## Trade-offs
 
-- **Weaker isolation.** Threads share a process, so a native crash or out-of-memory error takes down every web worker. `maxMemory` is passed to wattpm as its per-worker heap health threshold (`health.maxHeapUsed`).
+- **Weaker isolation.** Threads share a process, so a native crash or out-of-memory error takes down every web worker. `maxMemory` is passed to wattpm as its per-worker heap health threshold (`health.maxHeapUsed`); `watt.maxHeapUsed` overrides it when both are set.
 - **Uneven spread is possible.** The kernel hashes each connection to a worker. Clients that share few source ports, such as a local proxy over loopback, can land unevenly. Validate with a real traffic split before rolling out widely.
 - **Linux only** for more than one thread.
 

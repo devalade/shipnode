@@ -355,3 +355,22 @@ describe('pm2DeleteCommand', () => {
     expect(cmd).toContain('|| true');
   });
 });
+
+describe('renderUnit hardening', () => {
+  const base = { description: 'shipnode api', user: 'deploy', workingDirectory: '/var/www/app', script: '/var/www/app/run.sh' };
+
+  it('keeps a script path with spaces as one ExecStart argument', () => {
+    const unit = renderUnit({ ...base, script: '/var/www/my app/run.sh' });
+    expect(unit).toContain('ExecStart=/usr/bin/env bash "/var/www/my app/run.sh"');
+  });
+
+  it('escapes characters systemd would interpret inside the quoted path', () => {
+    const unit = renderUnit({ ...base, script: '/srv/a"b\\c%d/run.sh' });
+    expect(unit).toContain('ExecStart=/usr/bin/env bash "/srv/a\\"b\\\\c%%d/run.sh"');
+  });
+
+  it.each(['\n', '\r', '\0'])('refuses a control character in any rendered value (%j)', (ch) => {
+    expect(() => renderUnit({ ...base, workingDirectory: `/var/www/app${ch}ExecStartPre=/bin/false` })).toThrow(/control character/);
+    expect(() => renderUnit({ ...base, user: `deploy${ch}` })).toThrow(/control character/);
+  });
+});

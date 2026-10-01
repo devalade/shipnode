@@ -92,6 +92,16 @@ export interface RunScriptInput {
   env: Record<string, string | number>;
 }
 
+/** Quote one ExecStart argument: spaces stay in one word, and `\`, `"` and `%` are not interpreted by systemd. */
+function systemdQuote(value: string): string {
+  return `"${value.replace(/[\\"]/g, '\\$&').replace(/%/g, '%%')}"`;
+}
+
+/** systemd reads a unit line by line: a CR/LF/NUL in a value would add directives or corrupt the unit. */
+function assertUnitSafe(label: string, value: string): void {
+  if (/[\r\n\0]/.test(value)) throw new Error(`Cannot render systemd unit: ${label} contains a control character`);
+}
+
 /**
  * Launcher script the systemd unit executes. A script file (rather than an
  * inline ExecStart) sidesteps systemd's own quoting and `%`/`$` expansion, and
@@ -115,6 +125,10 @@ export interface UnitInput {
 }
 
 export function renderUnit(input: UnitInput): string {
+  assertUnitSafe('description', input.description);
+  assertUnitSafe('user', input.user);
+  assertUnitSafe('working directory', input.workingDirectory);
+  assertUnitSafe('script path', input.script);
   return `[Unit]
 Description=${input.description}
 After=network.target
@@ -123,7 +137,7 @@ After=network.target
 Type=simple
 User=${input.user}
 WorkingDirectory=${input.workingDirectory}
-ExecStart=/usr/bin/env bash ${input.script}
+ExecStart=/usr/bin/env bash ${systemdQuote(input.script)}
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM
