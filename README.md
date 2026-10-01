@@ -102,7 +102,7 @@ export default shipnode
   .build();
 ```
 
-Add `wattpm` and `@platformatic/node` to your app's dependencies. Zero-downtime blue-green, `rollback`, `logs`, `stop` and `env` work as with PM2; supervision is systemd (`shipnode-<app>[-<colour>]`). Scaling past one worker needs Linux. See `docs/adr/0009-watt-runtime.md` for the trade-offs.
+Shipnode installs `wattpm` and `@platformatic/node` for you if your app doesn't list them; add them to your own dependencies to pin the versions. Zero-downtime blue-green, `rollback`, `logs`, `stop` and `env` work as with PM2; supervision is systemd (`shipnode-<app>[-<colour>]`). Scaling past one worker needs Linux. See `docs/adr/0009-watt-runtime.md` for the trade-offs.
 
 ### Web + workers
 

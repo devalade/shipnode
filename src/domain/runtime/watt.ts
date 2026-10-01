@@ -1,4 +1,4 @@
-import type { Pm2App, ShipnodeApp, WattConfig } from '../../shared/types.js';
+import type { Pm2App, PkgManager, ShipnodeApp, WattConfig } from '../../shared/types.js';
 import { getPm2Name } from '../pm2/apps.js';
 import { runWithDotenv } from '../deploy/dotenv.js';
 import { readDeployState, otherColor, type DeployColor } from '../deploy/blue-green.js';
@@ -23,6 +23,13 @@ export const WATT_RUNTIME_FILE = 'shipnode.watt.json';
 export const WATT_APP_FILE = 'shipnode.platformatic.json';
 
 const DEFAULT_MODULE = '@platformatic/node';
+
+/**
+ * The wattpm version shipnode's rendered configs target. It is the schema
+ * version below and the version installed when an app does not list wattpm
+ * itself, so the two cannot drift apart.
+ */
+export const WATT_VERSION = '3.71.0';
 const MISE_PATH = 'export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"';
 
 export function isWatt(app: Pick<ShipnodeApp, 'runtime'>): boolean {
@@ -55,7 +62,7 @@ export function parseSize(size: string | undefined): number | undefined {
 export function renderRuntimeConfig(web: Pm2App, watt: WattConfig): string {
   const heap = parseSize(watt.maxHeapUsed ?? web.maxMemory);
   const config = {
-    $schema: 'https://schemas.platformatic.dev/wattpm/3.71.0.json',
+    $schema: `https://schemas.platformatic.dev/wattpm/${WATT_VERSION}.json`,
     entrypoint: 'web',
     workers: { static: web.instances ?? 1 },
     server: { hostname: '0.0.0.0', port: '{PORT}' },
@@ -69,7 +76,7 @@ export function renderRuntimeConfig(web: Pm2App, watt: WattConfig): string {
 /** The capability config that tells wattpm how to load the app inside each worker thread. */
 export function renderAppConfig(watt: WattConfig): string {
   const config = {
-    $schema: 'https://schemas.platformatic.dev/@platformatic/node/3.71.0.json',
+    $schema: `https://schemas.platformatic.dev/@platformatic/node/${WATT_VERSION}.json`,
     module: watt.module ?? DEFAULT_MODULE,
     node: { main: watt.main },
   };
@@ -174,7 +181,33 @@ export function portFreeGuard(port: number): string {
   return `{ ss -tlnp | grep -q ":${port} " && echo "Port ${port} is already in use by another process" && false || true; }`;
 }
 
-/** Fails with an actionable message when wattpm is not installed in the release. */
+/** `add` command per package manager, run in the app root of the release. */
+const ADD_COMMANDS: Record<PkgManager, string> = {
+  npm: 'npm install --no-audit --no-fund',
+  pnpm: 'pnpm add',
+  yarn: 'yarn add',
+  bun: 'bun add',
+};
+
+/**
+ * Installs wattpm (and the default capability module) at the version shipnode
+ * targets when the release does not already have them. Packages the app lists
+ * itself are left alone, so an app that pins its own versions keeps them. Runs
+ * after the release's normal install and relink, so nothing prunes the result.
+ * A custom `module` is never auto-installed; the guard below reports it.
+ */
+export function wattEnsureInstalledCommand(cwd: string, watt: WattConfig, pkgManager: PkgManager): string {
+  const missing = [
+    `[ -x "${cwd}/node_modules/.bin/wattpm" ] || pkgs="$pkgs wattpm@${WATT_VERSION}"`,
+    ...(watt.module === undefined
+      ? [`[ -d "${cwd}/node_modules/${DEFAULT_MODULE}" ] || pkgs="$pkgs ${DEFAULT_MODULE}@${WATT_VERSION}"`]
+      : []),
+  ];
+  return `{ pkgs=""; ${missing.join('; ')}; ` +
+    `if [ -n "$pkgs" ]; then echo "wattpm not in dependencies, installing:$pkgs"; cd "${cwd}" && ${ADD_COMMANDS[pkgManager]} $pkgs; fi; }`;
+}
+
+/** Fails with an actionable message when wattpm is still not installed in the release. */
 export function wattInstalledGuard(cwd: string, watt: WattConfig): string {
   const module = watt.module ?? DEFAULT_MODULE;
   return `{ [ -x "${cwd}/node_modules/.bin/wattpm" ] && [ -d "${cwd}/node_modules/${module}" ] || ` +

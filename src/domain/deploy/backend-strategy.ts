@@ -14,7 +14,7 @@ import { envSymlinkCommand } from './env-links.js';
 import {
   WATT_APP_FILE, WATT_RUNTIME_FILE, WATT_START_COMMAND,
   installUnitCommand, isWatt, portFreeGuard, removeUnitCommand, renderAppConfig, renderRunScript,
-  renderRuntimeConfig, renderUnit, restartUnitCommand, runScriptName, stopUnitCommand, wattInstalledGuard, wattUnitName,
+  renderRuntimeConfig, renderUnit, restartUnitCommand, runScriptName, stopUnitCommand, wattEnsureInstalledCommand, wattInstalledGuard, wattUnitName,
 } from '../runtime/watt.js';
 import type { DeployColor } from './blue-green.js';
 
@@ -412,6 +412,12 @@ export class BackendStrategy implements DeploymentStrategy {
 
     await this.writeWattConfigs(ctx, web);
     await this.relinkPackages(ctx, pkgManager, cdPath, mise);
+    const ensured = await ctx.executor.exec(
+      `${mise} && ${wattEnsureInstalledCommand(this.wattWebRoot, watt, pkgManager)}`,
+    );
+    if (ensured.exitCode !== 0) {
+      throw new DeployError((ensured.stderr || ensured.stdout).trim() || 'Installing wattpm failed', 'start');
+    }
     await ctx.executor.execOrThrow(wattInstalledGuard(this.wattWebRoot, watt));
 
     // Web: the colour being booted under blue-green, or the single recreate unit.

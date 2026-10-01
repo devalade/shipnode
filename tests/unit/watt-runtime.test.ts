@@ -6,6 +6,7 @@ import { shipnode } from '../../src/config/builder.js';
 import type { StrategyContext } from '../../src/domain/deploy/strategy.js';
 import {
   parseSize, renderAppConfig, renderRunScript, renderRuntimeConfig, renderUnit, resolveWattUnits, wattUnitName,
+  wattEnsureInstalledCommand, WATT_VERSION,
 } from '../../src/domain/runtime/watt.js';
 
 vi.mock('execa', () => ({ execa: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }) }));
@@ -296,5 +297,33 @@ describe('monitor actions on watt', () => {
     await collectLogs(e, 'api', 20, 'systemd');
     const cmd = e.getLastCommand()!.command;
     expect(cmd).toContain("journalctl -u 'shipnode-api' -u 'shipnode-api-*'");
+  });
+});
+
+describe('wattEnsureInstalledCommand', () => {
+  it('installs wattpm and the default module at the pinned version when missing', () => {
+    const cmd = wattEnsureInstalledCommand('/srv/app/current', watt, 'pnpm');
+    expect(cmd).toContain(`wattpm@${WATT_VERSION}`);
+    expect(cmd).toContain(`@platformatic/node@${WATT_VERSION}`);
+    expect(cmd).toContain('pnpm add $pkgs');
+    expect(cmd).toContain('cd "/srv/app/current"');
+  });
+
+  it('only checks for packages the app has not already installed', () => {
+    const cmd = wattEnsureInstalledCommand('/srv/app/current', watt, 'npm');
+    expect(cmd).toContain('[ -x "/srv/app/current/node_modules/.bin/wattpm" ] || pkgs=');
+    expect(cmd).toContain('[ -d "/srv/app/current/node_modules/@platformatic/node" ] || pkgs=');
+    expect(cmd).toContain('npm install --no-audit --no-fund $pkgs');
+  });
+
+  it('never auto-installs a custom capability module', () => {
+    const cmd = wattEnsureInstalledCommand('/srv/app/current', { ...watt, module: '@platformatic/next' }, 'npm');
+    expect(cmd).not.toContain('@platformatic/next');
+    expect(cmd).not.toContain('@platformatic/node@');
+  });
+
+  it('keeps the rendered schema version in step with the installed version', () => {
+    expect(renderRuntimeConfig({ name: 'api', port: 3000 } as never, watt)).toContain(`wattpm/${WATT_VERSION}.json`);
+    expect(renderAppConfig(watt)).toContain(`@platformatic/node/${WATT_VERSION}.json`);
   });
 });
