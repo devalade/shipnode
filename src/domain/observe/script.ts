@@ -24,7 +24,7 @@ function sectionMarker(name: string): string {
 
 function buildSystemSection(): string {
   return [
-    `echo "mem:$(free -mb | awk '/^Mem:/{print $2, $3}')"`,
+    `echo "mem:$(free -m | awk '/^Mem:/{print $2, $3}')"`,
     `echo "load:$(awk '{print $1, $2, $3}' /proc/loadavg)"`,
     `echo "cores:$(nproc 2>/dev/null || echo 1)"`,
     `echo "uptime:$(cat /proc/uptime | awk '{print $1}')"`,
