@@ -94,6 +94,52 @@ describe('pivotByApp', () => {
     expect(views).toEqual([]);
   });
 
+  it('blames a failed server only on the apps planned for it', () => {
+    // `web` runs on a alone; `api` runs on a and b. b failing says nothing
+    // about `web`, which must not turn into a fleet with a missing replica.
+    const views = pivotByApp([
+      server('a', [app('web', '1'), app('api', '1')]),
+      server('b', [], { error: 'down', plannedApps: [{ app: 'api', appType: 'backend' }] }),
+    ]);
+
+    expect(views.find((v) => v.app === 'web')?.unreachable).toEqual([]);
+    expect(views.find((v) => v.app === 'api')?.unreachable).toEqual(['b']);
+  });
+
+  it('ignores a failed server that only hosts accessories', () => {
+    const views = pivotByApp([
+      server('a', [app('api', '1')]),
+      server('data', [], { error: 'down', plannedApps: [] }),
+    ]);
+
+    expect(views[0].unreachable).toEqual([]);
+  });
+
+  it('still shows an app whose every server failed', () => {
+    const views = pivotByApp([
+      server('a', [app('web', '1')]),
+      server('b', [], { error: 'down', plannedApps: [{ app: 'site', appType: 'frontend' }] }),
+      server('c', [], { error: 'down', plannedApps: [{ app: 'site', appType: 'frontend' }] }),
+    ]);
+
+    const site = views.find((v) => v.app === 'site');
+    expect(site).toBeDefined();
+    expect(site?.replicas).toEqual([]);
+    expect(site?.unreachable).toEqual(['b', 'c']);
+    expect(site?.appType).toBe('frontend');
+  });
+
+  it('lists reachable replicas and unreachable servers of the same app together', () => {
+    const views = pivotByApp([
+      server('a', [app('api', '1')]),
+      server('b', [], { error: 'down', plannedApps: [{ app: 'api', appType: 'backend' }] }),
+    ]);
+
+    expect(views).toHaveLength(1);
+    expect(views[0].replicas.map((r) => r.server)).toEqual(['a']);
+    expect(views[0].unreachable).toEqual(['b']);
+  });
+
   it('keeps a per-app error visible on the replica', () => {
     const views = pivotByApp([
       server('a', [app('api', '1', { error: 'PM2 command failed' })]),

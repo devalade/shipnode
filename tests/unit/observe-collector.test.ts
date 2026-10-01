@@ -150,6 +150,23 @@ describe('MetricsCollector', () => {
     expect(snapshot.server).toBe('b');
   });
 
+  it('records which apps a failed poll was meant to cover', async () => {
+    const executor = new (class extends FakeRemoteExecutor {
+      override async exec(): Promise<never> {
+        throw new Error('connect ETIMEDOUT');
+      }
+    })();
+    const planned = config.apps.map((a) => ({ app: a.name, appType: a.appType }));
+
+    const timedOut = await new MetricsCollector(executor, 'b', config).collect({ apps: config.apps });
+    const empty = await new MetricsCollector(
+      new FakeRemoteExecutor().when(() => true, { stdout: '', stderr: '', exitCode: 0 }), 'c', config,
+    ).collect({ apps: config.apps });
+
+    expect(timedOut.plannedApps).toEqual(planned);
+    expect(empty.plannedApps).toEqual(planned);
+  });
+
   it('reports empty output as an error rather than an empty snapshot', async () => {
     const executor = new FakeRemoteExecutor().when(() => true, { stdout: '', stderr: '', exitCode: 0 });
     const snapshot = await new MetricsCollector(executor, 'c', config).collect({ apps: config.apps });

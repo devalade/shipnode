@@ -59,12 +59,12 @@ export class MetricsCollector {
       // An unreachable host is a state the fleet view has to render, not an
       // exception to unwind — the same stance `rollFleet` takes on a replica
       // that fails mid-roll.
-      return this.unreachable(timestamp, cause instanceof Error ? cause.message : String(cause));
+      return this.unreachable(timestamp, cause instanceof Error ? cause.message : String(cause), request.apps);
     }
 
     const sections = splitSections(stdout);
     if (sections.size === 0) {
-      return this.unreachable(timestamp, 'Observe poll returned no data');
+      return this.unreachable(timestamp, 'Observe poll returned no data', request.apps);
     }
 
     const accessoriesSection = sections.get('accessories');
@@ -78,7 +78,7 @@ export class MetricsCollector {
     };
   }
 
-  private unreachable(timestamp: string, error: string): ServerSnapshot {
+  private unreachable(timestamp: string, error: string, planned: ShipnodeApp[]): ServerSnapshot {
     return {
       server: this.server,
       timestamp,
@@ -86,6 +86,7 @@ export class MetricsCollector {
       deployLock: null,
       apps: [],
       error,
+      plannedApps: planned.map((app) => ({ app: app.name, appType: app.appType })),
     };
   }
 }

@@ -26,11 +26,32 @@ export function pivotByApp(snapshots: ServerSnapshot[]): FleetView[] {
     }
   }
 
-  // A server whose poll failed reports no apps at all, so it cannot say which
-  // apps it was meant to be running. It is attributed to every app another
-  // replica proves exists — enough to stop a partial observation from reading
-  // as a converged fleet, without inventing apps for a host we never reached.
-  const unreachable = snapshots.flatMap((server) => (server.error === undefined ? [] : [server.server]));
+  // A server whose poll failed reports no apps at all. When the caller recorded
+  // which apps it was planned to run, the failure is blamed on exactly those
+  // apps — and an app whose every server failed still gets a view, so it cannot
+  // vanish. Without that record (an older snapshot shape) the server is blamed
+  // on every app another replica proves exists: enough to stop a partial
+  // observation from reading as a converged fleet, without inventing apps.
+  const unreachableByApp = new Map<string, string[]>();
+  const plannedType = new Map<string, FleetView['appType']>();
+  const unattributed: string[] = [];
+  for (const server of snapshots) {
+    if (server.error === undefined) continue;
+    if (server.plannedApps === undefined) {
+      unattributed.push(server.server);
+      continue;
+    }
+    for (const planned of server.plannedApps) {
+      const servers = unreachableByApp.get(planned.app);
+      if (servers === undefined) unreachableByApp.set(planned.app, [server.server]);
+      else servers.push(server.server);
+      plannedType.set(planned.app, planned.appType);
+      if (!byApp.has(planned.app)) {
+        byApp.set(planned.app, []);
+        order.push(planned.app);
+      }
+    }
+  }
 
   return order.map((appName) => {
     const replicas = byApp.get(appName) ?? [];
@@ -41,10 +62,10 @@ export function pivotByApp(snapshots: ServerSnapshot[]): FleetView[] {
 
     return {
       app: appName,
-      appType: replicas[0]?.snapshot.appType ?? 'backend',
+      appType: replicas[0]?.snapshot.appType ?? plannedType.get(appName) ?? 'backend',
       replicas,
       convergence: assessConvergence(observations),
-      unreachable,
+      unreachable: [...(unreachableByApp.get(appName) ?? []), ...(replicas.length > 0 ? unattributed : [])],
     };
   });
 }

@@ -28,6 +28,19 @@ export interface ServerSnapshot {
   apps: AppSnapshot[];
   /** Whole-server failure — unreachable, timed out, script produced nothing. */
   error?: string;
+  /**
+   * The apps this server is configured to run. Set only on a failed poll: a
+   * server that reports nothing cannot say which apps it should have run, but
+   * the caller that asked for the poll knows, and the fleet view needs it to
+   * blame the failure on those apps and no others.
+   */
+  plannedApps?: PlannedApp[];
+}
+
+/** An app a server is configured to run, as known without reaching the server. */
+export interface PlannedApp {
+  app: string;
+  appType: 'backend' | 'frontend';
 }
 
 /** The app-scoped slice of one server's poll. */

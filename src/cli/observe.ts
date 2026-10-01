@@ -115,14 +115,14 @@ async function connectHost(
     ssh.disconnect();
     const message = cause instanceof Error ? cause.message : String(cause);
     return {
-      observer: unreachableObserver(host.name, `Failed to connect: ${message}`),
+      observer: unreachableObserver(host.name, `Failed to connect: ${message}`, host.apps),
       apps: host.apps,
       accessoryNames: host.accessoryNames,
     };
   }
 }
 
-function unreachableObserver(serverName: string, message: string): ObserveTarget['observer'] {
+function unreachableObserver(serverName: string, message: string, planned: ShipnodeApp[]): ObserveTarget['observer'] {
   return {
     serverName,
     async collect(): Promise<ServerSnapshot> {
@@ -133,6 +133,7 @@ function unreachableObserver(serverName: string, message: string): ObserveTarget
         deployLock: null,
         apps: [],
         error: message,
+        plannedApps: planned.map((app) => ({ app: app.name, appType: app.appType })),
       };
     },
   };
