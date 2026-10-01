@@ -105,8 +105,9 @@ program
   .option('--steps <n>', 'Number of releases to go back', '1')
   .option('--app <name>', 'App to roll back (required)')
   .option('--on <server>', 'Roll back one replica of a fleet instead of all of them')
+  .option('--yes', 'Roll back without confirmation (for CI and scripts)')
   .option('--config <path>', 'Use a specific config file')
-  .action((opts) => cmdRollback(process.cwd(), { steps: parseInt(opts.steps, 10), app: opts.app, on: opts.on, config: opts.config }));
+  .action((opts) => cmdRollback(process.cwd(), { steps: parseInt(opts.steps, 10), app: opts.app, on: opts.on, yes: opts.yes, config: opts.config }));
 
 program
   .command('migrate')
@@ -120,7 +121,7 @@ program
   .command('env')
   .description('Upload local .env file to the server')
   .option('--file <path>', 'Path to .env file to upload (default: .env from config)')
-  .option('--no-reload', 'Upload without reloading running PM2 processes')
+  .option('--no-reload', 'Upload without reloading running processes')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
@@ -140,16 +141,16 @@ program
   .command('logs')
   .description('Show application logs')
   .option('--lines <n>', 'Number of log lines to show', '100')
-  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--process <name>', 'Target a specific process (PM2 app or watt unit)')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
-  .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), process: opts.process, app: opts.app, config: opts.config }));
+  .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), process: opts.process, app: opts.app, config: opts.config, on: opts.on }));
 
 program
   .command('restart')
   .description('Restart the application')
-  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--process <name>', 'Target a specific process (PM2 app or watt unit)')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
@@ -158,7 +159,7 @@ program
 program
   .command('stop')
   .description('Stop the application')
-  .option('--process <name>', 'Target a specific PM2 process')
+  .option('--process <name>', 'Target a specific process (PM2 app or watt unit)')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
@@ -166,16 +167,20 @@ program
 
 program
   .command('metrics')
-  .description('Open PM2 monitoring dashboard')
+  .description('Open PM2 monit (or systemctl status for watt apps) over SSH (escape hatch; shipnode monitor is namespaced)')
   .option('--app <name>', 'Target a specific app')
+  .option('--on <server>', 'Target a specific replica of a fleet')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdMetrics(process.cwd(), opts));
 
 program
   .command('monitor')
-  .description('Live TUI dashboard with PM2 stats, system metrics, and logs')
+  .description('Live TUI dashboard with process stats (PM2 or systemd), system metrics, and logs')
   .option('--interval <seconds>', 'Polling interval in seconds (default: 2)', '2')
   .option('--app <name>', 'Target a specific app')
+  .option('--on <server>', 'Watch one replica (required for a live TUI on a fleet)')
+  .option('--once', 'Collect one snapshot and exit')
+  .option('--json', 'Print one snapshot as JSON (implies --once)')
   .option('--config <path>', 'Use a specific config file')
   .action((opts) => cmdMonitor(process.cwd(), opts));
 

@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
 import { buildSparkline, buildGauge, thresholdColor, statusColor, formatUptime, formatBytes } from '../../src/cli/monitor/charts.js';
 import { parsePm2Jlist, parseSystemStats, parseReleaseRecords, parseDeployLock, parseHealthProbe, parseAccessoryStatus, parseCaddyInfo, splitSections, systemCpuPercent, nextHealthFailStreak, MetricsHistory, type ProcessInfo, type SystemInfo } from '../../src/cli/monitor/state.js';
-import { buildMonitorCommand, collectMetrics, collectLogs, collectCaddyLogs } from '../../src/cli/monitor/poller.js';
+import { collectMetrics, collectLogs, collectCaddyLogs } from '../../src/cli/monitor/poller.js';
+import { appSectionName } from '../../src/domain/observe/script.js';
 import { restartProcess, rollbackToRelease } from '../../src/cli/monitor/actions.js';
 import { logLineColor } from '../../src/cli/monitor/panels/LogPanel.js';
 import { assembleConfig } from '../../src/config/assembly.js';
@@ -481,7 +482,7 @@ describe('MetricsHistory', () => {
       ],
       system: emptySystem,
       currentRelease: null,
-      releases: [],
+      [appSectionName(0, 'releases')]: [],
       deployLock: null,
     });
     expect(history.cpu).toHaveLength(1);
@@ -497,7 +498,7 @@ describe('MetricsHistory', () => {
         processes: [makeProcess({ cpu: i, memory: i * 10 })],
         system: emptySystem,
         currentRelease: null,
-        releases: [],
+        [appSectionName(0, 'releases')]: [],
         deployLock: null,
       });
     }
@@ -532,114 +533,18 @@ function sectioned(sections: Record<string, string>): string {
     .join('\n');
 }
 
-describe('buildMonitorCommand', () => {
-  it('emits every section marker', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
-    for (const name of ['pm2', 'sys', 'current', 'releases', 'lock']) {
-      expect(command).toContain(`@@SHIPNODE:${name}@@`);
-    }
-  });
-
-  it('joins sections with ; so one failure cannot blank the rest', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
-    expect(command).not.toContain('&&');
-  });
-
-  it('gives pm2 a failure sentinel fallback for backend apps', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
-    expect(command).toContain('pm2 jlist 2>/dev/null || echo "##SHIPNODE_PM2_FAILED##"');
-  });
-
-  it('skips pm2 for frontend apps', () => {
-    const frontendConfig = assembleConfig({
-      app: 'frontend',
-      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
-      remotePath: '/var/www/app',
-    });
-    const command = buildMonitorCommand(frontendConfig.apps[0], frontendConfig);
-    expect(command).not.toContain('pm2 jlist');
-  });
-
-  it('reads the workspace-level deploy lock', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
-    expect(command).toContain('/var/www/app/.shipnode/deploy.lock');
-  });
-
-  it('collects core count and all three load averages', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
-    expect(command).toContain('nproc');
-    expect(command).toContain(`awk '{print $1, $2, $3}' /proc/loadavg`);
-  });
-
-  it('probes the health endpoint capped to the poll interval', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig, { healthMaxTimeSeconds: 2 });
-    expect(command).toContain('@@SHIPNODE:health@@');
-    expect(command).toContain('http://localhost:3000/health');
-    expect(command).toContain('--max-time 2');
-  });
-
-  it('omits the health probe when the health check is disabled', () => {
-    const config = assembleConfig({
-      app: 'backend',
-      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
-      remotePath: '/var/www/app',
-      pm2: { apps: [{ name: 'api', port: 3000 }] },
-      healthCheck: { enabled: false },
-    });
-    expect(buildMonitorCommand(config.apps[0], config)).not.toContain('@@SHIPNODE:health@@');
-  });
-
-  it('omits the health probe when no pm2 app declares a port', () => {
-    const config = assembleConfig({
-      app: 'backend',
-      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
-      remotePath: '/var/www/app',
-      pm2: { apps: [{ name: 'worker' }] },
-    });
-    expect(buildMonitorCommand(config.apps[0], config)).not.toContain('@@SHIPNODE:health@@');
-  });
-
-  it('samples accessories with sudo -n docker inspect', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig, { accessoryNames: ['postgres', 'redis'] });
-    expect(command).toContain('@@SHIPNODE:accessories@@');
-    expect(command).toContain('sudo -n docker inspect');
-    expect(command).not.toContain('sudo docker inspect');
-    expect(command).toContain(`'shipnode-postgres' 'shipnode-redis'`);
-  });
-
-  it('omits the accessories section when no names are given', () => {
-    const command = buildMonitorCommand(testConfig.apps[0], testConfig);
-    expect(command).not.toContain('@@SHIPNODE:accessories@@');
-  });
-
-  it('adds caddy sections for frontend apps only', () => {
-    const frontendConfig = assembleConfig({
-      app: 'frontend',
-      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
-      remotePath: '/var/www/app',
-    });
-    const frontendApp = frontendConfig.apps[0];
-    const command = buildMonitorCommand(frontendApp, frontendConfig);
-    expect(command).toContain('@@SHIPNODE:caddy-status@@');
-    expect(command).toContain('systemctl is-active caddy');
-    expect(command).toContain(`/var/log/caddy/${frontendApp.name}.log`);
-
-    expect(buildMonitorCommand(testConfig.apps[0], testConfig)).not.toContain('caddy');
-  });
-});
-
 describe('collectMetrics', () => {
   const fullStdout = sectioned({
-    pm2: JSON.stringify([{ name: 'api', pid: 123, pm2_env: { status: 'online', pm_uptime: Date.now(), restart_time: 0 }, monit: { cpu: 2.5, memory: 128 * 1024 * 1024 } }]),
+    [appSectionName(0, 'pm2')]: JSON.stringify([{ name: 'api', pid: 123, pm2_env: { status: 'online', pm_uptime: Date.now(), restart_time: 0 }, monit: { cpu: 2.5, memory: 128 * 1024 * 1024 } }]),
     sys: ['mem:16000 8000', 'load:0.5 0.4 0.3', 'cores:2', 'uptime:86400', 'disk:100 45'].join('\n'),
-    current: '/var/www/app/releases/2026-01-01T00-00-00',
-    releases: JSON.stringify([{ timestamp: '2026-01-01', status: 'success', duration: 10 }]),
+    [appSectionName(0, 'current')]: '/var/www/app/releases/2026-01-01T00-00-00',
+    [appSectionName(0, 'releases')]: JSON.stringify([{ timestamp: '2026-01-01', status: 'success', duration: 10 }]),
     lock: 'none',
   });
 
   it('collects the full snapshot in a single SSH round trip', async () => {
     const executor = new FakeRemoteExecutor();
-    executor.when((c) => c.includes('@@SHIPNODE:pm2@@'), { stdout: fullStdout, stderr: '', exitCode: 0 });
+    executor.when((c) => c.includes('@@SHIPNODE:a0-pm2@@'), { stdout: fullStdout, stderr: '', exitCode: 0 });
 
     const result = await collectMetrics(executor, testConfig.apps[0], testConfig);
 
@@ -670,9 +575,9 @@ describe('collectMetrics', () => {
     const executor = new FakeRemoteExecutor();
     executor.when(() => true, {
       stdout: sectioned({
-        pm2: '[]',
+        [appSectionName(0, 'pm2')]: '[]',
         lock: 'none',
-        health: '200 34',
+        [appSectionName(0, 'health')]: '200 34',
         accessories: '/shipnode-postgres|running|healthy|postgres:16',
       }),
       stderr: '',
@@ -698,7 +603,7 @@ describe('collectMetrics', () => {
   it('reports an active deploy lock', async () => {
     const executor = new FakeRemoteExecutor();
     executor.when(() => true, {
-      stdout: sectioned({ pm2: '[]', lock: '2026-07-11T10:00:00Z 42' }),
+      stdout: sectioned({ [appSectionName(0, 'pm2')]: '[]', lock: '2026-07-11T10:00:00Z 42' }),
       stderr: '',
       exitCode: 0,
     });
@@ -710,7 +615,7 @@ describe('collectMetrics', () => {
   it('sets error flag when pm2 jlist fails for backend app', async () => {
     const executor = new FakeRemoteExecutor();
     executor.when(() => true, {
-      stdout: sectioned({ pm2: '##SHIPNODE_PM2_FAILED##', lock: 'none' }),
+      stdout: sectioned({ [appSectionName(0, 'pm2')]: '##SHIPNODE_PM2_FAILED##', lock: 'none' }),
       stderr: '',
       exitCode: 0,
     });
@@ -725,7 +630,7 @@ describe('collectMetrics', () => {
     executor.when(() => true, { stdout: '', stderr: '', exitCode: 1 });
 
     const result = await collectMetrics(executor, testConfig.apps[0], testConfig);
-    expect(result.error).toBe('Monitor poll returned no data');
+    expect(result.error).toBe('Observe poll returned no data');
   });
 
   it('handles frontend app without PM2 gracefully', async () => {
@@ -737,7 +642,7 @@ describe('collectMetrics', () => {
 
     const executor = new FakeRemoteExecutor();
     executor.when(() => true, {
-      stdout: sectioned({ pm2: '[]', lock: 'none' }),
+      stdout: sectioned({ [appSectionName(0, 'pm2')]: '[]', lock: 'none' }),
       stderr: '',
       exitCode: 0,
     });
@@ -806,6 +711,23 @@ describe('monitor session', () => {
       expect(session.value.target.name).toBe('data');
       expect(session.value.target.ssh.host).toBe('2.2.2.2');
     }
+  });
+
+  it('picks a fleet replica with --on', () => {
+    const config = assembleConfig({
+      servers: {
+        a: { host: '1.1.1.1', user: 'deploy', port: 22 },
+        b: { host: '2.2.2.2', user: 'deploy', port: 22 },
+      },
+      remotePath: '/var/www/app',
+      apps: [
+        { name: 'api', appType: 'backend', on: ['a', 'b'], healthCheck: { enabled: true } },
+      ],
+    });
+
+    const session = resolveMonitorSession(config, 'api', 'b');
+    expect(session.isOk()).toBe(true);
+    if (session.isOk()) expect(session.value.target.name).toBe('b');
   });
 
   it('limits selectable apps to the connected server target', () => {

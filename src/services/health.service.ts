@@ -2,6 +2,7 @@ import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../shared/types.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { HealthCheckError } from '../shared/errors.js';
 import { getPm2Name } from '../domain/pm2/apps.js';
+import { isWatt } from '../domain/runtime/watt.js';
 
 /** Exponential retry pacing for the HTTP probe. */
 export interface RetryBackoff {
@@ -65,14 +66,24 @@ export class HealthCheckService {
     let responseMs = 0;
 
     if (webApp) {
-      const result = await this.performHttpCheck(webApp, app.healthCheck, opts?.httpPort, opts?.backoff);
+      const result = await this.performHttpCheck(
+        webApp,
+        app.healthCheck,
+        opts?.httpPort,
+        opts?.backoff,
+        isWatt(app) ? unitFor(app, webApp, opts?.resolvePm2Name) : undefined,
+      );
       attempts = result.attempts;
       responseMs = result.responseMs;
     }
 
     const pm2Apps = opts?.pm2Apps ?? app.pm2?.apps;
     if (pm2Apps?.length) {
-      await this.performPm2StatusCheck(app, pm2Apps, opts?.resolvePm2Name);
+      if (isWatt(app)) {
+        await this.performUnitStatusCheck(app, pm2Apps, opts?.resolvePm2Name);
+      } else {
+        await this.performPm2StatusCheck(app, pm2Apps, opts?.resolvePm2Name);
+      }
     }
 
     return { attempts, responseMs };
@@ -83,6 +94,7 @@ export class HealthCheckService {
     healthCheck: ShipnodeApp['healthCheck'],
     portOverride?: number,
     backoff?: RetryBackoff,
+    unit?: string,
   ): Promise<{ attempts: number; responseMs: number }> {
     const { path, timeout, retries } = healthCheck;
     const port = portOverride ?? webApp.port;
@@ -112,7 +124,7 @@ export class HealthCheckService {
       }
     }
 
-    const diagnostics = await this.collectPm2Logs(webApp.name);
+    const diagnostics = unit ? await this.collectUnitLogs(unit) : await this.collectPm2Logs(webApp.name);
     throw new HealthCheckError(
       `Health check failed after ${retries} attempts. Last status: ${lastStatus}` + diagnostics,
       retries,
@@ -182,6 +194,53 @@ export class HealthCheckService {
     );
   }
 
+  /**
+   * The watt runtime's counterpart to the PM2 status check: every required
+   * unit must be `active` and must not have been restarted by systemd since it
+   * was started (a crash loop under `Restart=always` otherwise looks healthy
+   * between crashes).
+   */
+  private async performUnitStatusCheck(
+    app: ShipnodeApp,
+    procs: Pm2App[],
+    resolvePm2Name?: (a: Pm2App) => string,
+  ): Promise<void> {
+    const failures: string[] = [];
+    const bad: string[] = [];
+    for (const proc of procs) {
+      const unit = unitFor(app, proc, resolvePm2Name);
+      const result = await this.executor.exec(
+        `systemctl show ${unit} -p ActiveState -p NRestarts --value 2>/dev/null | paste -sd' '`,
+      );
+      const [state = 'unknown', restarts = '0'] = result.stdout.trim().split(/\s+/);
+      if (state !== 'active') {
+        failures.push(`${unit}: state=${state}`);
+        bad.push(unit);
+      } else if (Number(restarts) > 0) {
+        failures.push(`${unit}: crashed during startup (NRestarts=${restarts})`);
+        bad.push(unit);
+      }
+    }
+
+    if (failures.length === 0) return;
+
+    let diagnostics = '';
+    for (const unit of bad) diagnostics += await this.collectUnitLogs(unit);
+    throw new HealthCheckError(
+      `systemd unit(s) failed health check:\n  - ${failures.join('\n  - ')}${diagnostics}`,
+      0,
+      0,
+    );
+  }
+
+  private async collectUnitLogs(unit: string): Promise<string> {
+    const logResult = await this.executor.exec(
+      `{ S=$([ "$(id -u)" = 0 ] || echo sudo); $S journalctl -u ${unit} -n 15 --no-pager 2>/dev/null; } || true`,
+    ).catch(() => ({ stdout: '', stderr: '' }));
+    const logs = logResult.stdout.trim();
+    return logs ? `\n\nsystemd logs (${unit}):\n${logs}` : '';
+  }
+
   private async collectPm2Logs(name: string): Promise<string> {
     const logResult = await this.executor.exec(
       `{ tail -15 ~/.pm2/logs/${name}-error.log 2>/dev/null; tail -15 ~/.pm2/logs/${name}-out.log 2>/dev/null; } || true`,
@@ -193,4 +252,10 @@ export class HealthCheckService {
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+/** systemd unit for a declared process, honouring blue-green's coloured web name. */
+function unitFor(app: ShipnodeApp, proc: Pm2App, resolvePm2Name?: (a: Pm2App) => string): string {
+  const namespace = app.pm2?.apps[0]?.name ?? '';
+  return `shipnode-${(resolvePm2Name ?? ((a: Pm2App) => getPm2Name(namespace, a.name)))(proc)}`;
 }

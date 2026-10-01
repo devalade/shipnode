@@ -174,6 +174,12 @@ export const Pm2ConfigSchema = z.object({
   { message: 'pm2.apps entries must have unique names' },
 );
 
+export const WattConfigSchema = z.object({
+  main: z.string().min(1, 'watt.main is required (the file each worker thread loads)'),
+  module: z.string().min(1).optional(),
+  maxHeapUsed: z.string().regex(/^\d+[KMG]?$/i, 'maxHeapUsed must look like 512M or 1G').optional(),
+});
+
 export const HealthCheckConfigSchema = z.object({
   enabled: z.boolean().default(true),
   path: z.string().default('/health'),
@@ -264,6 +270,8 @@ export const ShipnodeAppSchema = z.object({
     append: z.string().optional(),
   }).optional(),
   pm2: Pm2ConfigSchema.optional(),
+  runtime: z.enum(['pm2', 'watt']).optional(),
+  watt: WattConfigSchema.optional(),
   healthCheck: HealthCheckConfigSchema,
   envFile: z.string().default('.env'),
   keepReleases: z.number().int().min(1).default(5),
@@ -300,6 +308,18 @@ export const ShipnodeAppSchema = z.object({
     return webPort === undefined || cfg.altPort !== webPort;
   },
   { message: 'altPort must differ from the web app port (blue and green need distinct ports)', path: ['altPort'] },
+).refine(
+  (cfg) => cfg.runtime !== 'watt' || cfg.watt !== undefined,
+  { message: "runtime 'watt' requires a watt config: set watt.main (the entry file each worker thread loads)", path: ['watt'] },
+).refine(
+  (cfg) => cfg.runtime === 'watt' || cfg.watt === undefined,
+  { message: "watt settings require runtime 'watt'", path: ['runtime'] },
+).refine(
+  (cfg) => cfg.runtime !== 'watt' || (cfg.pm2?.apps.some((a) => a.port !== undefined) ?? false),
+  { message: "runtime 'watt' requires a web app: one process must declare a port", path: ['runtime'] },
+).refine(
+  (cfg) => cfg.runtime !== 'watt' || cfg.appType === 'backend',
+  { message: "runtime 'watt' is for backend apps", path: ['runtime'] },
 );
 
 // A z.preprocess wrapper synthesizes `apps[0]` from the legacy top-level fields when
@@ -527,6 +547,8 @@ export const ShipnodeConfigSchema = z.preprocess(
         domain: obj.domain,
         caddy: obj.caddy,
         pm2: obj.pm2,
+        runtime: obj.runtime,
+        watt: obj.watt,
         healthCheck: obj.healthCheck,
         envFile: obj.envFile,
         keepReleases: obj.keepReleases,

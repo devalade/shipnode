@@ -2,6 +2,11 @@
 
 All notable changes to `@devalade/shipnode` will be documented here.
 
+## [Unreleased]
+
+### Added
+- **Opt-in `watt` runtime (wattpm).** `.runtime('watt', { main: 'dist/server.js' })` runs the web app as worker threads sharing one port via `SO_REUSEPORT` instead of PM2 processes — no supervisor in the request path and no per-process V8 duplication. `instances` becomes the thread count; workers run as systemd units (`shipnode-<app>[-<colour>]`). Blue-green, `rollback`, `restart`, `stop`, `logs`, `env`, `deploy --watch`, `doctor`, `status`, `metrics` and the monitor all support it. PM2 stays the default. Your app must depend on `wattpm` and `@platformatic/node`; scaling past one worker needs Linux. See [ADR-0009](docs/adr/0009-watt-runtime.md).
+
 ## [3.2.0-beta.1] - 2026-09-18
 
 ### Added

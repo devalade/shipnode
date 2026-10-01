@@ -15,6 +15,7 @@ import {
 } from '../../infrastructure/provisioning/commands.js';
 import { isFleet } from '../../domain/servers.js';
 import { loadUsersYml, saveUsersYml, syncUsers, upsertUser } from './user.js';
+import { isWatt } from '../../domain/runtime/watt.js';
 import { Pm2StartupError } from '../../shared/result-errors.js';
 
 const DEPLOY_USER = 'deploy';
@@ -177,7 +178,7 @@ export function buildTasks(executor: RemoteExecutor, config: ShipnodeConfig, own
           },
         ], { concurrent: false }),
       }] : []),
-      ...(hasApps && config.apps.some((app) => app.appType === 'backend' && app.pm2) ? [{
+      ...(hasApps && config.apps.some((app) => app.appType === 'backend' && app.pm2 && !isWatt(app)) ? [{
         title: 'PM2',
         task: (_ctx: object, task: any) => task.newListr([
           {

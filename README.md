@@ -85,6 +85,25 @@ export default shipnode
 
 Each app gets its own release directory, Caddy site, PM2 ecosystem, and health check. Deploy everything with `shipnode deploy`, or target one app with `shipnode deploy --app api`.
 
+### Opt-in: wattpm runtime
+
+Run the web app as worker threads sharing one port (`SO_REUSEPORT`) instead of PM2 processes — no supervisor in the request path and no per-process V8 duplication. PM2 remains the default.
+
+```ts
+export default shipnode
+  .backend()
+  .ssh({ host: '1.2.3.4', user: 'deploy' })
+  .deployTo('/var/www/myapp')
+  .pm2('myapp', { instances: 4, maxMemory: '512M' }) // instances = worker threads
+  .port(3000)
+  .domain('api.example.com')
+  .runtime('watt', { main: 'dist/server.js' })         // file each thread loads; must listen on process.env.PORT
+  .worker({ name: 'mailer', command: 'node dist/worker.js' }) // runs as its own systemd unit
+  .build();
+```
+
+Shipnode installs `wattpm` and `@platformatic/node` for you if your app doesn't list them; add them to your own dependencies to pin the versions. Zero-downtime blue-green, `rollback`, `logs`, `stop` and `env` work as with PM2; supervision is systemd (`shipnode-<app>[-<colour>]`). Scaling past one worker needs Linux. See `docs/adr/0009-watt-runtime.md` for the trade-offs.
+
 ### Web + workers
 
 A backend can run additional long-running processes alongside the web server. PM2 supervises all of them under one deployment.

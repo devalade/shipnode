@@ -72,7 +72,7 @@ export function App({ executor, config, app: initialApp, apps, accessoryNames, t
     setOverlay('none');
     if (selectedInfo === undefined) return;
     monitor.appendEvent(chalk.yellow(`Restarting ${selectedInfo.pm2Name}…`));
-    const result = await restartProcess(executor, selectedInfo.pm2Name);
+    const result = await restartProcess(executor, selectedInfo.pm2Name, selectedInfo.supervisor);
     if (result.isOk()) {
       monitor.appendEvent(chalk.green(`Restarted ${chalk.bold(selectedInfo.pm2Name)}`));
     } else {

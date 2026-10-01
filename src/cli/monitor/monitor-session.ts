@@ -12,6 +12,7 @@ export interface MonitorSession {
 export function resolveMonitorSession(
   config: ShipnodeConfig,
   appName?: string,
+  serverName?: string,
 ): ResultType<MonitorSession, AppTargetError> {
   const app = appName === undefined
     ? config.apps[0]
@@ -19,9 +20,10 @@ export function resolveMonitorSession(
 
   if (app === undefined) return Result.err(new UnknownAppError({ name: appName ?? '(default)' }));
 
-  // The monitor holds one live connection, so a fleet app must be narrowed to
-  // one replica first (`monitor --on <server>`).
-  const target = getServerTargetResult(config, app.on, `App '${app.name}'`);
+  // The live TUI holds one connection. `--once` / `--json` observe the whole
+  // fleet; this path still needs a replica. `--on` picks it; otherwise the
+  // app's `on` must already name a single server.
+  const target = getServerTargetResult(config, serverName ?? app.on, `App '${app.name}'`);
   if (target.isErr()) return Result.err(target.error);
 
   return Result.ok({ config, app, target: target.value });

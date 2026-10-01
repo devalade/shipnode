@@ -1,5 +1,6 @@
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
+import { isWatt, resolveWattUnits, stopUnitCommand } from '../../domain/runtime/watt.js';
 
 export async function cmdStop(cwd: string, options: { config?: string; process?: string; app?: string; on?: string }): Promise<void> {
   await runRemoteCommandForTargets(
@@ -24,6 +25,12 @@ export async function cmdStop(cwd: string, options: { config?: string; process?:
       const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
 
       for (const app of apps) {
+        if (isWatt(app)) {
+          const units = await resolveWattUnits(executor, `${config.remotePath}/${app.name}`, app, { process: options.process, colors: 'all' });
+          for (const unit of units) await executor.execOrThrow(stopUnitCommand(unit));
+          ui.warn(`App '${app.name}' stopped`);
+          continue;
+        }
         const namespace = app.pm2!.apps[0].name;
         const target = options.process
           ? app.pm2!.apps.find((a) => a.name === options.process)?.name ?? namespace

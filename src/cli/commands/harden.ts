@@ -218,7 +218,8 @@ export async function cmdHarden(cwd: string, options: { config?: string; on?: st
           );
           changes.push(`PM2: refreshed dump for ${currentUser}`);
         }
-      } else {
+      } else if (config.apps.some((a) => a.appType === 'backend' && a.pm2 && a.runtime !== 'watt')) {
+        // Watt-only hosts have no PM2 unit by design: systemd starts their units at boot.
         ui.warn(`No ${wanted} found. If you switched ssh.user recently, re-run 'shipnode setup' as the new user or install pm2 startup manually.`);
       }
 

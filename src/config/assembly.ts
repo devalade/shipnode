@@ -37,6 +37,8 @@ type AssembleInput = {
   domain?: string;
   caddy?: ShipnodeApp['caddy'];
   pm2?: LegacyPm2Input | Pm2Config;
+  runtime?: 'pm2' | 'watt';
+  watt?: { main: string; module?: string; maxHeapUsed?: string };
   backend?: { port?: number };
   healthCheck?: unknown;
   envFile?: string;

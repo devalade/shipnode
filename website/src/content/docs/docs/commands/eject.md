@@ -13,4 +13,6 @@ npx shipnode eject caddy    # only Caddyfile template
 
 Once ejected, ShipNode uses the local templates on every subsequent deploy.
 
+`eject pm2` applies to the PM2 runtime only; the [wattpm runtime](/docs/watt/) renders its own files per release.
+
 Templates land under `.shipnode/templates/` in your project.

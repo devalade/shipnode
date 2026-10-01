@@ -91,6 +91,24 @@ export interface Pm2Config {
   apps: Pm2App[];
 }
 
+/** Process supervisor for a backend app. `pm2` is the default. */
+export type AppRuntime = 'pm2' | 'watt';
+
+/**
+ * Settings for the opt-in `watt` runtime (wattpm — worker threads sharing the
+ * web port via SO_REUSEPORT). The web app runs under wattpm; every other
+ * declared process (workers) runs as its own systemd unit. `instances` on the
+ * web app becomes the worker-thread count.
+ */
+export interface WattConfig {
+  /** Entry file the web app loads inside each worker thread, e.g. `dist/server.js`. It must listen on `process.env.PORT`. */
+  main: string;
+  /** wattpm capability module. Defaults to `@platformatic/node`. */
+  module?: string;
+  /** Recycle a worker whose heap exceeds this (`512M`, `1G`). Defaults to the web app's `maxMemory`. */
+  maxHeapUsed?: string;
+}
+
 export interface DockerConfig {
   image?: string;
   dockerfile: string;
@@ -235,6 +253,9 @@ export interface ShipnodeApp {
     append?: string;
   };
   pm2?: Pm2Config;
+  /** Process supervisor. Defaults to `pm2`; `watt` is opt-in and needs `watt`. */
+  runtime?: AppRuntime;
+  watt?: WattConfig;
   docker?: DockerConfig;
   healthCheck: HealthCheckConfig;
   envFile: string;

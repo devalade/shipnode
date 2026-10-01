@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { RemoteExecutor } from '../../../domain/remote/executor.js';
 import type { ShipnodeApp } from '../../../shared/types.js';
 import { collectLogs, collectCaddyLogs } from '../poller.js';
+import { isWatt } from '../../../domain/runtime/watt.js';
 
 const MAX_BUFFER_LINES = 500;
 
@@ -15,7 +16,7 @@ export function useLiveLogs(
   app: ShipnodeApp,
   liveMode: boolean,
   interval: number,
-  /** Exact pm2 process name to tail, or null for the whole app namespace. */
+  /** Exact process (pm2 name or systemd unit) to tail, or null for the whole app namespace. */
   filter: string | null = null,
 ): LiveLogsState {
   const [logBuffer, setLogBuffer] = useState('');
@@ -33,7 +34,7 @@ export function useLiveLogs(
     }
     const target = filter ?? app.pm2?.apps[0]?.name;
     if (target === undefined) return '';
-    return collectLogs(executor, target, 20);
+    return collectLogs(executor, target, 20, isWatt(app) ? 'systemd' : undefined);
   };
 
   const pollLogs = async (): Promise<void> => {

@@ -27,7 +27,7 @@ ${chalk.bold('PROCESS MANAGEMENT')}
   ${chalk.green('logs')}              Show application logs
   ${chalk.green('restart')}           Restart the application
   ${chalk.green('stop')}              Stop the application
-  ${chalk.green('metrics')}           Open PM2 monitoring dashboard
+  ${chalk.green('metrics')}           Open process monitoring (pm2 monit, or systemctl status for watt)
   ${chalk.green('monitor')}           Live TUI dashboard with stats and logs
 
 ${chalk.bold('SECURITY & MAINTENANCE')}
@@ -60,7 +60,7 @@ ${chalk.bold('CONFIGURATION')}
   ${chalk.green('config path')}       Print path to config file
 
 ${chalk.bold('CUSTOMIZATION')}
-  ${chalk.green('eject')} [target]    Eject PM2/Caddy templates (pm2, caddy, all)
+  ${chalk.green('eject')} [target]    Eject PM2/Caddy templates (pm2, caddy, all) — PM2 only, not the watt runtime
   ${chalk.green('upgrade')}           Upgrade shipnode to the latest version
 
 ${chalk.bold('OPTIONS')}

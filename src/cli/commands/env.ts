@@ -4,6 +4,7 @@ import { resolve } from 'path';
 import { runRemoteCommandForTargets } from '../runner.js';
 import { ui } from '../ui.js';
 import { getDeploymentName } from '../../domain/pm2/apps.js';
+import { isWatt, resolveWattUnits, restartUnitCommand } from '../../domain/runtime/watt.js';
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
 
 function shellSingleQuote(value: string): string {
@@ -79,6 +80,14 @@ export async function cmdEnv(
         const namespace = getDeploymentName({ ...config, apps: [app] } as any);
         if (!namespace) {
           ui.info(`No PM2 namespace configured for '${app.name}' — nothing to reload.`);
+          continue;
+        }
+
+        if (isWatt(app)) {
+          const units = await resolveWattUnits(executor, appPath, app, { colors: 'active' });
+          ui.info(`Restarting '${app.name}' (${units.join(', ')}) to pick up environment variables...`);
+          for (const unit of units) await executor.execOrThrow(restartUnitCommand(unit));
+          ui.success(`'${app.name}' restarted with new environment variables`);
           continue;
         }
 
