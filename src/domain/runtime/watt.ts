@@ -178,7 +178,16 @@ export function logsCommand(unit: string, opts: { follow?: boolean; lines?: numb
 
 /** Fails (non-zero) when a port is already bound by something else. */
 export function portFreeGuard(port: number): string {
-  return `{ ss -tlnp | grep -q ":${port} " && echo "Port ${port} is already in use by another process" && false || true; }`;
+  return `{ if ss -tlnp | grep -q ":${port} "; then echo "Port ${port} is already in use by another process" >&2; false; else true; fi; }`;
+}
+
+/**
+ * Best-effort removal of a PM2 process by exact name. Adopting watt on a host
+ * whose app ran blue-green under PM2 leaves the idle colour's PM2 process
+ * resident on the port the watt unit is about to bind.
+ */
+export function pm2DeleteCommand(name: string): string {
+  return `{ mise exec -- pm2 delete "${name}" 2>/dev/null || true; }`;
 }
 
 /** `add` command per package manager, run in the app root of the release. */

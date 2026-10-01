@@ -13,7 +13,7 @@ import { runWithDotenv } from './dotenv.js';
 import { envSymlinkCommand } from './env-links.js';
 import {
   WATT_APP_FILE, WATT_RUNTIME_FILE, WATT_START_COMMAND,
-  installUnitCommand, isWatt, portFreeGuard, removeUnitCommand, renderAppConfig, renderRunScript,
+  installUnitCommand, isWatt, pm2DeleteCommand, portFreeGuard, removeUnitCommand, renderAppConfig, renderRunScript,
   renderRuntimeConfig, renderUnit, restartUnitCommand, runScriptName, stopUnitCommand, wattEnsureInstalledCommand, wattInstalledGuard, wattUnitName,
 } from '../runtime/watt.js';
 import type { DeployColor } from './blue-green.js';
@@ -432,8 +432,14 @@ export class BackendStrategy implements DeploymentStrategy {
     // Reap a stale same-colour instance, then guard the port against a foreign
     // process — but never the unit we are about to (re)start in recreate mode.
     const reap = blueGreen ? `${stopUnitCommand(webUnit)} && ` : '';
+    // The idle colour may still be a resident PM2 process (previous release of
+    // an app adopting watt); it is not serving, so retire it before binding its port.
+    const retirePm2 = blueGreen
+      ? `${mise} && ${pm2DeleteCommand(coloredWebName(namespace, web.name, target.color))} && `
+      : '';
     await ctx.executor.execOrThrow(
       reap +
+      retirePm2 +
       (blueGreen ? `${portFreeGuard(port)} && ` : '') +
       restartUnitCommand(webUnit),
     );

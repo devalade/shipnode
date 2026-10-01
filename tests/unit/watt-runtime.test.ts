@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BackendStrategy } from '../../src/domain/deploy/backend-strategy.js';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
 import { assembleConfig } from '../../src/config/assembly.js';
@@ -6,7 +10,7 @@ import { shipnode } from '../../src/config/builder.js';
 import type { StrategyContext } from '../../src/domain/deploy/strategy.js';
 import {
   parseSize, renderAppConfig, renderRunScript, renderRuntimeConfig, renderUnit, resolveWattUnits, wattUnitName,
-  wattEnsureInstalledCommand, WATT_VERSION,
+  wattEnsureInstalledCommand, WATT_VERSION, portFreeGuard, pm2DeleteCommand,
 } from '../../src/domain/runtime/watt.js';
 
 vi.mock('execa', () => ({ execa: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }) }));
@@ -325,5 +329,29 @@ describe('wattEnsureInstalledCommand', () => {
   it('keeps the rendered schema version in step with the installed version', () => {
     expect(renderRuntimeConfig({ name: 'api', port: 3000 } as never, watt)).toContain(`wattpm/${WATT_VERSION}.json`);
     expect(renderAppConfig(watt)).toContain(`@platformatic/node/${WATT_VERSION}.json`);
+  });
+});
+
+describe('portFreeGuard', () => {
+  function runGuard(listening: string): number {
+    const dir = mkdtempSync(join(tmpdir(), 'ss-'));
+    writeFileSync(join(dir, 'ss'), `#!/bin/sh\necho "${listening}"\n`, { mode: 0o755 });
+    return spawnSync('bash', ['-c', portFreeGuard(13125)], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } }).status ?? -1;
+  }
+
+  it('fails when something already listens on the port', () => {
+    expect(runGuard('LISTEN 0 511 *:13125 *:* users:((\\"node\\",pid=1,fd=18))')).not.toBe(0);
+  });
+
+  it('passes when the port is free', () => {
+    expect(runGuard('LISTEN 0 511 *:3125 *:*')).toBe(0);
+  });
+});
+
+describe('pm2DeleteCommand', () => {
+  it('deletes by exact name and never fails the deploy', () => {
+    const cmd = pm2DeleteCommand('json-green');
+    expect(cmd).toContain('pm2 delete "json-green"');
+    expect(cmd).toContain('|| true');
   });
 });
