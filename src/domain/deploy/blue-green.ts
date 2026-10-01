@@ -20,6 +20,23 @@ export interface DeployState {
   activeColor: DeployColor;
   bluePort: number;
   greenPort: number;
+  /**
+   * The release each colour was last booted from. Warm rollback needs it: the
+   * idle colour is stopped after a flip, and bringing it back means starting it
+   * from its own release. Absent in state written before warm rollback existed.
+   */
+  blueRelease?: string;
+  greenRelease?: string;
+}
+
+/** The release a colour was booted from, if the state recorded it. */
+export function releaseFor(state: DeployState, color: DeployColor): string | undefined {
+  return color === 'blue' ? state.blueRelease : state.greenRelease;
+}
+
+/** `state` with `color` now running `release`. */
+export function withRelease(state: DeployState, color: DeployColor, release: string): DeployState {
+  return color === 'blue' ? { ...state, blueRelease: release } : { ...state, greenRelease: release };
 }
 
 export interface DeployTarget {
@@ -34,6 +51,9 @@ export interface DeployTarget {
   /** Port pair to persist once the flip succeeds. */
   bluePort: number;
   greenPort: number;
+  /** Releases already recorded for each colour, carried forward when the flip is persisted. */
+  blueRelease?: string;
+  greenRelease?: string;
 }
 
 export function otherColor(color: DeployColor): DeployColor {
@@ -88,7 +108,17 @@ export async function readDeployState(
       typeof parsed.bluePort === 'number' &&
       typeof parsed.greenPort === 'number'
     ) {
-      return { activeColor: parsed.activeColor, bluePort: parsed.bluePort, greenPort: parsed.greenPort };
+      const recorded = (key: 'blueRelease' | 'greenRelease'): { [k in typeof key]?: string } => {
+        const value = (parsed as Record<string, unknown>)[key];
+        return typeof value === 'string' && value !== '' ? { [key]: value } : {};
+      };
+      return {
+        activeColor: parsed.activeColor,
+        bluePort: parsed.bluePort,
+        greenPort: parsed.greenPort,
+        ...recorded('blueRelease'),
+        ...recorded('greenRelease'),
+      };
     }
   } catch {
     // Corrupt/legacy state is treated as "no state" — the next deploy behaves
@@ -139,5 +169,7 @@ export function resolveTarget(
     previousPort: portFor(state.activeColor, state),
     bluePort: state.bluePort,
     greenPort: state.greenPort,
+    blueRelease: state.blueRelease,
+    greenRelease: state.greenRelease,
   };
 }

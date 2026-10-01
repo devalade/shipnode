@@ -182,7 +182,11 @@ export class ShipnodeBuilder {
     return this;
   }
 
-  /** Reclaim the inactive web process after a successful blue-green switch. */
+  /**
+   * What happens to the old colour after a successful blue-green switch: `warm`
+   * (default) stops it but keeps its release so `rollback` can start it again,
+   * `rollback` keeps it running for an instant flip, `none` stops it with no rollback.
+   */
   blueGreenRetention(retention: ShipnodeApp['blueGreenRetention']): this {
     this.config.blueGreenRetention = retention;
     return this;
@@ -443,7 +447,11 @@ export class ShipnodeAppBuilder {
     return this;
   }
 
-  /** Reclaim the inactive web process after a successful blue-green switch. */
+  /**
+   * What happens to the old colour after a successful blue-green switch: `warm`
+   * (default) stops it but keeps its release so `rollback` can start it again,
+   * `rollback` keeps it running for an instant flip, `none` stops it with no rollback.
+   */
   blueGreenRetention(retention: ShipnodeApp['blueGreenRetention']): this {
     this.state.blueGreenRetention = retention;
     return this;

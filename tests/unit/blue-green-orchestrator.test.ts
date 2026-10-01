@@ -126,6 +126,24 @@ describe('blue-green deploy (orchestrator)', () => {
     expect(stateIdx).toBeGreaterThan(caddyIdx);
   });
 
+  it('records which release each colour runs so a stopped colour can be started again', async () => {
+    const executor = new FakeRemoteExecutor();
+    const state: DeployState = { activeColor: 'blue', bluePort: 3000, greenPort: 3001, blueRelease: 'REL-OLD' };
+    baseStubs(executor)
+      .when((cmd) => cmd.includes('deploy-state.json') && cmd.includes('cat'), { stdout: JSON.stringify(state), stderr: '', exitCode: 0 })
+      .when((cmd) => cmd.includes('date') && cmd.includes('curl'), { stdout: '200 12', stderr: '', exitCode: 0 });
+    const orchestrator = await buildOrchestrator(executor, bgConfig());
+
+    await orchestrator.deploy({ cwd: '/test', skipBuild: false, releaseId: 'REL-NEW' });
+
+    const write = executor.getHistory().map((h) => h.command)
+      .find((c) => c.includes('deploy-state.json') && c.includes('base64 -d'))!;
+    const written = JSON.parse(Buffer.from(/printf '%s' '([^']+)'/.exec(write)![1], 'base64').toString());
+    expect(written).toEqual({
+      activeColor: 'green', bluePort: 3000, greenPort: 3001, blueRelease: 'REL-OLD', greenRelease: 'REL-NEW',
+    });
+  });
+
   it('second switch (green active) reuses blue only after the first migration cleaned it', async () => {
     const executor = new FakeRemoteExecutor();
     const state: DeployState = { activeColor: 'green', bluePort: 3000, greenPort: 3001 };

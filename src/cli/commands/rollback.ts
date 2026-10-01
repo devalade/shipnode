@@ -14,12 +14,15 @@ import {
   otherColor,
   portFor,
   coloredWebName,
+  releaseFor,
+  type DeployColor,
 } from '../../domain/deploy/blue-green.js';
+import { reapColourCommand } from '../../domain/deploy/retention.js';
 import { rollFleet, type FleetEvent } from '../../domain/deploy/fleet.js';
 import { isFleet } from '../../domain/servers.js';
 import type { RemoteExecutor } from '../../domain/remote/executor.js';
-import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
-import { isActiveCommand, isWatt, resolveWattUnits, restartUnitCommand, wattUnitName } from '../../domain/runtime/watt.js';
+import type { ShipnodeConfig, ShipnodeApp, Pm2App } from '../../shared/types.js';
+import { enableAndStartUnitCommand, isActiveCommand, isWatt, resolveWattUnits, restartUnitCommand, wattUnitName } from '../../domain/runtime/watt.js';
 import { configForAppResult, configForServer, getServerTargets } from '../../domain/servers.js';
 
 /**
@@ -224,10 +227,17 @@ async function rollbackReplica(
   ui.success(`Rolled back to ${target.timestamp}`);
 }
 
+const MISE = 'export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"';
+
 /**
- * Instant blue-green rollback: the previous colour is still resident, so we
- * flip Caddy's upstream back to it and swap the persisted active colour. No
- * process restart, no dropped requests.
+ * Blue-green rollback: send traffic back to the previous colour.
+ *
+ * With retention `rollback` that colour is still running, so this is an instant
+ * flip. With `warm` (the default) it was stopped after the last flip, so it is
+ * booted again from the release it ran — `current` is pointed back at that
+ * release first, because the colour's launcher files resolve through `current` —
+ * health-checked, and only then does traffic move. The colour that was serving
+ * is stopped afterwards, so memory stays at one copy.
  *
  * Only one step back is possible — older colours were reaped by later deploys.
  * For anything deeper, redeploy the desired release instead.
@@ -242,14 +252,14 @@ async function rollbackBlueGreen(
 ): Promise<void> {
   if (app.blueGreenRetention === 'none') {
     throw new Error(
-      'Instant blue-green rollback is disabled because blueGreenRetention is "none". ' +
-      'Redeploy the desired release instead.',
+      'Blue-green rollback is disabled because blueGreenRetention is "none". ' +
+      'Use "warm" to keep rollback without holding the old colour in memory, or redeploy the desired release.',
     );
   }
 
   if (stepsBack !== 1) {
     throw new Error(
-      `Blue-green rollback only supports one step (the live previous colour). ` +
+      `Blue-green rollback only supports one step (the previous colour). ` +
       `To go further back, redeploy the desired release.`,
     );
   }
@@ -268,37 +278,44 @@ async function rollbackBlueGreen(
   const previousPort = portFor(previous, state);
   const previousName = coloredWebName(namespace, webApp.name, previous);
 
-  // The previous colour must still be online to serve traffic after the flip.
-  // Parse pm2's JSON in-process rather than relying on `node` being on the
-  // remote PATH at rollback time.
-  let online = false;
-  if (isWatt(app)) {
-    const unit = wattUnitName(namespace, webApp.name, previous);
-    online = (await executor.exec(isActiveCommand(unit))).exitCode === 0;
-  } else {
-    const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
-    const jlist = await executor.exec(`${mise} && mise exec -- pm2 jlist`);
-    try {
-      const entries = JSON.parse(jlist.stdout.trim()) as Array<{ name: string; pm2_env?: { status?: string } }>;
-      online = entries.some((e) => e.name === previousName && e.pm2_env?.status === 'online');
-    } catch {
-      online = false;
-    }
-  }
-  if (!online) {
-    throw new Error(
-      `Previous colour "${previousName}" is not running — cannot instant-rollback. ` +
-      `Redeploy the desired release instead.`,
-    );
-  }
+  const online = await isColourOnline(executor, app, namespace, webApp.name, previous);
 
   ui.warn(`Active colour:   ${state.activeColor} (port ${portFor(state.activeColor, state)})`);
   ui.warn(`Rollback target: ${previous} (port ${previousPort})`);
 
-  const ok = await ask('Flip traffic back to the previous colour?');
-  if (!ok) {
-    ui.info('Rollback cancelled.');
-    return;
+  let bootFrom: string | undefined;
+  if (online) {
+    if (!(await ask('Flip traffic back to the previous colour?'))) {
+      ui.info('Rollback cancelled.');
+      return;
+    }
+  } else {
+    const release = releaseFor(state, previous);
+    if (release === undefined) {
+      throw new Error(
+        `Previous colour "${previousName}" is stopped and the server did not record which release it ran ` +
+        `(its state predates warm rollback). Redeploy the desired release instead.`,
+      );
+    }
+    const onDisk = await executor.exec(`test -d "${appPath}/releases/${release}"`);
+    if (onDisk.exitCode !== 0) {
+      throw new Error(
+        `Release ${release} is no longer on the server (older releases are cleaned up after keepReleases). ` +
+        `Redeploy the desired release instead.`,
+      );
+    }
+    ui.warn(`"${previousName}" is stopped; it will be started again from release ${release}.`);
+    if (!(await ask(`Start ${previous} from release ${release} and flip traffic to it?`))) {
+      ui.info('Rollback cancelled.');
+      return;
+    }
+    bootFrom = release;
+  }
+
+  if (bootFrom !== undefined) {
+    await bootColourFromRelease({
+      executor, config, app, appPath, namespace, webApp, color: previous, port: previousPort, release: bootFrom,
+    });
   }
 
   const caddy = new CaddyService(executor, config);
@@ -306,5 +323,95 @@ async function rollbackBlueGreen(
   await caddy.reload();
   await writeDeployState(executor, appPath, { ...state, activeColor: previous });
 
+  // The colour that was serving is no longer needed: keep one copy in memory.
+  if (app.blueGreenRetention === 'warm') {
+    await executor.execOrThrow(reapColourCommand(app, namespace, webApp.name, state.activeColor));
+  }
+
   ui.success(`Rolled back — traffic now on ${previous} (port ${previousPort})`);
+}
+
+/** Whether the web process of one colour is running right now. */
+async function isColourOnline(
+  executor: RemoteExecutor,
+  app: ShipnodeApp,
+  namespace: string,
+  webName: string,
+  color: DeployColor,
+): Promise<boolean> {
+  if (isWatt(app)) {
+    return (await executor.exec(isActiveCommand(wattUnitName(namespace, webName, color)))).exitCode === 0;
+  }
+  // Parse pm2's JSON in-process rather than relying on `node` being on the
+  // remote PATH at rollback time.
+  const name = coloredWebName(namespace, webName, color);
+  const jlist = await executor.exec(`${MISE} && mise exec -- pm2 jlist`);
+  try {
+    const entries = JSON.parse(jlist.stdout.trim()) as Array<{ name: string; pm2_env?: { status?: string } }>;
+    return entries.some((e) => e.name === name && e.pm2_env?.status === 'online');
+  } catch {
+    return false;
+  }
+}
+
+interface BootColourInput {
+  executor: RemoteExecutor;
+  config: ShipnodeConfig;
+  app: ShipnodeApp;
+  appPath: string;
+  namespace: string;
+  webApp: Pm2App;
+  color: DeployColor;
+  port: number;
+  release: string;
+}
+
+/**
+ * Start a stopped colour from the release it ran and wait until it is healthy.
+ *
+ * `current` is pointed at that release for the start and left there on success,
+ * since the colour's launcher resolves its files through `current`. On failure
+ * the colour is stopped again and `current` is put back, so a rollback that
+ * cannot start leaves the app exactly as it was.
+ */
+async function bootColourFromRelease(input: BootColourInput): Promise<void> {
+  const { executor, config, app, appPath, namespace, webApp, color, port, release } = input;
+  const releases = new ReleaseManager(executor, appPath, app.keepReleases);
+  const before = (await executor.exec(`readlink "${appPath}/current"`)).stdout.trim();
+
+  await releases.switchSymlink(`${appPath}/releases/${release}`);
+  try {
+    if (isWatt(app)) {
+      await executor.execOrThrow(enableAndStartUnitCommand(wattUnitName(namespace, webApp.name, color)));
+    } else {
+      await executor.execOrThrow(
+        `cd "${appPath}/current" && ${MISE} && ` +
+        `mise exec -- pm2 start "${appPath}/current/ecosystem.web.config.cjs" --update-env && ` +
+        `mise exec -- pm2 save`,
+      );
+    }
+    if (app.healthCheck.enabled) {
+      ui.info(`Waiting for ${color} to pass its health check...`);
+      await new HealthCheckService(executor, config).perform(app, {
+        httpPort: port,
+        pm2Apps: [webApp],
+        resolvePm2Name: (a: Pm2App) => coloredWebName(namespace, a.name, color),
+      });
+    }
+  } catch (error) {
+    await executor.exec(reapColourCommand(app, namespace, webApp.name, color));
+    if (before !== '') {
+      try {
+        await releases.switchSymlink(before);
+      } catch {
+        // Don't let a failed restore hide why the start failed: say where
+        // `current` is left and how to put it back, then rethrow the original.
+        ui.warn(
+          `Could not point current back at its previous release. It still points at ${appPath}/releases/${release}; ` +
+          `restore it with: ln -sfn "${before}" "${appPath}/current"`,
+        );
+      }
+    }
+    throw error;
+  }
 }

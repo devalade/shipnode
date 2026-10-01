@@ -11,6 +11,7 @@ import {
   readDeployState,
   writeDeployState,
   resolveTarget,
+  withRelease,
   resolveAltPort,
   coloredWebName,
   type DeployTarget,
@@ -182,11 +183,21 @@ export class DeployOrchestrator {
         await this.caddy.configureBackend(app, target.port);
         await this.caddy.reload();
         trafficSwitched = true;
-        await writeDeployState(this.executor, appPath, {
-          activeColor: target.color,
-          bluePort: target.bluePort,
-          greenPort: target.greenPort,
-        });
+        await writeDeployState(
+          this.executor,
+          appPath,
+          withRelease(
+            {
+              activeColor: target.color,
+              bluePort: target.bluePort,
+              greenPort: target.greenPort,
+              blueRelease: target.blueRelease,
+              greenRelease: target.greenRelease,
+            },
+            target.color,
+            timestamp,
+          ),
+        );
         if (strategy.afterTrafficSwitch) {
           await strategy.afterTrafficSwitch(startCtx);
         }

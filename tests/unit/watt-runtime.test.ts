@@ -138,18 +138,28 @@ describe('BackendStrategy watt — blue-green', () => {
     expect(cmds(e).some((c) => c.includes('systemctl restart shipnode-api-mailer'))).toBe(true);
   });
 
-  it('keeps the previous colour when retention is rollback', async () => {
-    const cfg = bg();
+  it('keeps the previous colour running when retention is rollback', async () => {
+    const cfg = config({ domain: 'api.example.com', zeroDowntime: true, blueGreenRetention: 'rollback' });
     const e = new FakeRemoteExecutor();
     await strategy(cfg).afterTrafficSwitch!(ctx(e, cfg, { deployTarget: target() }));
     expect(cmds(e)).toHaveLength(0);
   });
 
-  it('stops the previous colour when retention is none', async () => {
-    const cfg = config({ domain: 'api.example.com', zeroDowntime: true, blueGreenRetention: 'none' });
+  it.each(['warm', 'none'] as const)('drains, then parks the previous colour when retention is %s', async (retention) => {
+    const cfg = config({ domain: 'api.example.com', zeroDowntime: true, blueGreenRetention: retention });
     const e = new FakeRemoteExecutor();
     await strategy(cfg).afterTrafficSwitch!(ctx(e, cfg, { deployTarget: target() }));
-    expect(cmds(e).some((c) => c.includes('systemctl stop shipnode-api-blue'))).toBe(true);
+    const reap = cmds(e).find((c) => c.includes('disable --now shipnode-api-blue'));
+    // Disabled as well as stopped, so it does not come back on a reboot.
+    expect(reap).toBeDefined();
+    expect(reap).toMatch(/^sleep 10 && /);
+  });
+
+  it('parks the previous colour by default', async () => {
+    const cfg = bg();
+    const e = new FakeRemoteExecutor();
+    await strategy(cfg).afterTrafficSwitch!(ctx(e, cfg, { deployTarget: target() }));
+    expect(cmds(e).some((c) => c.includes('disable --now shipnode-api-blue'))).toBe(true);
   });
 
   it('retires the pre-blue-green unit and any PM2 process on the first flip', async () => {

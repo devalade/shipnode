@@ -643,6 +643,34 @@ describe('BackendStrategy.startApp — blue-green', () => {
     expect(cleanup).toContain('pm2 save');
   });
 
+  it('drains, then reclaims the inactive colour by default (warm)', async () => {
+    const strategy = makeStrategy(makeConfig({ zeroDowntime: true, domain: 'api.example.com' }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    const ctx = makeCtx(executor, { deployTarget: bgTarget({ color: 'green', previousColor: 'blue' }) });
+
+    await strategy.afterTrafficSwitch!(ctx);
+
+    const cleanup = executor.getLastCommand()?.command;
+    // Caddy has stopped sending requests to the old colour; give in-flight ones time to finish.
+    expect(cleanup).toMatch(/^sleep 10 && /);
+    expect(cleanup).toContain('--arg n "myapp-blue"');
+    expect(cleanup).toContain('pm2 delete "$id"');
+  });
+
+  it('leaves the previous colour running when retention is rollback', async () => {
+    const strategy = makeStrategy(makeConfig({
+      zeroDowntime: true,
+      domain: 'api.example.com',
+      blueGreenRetention: 'rollback',
+    }), '/local/project');
+    const executor = new FakeRemoteExecutor();
+    const ctx = makeCtx(executor, { deployTarget: bgTarget({ color: 'green', previousColor: 'blue' }) });
+
+    await strategy.afterTrafficSwitch!(ctx);
+
+    expect(executor.getHistory()).toHaveLength(0);
+  });
+
   it('keeps workers in a single set written at start, reloaded only in afterHealthy', async () => {
     const config = assembleConfig({
       app: 'backend',

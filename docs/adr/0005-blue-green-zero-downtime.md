@@ -25,7 +25,7 @@ Because the previous colour is still running, rollback is an instant Caddy flip 
 
 ## Trade-offs
 
-- **~2× memory for the web app** — both colours are resident between deploys. Documented; the price of instant rollback.
+- **~2× memory for the web app** — with `blueGreenRetention: 'rollback'` both colours are resident between deploys. Documented; the price of instant rollback. The default is now `warm`, which stops the old colour and avoids this cost ([ADR-0010](0010-warm-blue-green-retention.md)).
 - **The port pair is fixed at the first deploy** and persisted. Later changes to the web port or `altPort` in config are ignored until the state file is cleared, so a running colour is never silently re-homed.
 - **The first migration targets green.** A pre-existing uncoloured process can continue serving on the configured blue port through health and the Caddy reload; it is cleaned up only after the flip succeeds.
 - **Default on for Caddy backends.** Backends without a domain and worker-only apps keep recreate semantics. `.noZeroDowntime()` is the explicit builder opt-out.
