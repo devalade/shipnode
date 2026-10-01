@@ -137,8 +137,22 @@ describe('ShipnodeConfigSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.apps[0].zeroDowntime).toBe(true);
-      expect(result.data.apps[0].blueGreenRetention).toBe('rollback');
+      expect(result.data.apps[0].blueGreenRetention).toBe('warm');
     }
+  });
+
+  it.each(['warm', 'rollback'] as const)('accepts %s blue-green retention', (retention) => {
+    const result = ShipnodeConfigSchema.safeParse({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy' },
+      remotePath: '/var/www/app',
+      domain: 'api.example.com',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      blueGreenRetention: retention,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.apps[0].blueGreenRetention).toBe(retention);
   });
 
   it('accepts memory-saving blue-green retention', () => {

@@ -5,6 +5,7 @@ import { resolve } from 'path';
 import type { ShipnodeConfig, ShipnodeApp, Pm2App, PkgManager } from '../../shared/types.js';
 import { getPm2Name } from '../pm2/apps.js';
 import { coloredWebName } from './blue-green.js';
+import { drainCommand, pm2DeleteExactCommand, reapColourCommand, reapsPreviousColour } from './retention.js';
 import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework/detector.js';
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
 import { DeployError } from '../../shared/errors.js';
@@ -308,27 +309,19 @@ export class BackendStrategy implements DeploymentStrategy {
     if (!webApp) return;
 
     const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+    const { previousColor } = ctx.deployTarget;
+
     // First deploy: drop a pre-blue-green uncoloured process (name === namespace).
-    // Later deploys with retention "none": drop the idle coloured sibling.
-    const previousName = ctx.deployTarget.previousColor === null
-      ? getPm2Name(namespace, webApp.name)
-      : this.app.blueGreenRetention === 'none'
-        ? coloredWebName(namespace, webApp.name, ctx.deployTarget.previousColor)
-        : undefined;
-    if (previousName === undefined) return;
-
-    // `pm2 delete <name>` also matches namespace, so `pm2 delete hub` would kill
-    // `hub-green`. Resolve to pm_id by exact process name instead (jq is part of setup).
-    const deleteExact =
-      `id=$(mise exec -- pm2 jlist 2>/dev/null | jq -r --arg n "${previousName}" ` +
-      `'.[] | select(.name == $n) | .pm_id' | head -n1) && ` +
-      `{ [ -n "$id" ] && mise exec -- pm2 delete "$id" || true; }`;
-
-    await ctx.executor.execOrThrow(
-      `${mise} && ` +
-      `{ ${deleteExact}; } && ` +
-      `mise exec -- pm2 save`,
-    );
+    // Later deploys: stop the colour that just stopped serving, unless retention
+    // keeps it running for an instant rollback. Either way it finishes in-flight
+    // requests first; Caddy has already stopped sending it new ones.
+    if (previousColor === null) {
+      await ctx.executor.execOrThrow(
+        `${drainCommand} && ${pm2DeleteExactCommand(mise, getPm2Name(namespace, webApp.name))}`,
+      );
+    } else if (reapsPreviousColour(this.app.blueGreenRetention)) {
+      await ctx.executor.execOrThrow(reapColourCommand(this.app, namespace, webApp.name, previousColor));
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -467,12 +460,13 @@ export class BackendStrategy implements DeploymentStrategy {
       // First blue-green deploy: retire the pre-blue-green process — an
       // uncoloured watt unit, or a PM2 process when migrating from PM2.
       const mise = `export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"`;
+      await ctx.executor.execOrThrow(drainCommand);
       await ctx.executor.execOrThrow(removeUnitCommand(wattUnitName(namespace, web.name)));
       await ctx.executor.execOrThrow(`${mise} && { mise exec -- pm2 delete "${namespace}" 2>/dev/null || true; }`);
       return;
     }
-    if (this.app.blueGreenRetention === 'none') {
-      await ctx.executor.execOrThrow(stopUnitCommand(wattUnitName(namespace, web.name, target.previousColor)));
+    if (reapsPreviousColour(this.app.blueGreenRetention)) {
+      await ctx.executor.execOrThrow(reapColourCommand(this.app, namespace, web.name, target.previousColor));
     }
   }
 

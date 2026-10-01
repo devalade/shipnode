@@ -180,6 +180,20 @@ export function stopUnitCommand(unit: string): string {
   return `${SUDO}; $S systemctl stop ${unit} 2>/dev/null || true`;
 }
 
+/**
+ * Stop a unit and keep it from starting at boot, leaving the unit file in place.
+ * A colour parked after a blue-green flip must not come back on a reboot — it
+ * would run whatever `current` points at and hold memory for nothing.
+ */
+export function parkUnitCommand(unit: string): string {
+  return `${SUDO}; $S systemctl disable --now ${unit} 2>/dev/null || true`;
+}
+
+/** Re-enable a parked unit and start it, so it also survives a reboot. */
+export function enableAndStartUnitCommand(unit: string): string {
+  return `${SUDO}; $S systemctl enable ${unit} && $S systemctl restart ${unit}`;
+}
+
 /** Stop, disable and delete a unit; a missing unit is not an error. */
 export function removeUnitCommand(unit: string): string {
   return `${SUDO}; $S systemctl disable --now ${unit} 2>/dev/null || true; ` +

@@ -276,7 +276,7 @@ export const ShipnodeAppSchema = z.object({
   envFile: z.string().default('.env'),
   keepReleases: z.number().int().min(1).default(5),
   zeroDowntime: z.boolean().optional(),
-  blueGreenRetention: z.enum(['rollback', 'none']).default('rollback'),
+  blueGreenRetention: z.enum(['warm', 'rollback', 'none']).default('warm'),
   altPort: z.number().int().positive().optional(),
   sharedDirs: z.array(z.string()).optional(),
   sharedFiles: z.array(z.string()).optional(),

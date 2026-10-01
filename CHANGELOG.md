@@ -4,6 +4,16 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Changed
+- **Blue-green now stops the old colour by default (`blueGreenRetention: 'warm'`).** After Caddy switches traffic, the previous colour is stopped following a 10-second drain instead of staying in memory, so each app holds one copy. Its release stays on disk. This changes behaviour for configs that never set the option, which used to keep both colours running; set `'rollback'` to keep that. See [ADR-0010](docs/adr/0010-warm-blue-green-retention.md).
+
+### Added
+- **`shipnode rollback` can start a stopped colour.** When the previous colour is not running it points `current` at the release that colour ran, starts it from there, waits for its health check, flips traffic, and stops the colour that was serving. A failed start leaves the app as it was. `deploy-state.json` now records `blueRelease` / `greenRelease` to make this possible; an app deployed before this change can roll back this way after its second deploy with it, because the colour it would go back to has no recorded release until then.
+- **A drain before the old colour stops**, so a request already in flight when Caddy flips can finish.
+
+### Fixed
+- **A reaped `watt` colour came back after a reboot.** Its unit stayed enabled, so it restarted on whatever `current` pointed at and held memory. A stopped colour's unit is now disabled as well, and re-enabled when it is started again.
+
 ## [3.2.0-beta.2] - 2026-10-01
 
 ### Added

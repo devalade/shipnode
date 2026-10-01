@@ -1,5 +1,5 @@
 export type AppType = 'backend' | 'frontend';
-export type BlueGreenRetention = 'rollback' | 'none';
+export type BlueGreenRetention = 'warm' | 'rollback' | 'none';
 
 export type PkgManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
 

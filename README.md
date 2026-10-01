@@ -327,7 +327,7 @@ See [ADR-0007](docs/adr/0007-fleet-replication.md) and [ADR-0008](docs/adr/0008-
 | `.installCommand(cmd)` | derived from pkg manager | Override the install command run on the server (e.g. `'npm ci --legacy-peer-deps'`). Equivalent to `pkgManager(pm, { installCommand: cmd })` |
 | `.buildDir(dir)` | auto-detected | Frontend build output dir |
 | `.zeroDowntime(altPort?)` | automatic for Caddy backends | Force blue-green releases and optionally choose the green port |
-| `.blueGreenRetention('rollback' \| 'none')` | `'rollback'` | Keep the old web process for instant rollback, or reclaim it after the switch |
+| `.blueGreenRetention('warm' \| 'rollback' \| 'none')` | `'warm'` | What happens to the old colour after the switch: stop it but keep its release so `rollback` can start it again (`warm`), keep it running for an instant flip (`rollback`), or stop it with no rollback (`none`) |
 | `.noZeroDowntime()` | — | Opt out and recreate PM2 processes during deploy |
 | `.healthCheck(path, opts?)` | `/health`, 30s, 3 retries | Post-deploy health check |
 | `.noHealthCheck()` | — | Skip health check |
@@ -575,16 +575,16 @@ export default shipnode
 
 Backends with a domain and a PM2 web port use blue-green releases automatically. Shipnode starts the new web process on the idle port, checks it, and reloads Caddy only after it is healthy. Apps without a domain and worker-only apps keep the PM2 recreate path. Use `.noZeroDowntime()` to opt out explicitly; raw configuration may set `zeroDowntime: false`.
 
-Blue-green keeps the previous and current web processes resident, so budget about **2× the web process memory**. On an eligible Caddy backend, `.zeroDowntime(altPort?)` remains available to force the mode and choose the alternate port. By default, Shipnode uses a less commonly occupied port offset by 10,000 (`3000 → 13000`); near the top of the TCP range it subtracts 10,000 instead.
+By default (`warm`) the old colour is stopped a few seconds after Caddy switches traffic, so only one copy of the web app is in memory. Its release stays on disk, and `shipnode rollback` starts it again, waits for its health check, then flips traffic — seconds, not a redeploy. This is the model Kamal uses. On an eligible Caddy backend, `.zeroDowntime(altPort?)` remains available to force the mode and choose the alternate port. By default, Shipnode uses a less commonly occupied port offset by 10,000 (`3000 → 13000`); near the top of the TCP range it subtracts 10,000 instead.
 
-For memory-constrained apps, retain both processes only while the new release starts and passes its health check:
+To trade memory for an instant rollback, keep the old colour running:
 
 ```ts
   .zeroDowntime()
-  .blueGreenRetention('none')
+  .blueGreenRetention('rollback')
 ```
 
-After Caddy switches traffic, Shipnode stops the old colour immediately. This disables instant `shipnode rollback`; redeploy the desired release instead.
+Budget about **2× the web process memory** with `rollback`, since both colours stay resident. `'none'` behaves like `warm` but disables `shipnode rollback` entirely. See [ADR-0010](docs/adr/0010-warm-blue-green-retention.md).
 
 Every app still uses a Capistrano-style release structure:
 
