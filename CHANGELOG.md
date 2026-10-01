@@ -4,6 +4,8 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [3.2.0-beta.3] - 2026-10-01
+
 ### Changed
 - **Blue-green now stops the old colour by default (`blueGreenRetention: 'warm'`).** After Caddy switches traffic, the previous colour is stopped following a 10-second drain instead of staying in memory, so each app holds one copy. Its release stays on disk. This changes behaviour for configs that never set the option, which used to keep both colours running; set `'rollback'` to keep that. See [ADR-0010](docs/adr/0010-warm-blue-green-retention.md).
 
