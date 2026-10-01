@@ -74,6 +74,7 @@ function commandsOn(host: string): string[] {
 beforeEach(() => {
   executors.clear();
   vi.mocked(loadConfig).mockResolvedValue(fleetConfig());
+  vi.mocked(confirm).mockClear();
   vi.mocked(confirm).mockResolvedValue(true);
 });
 
@@ -108,6 +109,14 @@ describe('rolling back a fleet', () => {
     await cmdRollback('/project', { app: 'api', on: 'web-b' });
 
     expect(executors.has('10.0.0.11')).toBe(false);
+    expect(commandsOn('10.0.0.12').some((cmd) => cmd.includes('mv -Tf'))).toBe(true);
+  });
+
+  it('skips the confirmation with --yes and still rolls every replica back', async () => {
+    await cmdRollback('/project', { app: 'api', yes: true });
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(commandsOn('10.0.0.11').some((cmd) => cmd.includes('mv -Tf'))).toBe(true);
     expect(commandsOn('10.0.0.12').some((cmd) => cmd.includes('mv -Tf'))).toBe(true);
   });
 

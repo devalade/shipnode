@@ -105,8 +105,9 @@ program
   .option('--steps <n>', 'Number of releases to go back', '1')
   .option('--app <name>', 'App to roll back (required)')
   .option('--on <server>', 'Roll back one replica of a fleet instead of all of them')
+  .option('--yes', 'Roll back without confirmation (for CI and scripts)')
   .option('--config <path>', 'Use a specific config file')
-  .action((opts) => cmdRollback(process.cwd(), { steps: parseInt(opts.steps, 10), app: opts.app, on: opts.on, config: opts.config }));
+  .action((opts) => cmdRollback(process.cwd(), { steps: parseInt(opts.steps, 10), app: opts.app, on: opts.on, yes: opts.yes, config: opts.config }));
 
 program
   .command('migrate')

@@ -36,7 +36,7 @@ const alreadyConfirmed: Confirmer = async () => true;
 
 export async function cmdRollback(
   cwd: string,
-  options: { steps?: number; app?: string; config?: string; on?: string },
+  options: { steps?: number; app?: string; config?: string; on?: string; yes?: boolean },
 ): Promise<void> {
   if (!options.app) {
     throw new Error(
@@ -56,12 +56,12 @@ export async function cmdRollback(
   const stepsBack = options.steps ?? 1;
 
   if (isFleet(appConfig, app)) {
-    await rollbackFleet(appConfig, app, stepsBack, options.on);
+    await rollbackFleet(appConfig, app, stepsBack, options.on, options.yes === true);
     return;
   }
 
   await runRemoteCommandForConfig(appConfig, async ({ config, executor }) => {
-    await rollbackReplica(executor, config, app, stepsBack, confirm);
+    await rollbackReplica(executor, config, app, stepsBack, options.yes ? alreadyConfirmed : confirm);
   });
 }
 
@@ -80,6 +80,7 @@ async function rollbackFleet(
   app: ShipnodeApp,
   stepsBack: number,
   on: string | undefined,
+  yes: boolean,
 ): Promise<void> {
   const allReplicas = getServerTargets(appConfig).map((target) => target.name);
   let replicas = allReplicas;
@@ -93,7 +94,7 @@ async function rollbackFleet(
   }
 
   ui.warn(`Rolling ${app.name} back ${stepsBack} release(s) across ${replicas.join(', ')}, one replica at a time.`);
-  if (!(await confirm('Proceed with rollback?'))) {
+  if (!yes && !(await confirm('Proceed with rollback?'))) {
     ui.info('Rollback cancelled.');
     return;
   }
