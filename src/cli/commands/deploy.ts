@@ -390,7 +390,9 @@ function renderAppPlan(
   if (app.hooks?.preDeploy) steps.push('Run preDeploy hook');
   steps.push('Switch symlink (atomic)');
   if (app.appType === 'backend') steps.push('Reload PM2');
-  if (app.healthCheck.enabled) steps.push(`Health check ${app.healthCheck.path}`);
+  if (app.healthCheck.enabled) {
+    steps.push(`Health check ${app.healthCheck.path}${app.healthCheck.strict === false ? ' (any response below 500)' : ''}`);
+  }
   steps.push('Record release');
   if (app.hooks?.postDeploy) steps.push('Run postDeploy hook');
   if (app.hooks?.afterFleet) steps.push('Run afterFleet hook (last replica only)');

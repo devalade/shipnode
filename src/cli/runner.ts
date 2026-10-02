@@ -1,4 +1,4 @@
-import type { ShipnodeConfig } from '../shared/types.js';
+import type { ShipnodeConfig, SshConfig } from '../shared/types.js';
 import { SshConnection } from '../infrastructure/ssh/connection.js';
 import type { RemoteExecutor } from '../domain/remote/executor.js';
 import { loadConfig } from '../config/loader.js';
@@ -56,8 +56,15 @@ export async function runRemoteCommand(
  */
 export async function runRemoteCommandForTargets(
   cwd: string,
-  command: (ctx: { config: ShipnodeConfig; executor: RemoteExecutor; serverName: string }) => Promise<void>,
-  options: { configPath?: string; includeEmpty?: boolean; appName?: string; serverName?: string } = {},
+  command: (ctx: { config: ShipnodeConfig; executor: RemoteExecutor; serverName: string; ssh: SshConfig }) => Promise<void>,
+  options: {
+    configPath?: string;
+    includeEmpty?: boolean;
+    appName?: string;
+    serverName?: string;
+    /** Who to log in as when the server refuses the configured user. See `connectWithFallback`. */
+    sshFallback?: (ssh: SshConfig) => SshConfig | undefined;
+  } = {},
 ): Promise<void> {
   const workspace = await loadConfig(cwd, options.configPath);
 
@@ -95,8 +102,8 @@ export async function runRemoteCommandForTargets(
     visited += 1;
     const ssh = new SshConnection();
     try {
-      await ssh.connect(target.ssh);
-      await command({ config: targetConfig, executor: ssh, serverName: target.name });
+      const connectedAs = await connectWithFallback(ssh, target.ssh, options.sshFallback);
+      await command({ config: targetConfig, executor: ssh, serverName: target.name, ssh: connectedAs });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ui.error(`${target.name}: ${message}`);
@@ -113,6 +120,42 @@ export async function runRemoteCommandForTargets(
     );
     process.exit(1);
   }
+}
+
+/**
+ * Connect, and when the server turns the configured user away, try once more as
+ * the user `fallback` names. This is how `setup` reaches a fresh server whose
+ * `deploy` user it has not created yet. Only an authentication refusal triggers
+ * the retry: an unreachable host would only fail again, twice as slowly.
+ */
+async function connectWithFallback(
+  ssh: SshConnection,
+  config: SshConfig,
+  fallback?: (ssh: SshConfig) => SshConfig | undefined,
+): Promise<SshConfig> {
+  try {
+    await ssh.connect(config);
+    return config;
+  } catch (error) {
+    const retry = fallback?.(config);
+    if (!retry || !isAuthenticationRefusal(error)) throw error;
+
+    ui.info(`Can't log in as ${config.user} on ${config.host} yet — trying ${retry.user}`);
+    try {
+      await ssh.connect(retry);
+    } catch (retryError) {
+      if (!isAuthenticationRefusal(retryError)) throw retryError;
+      throw new Error(
+        `Could not log in to ${config.host} as ${config.user} or ${retry.user}. ` +
+        `For a server's first setup, set ssh.user to the account your provider gave you (often root or ubuntu).`,
+      );
+    }
+    return retry;
+  }
+}
+
+function isAuthenticationRefusal(error: unknown): boolean {
+  return error instanceof Error && /authentication methods failed/i.test(error.message);
 }
 
 export async function runRemoteCommandForConfig(

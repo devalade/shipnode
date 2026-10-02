@@ -46,7 +46,7 @@ function showApp(app: ShipnodeApp, nodeVersion: string): void {
   if (app.appType === 'backend') {
     ui.section('Health Check', [
       ['enabled', String(app.healthCheck.enabled)],
-      ['path', app.healthCheck.path],
+      ['path', app.healthCheck.strict === false ? `${app.healthCheck.path} (any response below 500)` : app.healthCheck.path],
       ['timeout', String(app.healthCheck.timeout)],
       ['retries', String(app.healthCheck.retries)],
       ['startupDelay', String(app.healthCheck.startupDelay)],

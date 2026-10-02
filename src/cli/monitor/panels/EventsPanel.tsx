@@ -1,29 +1,39 @@
 import { Box, Text } from 'ink';
-
-const ACCENT = '#d6a85d';
-const BG = '#0d1117';
-const BORDER = '#30363d';
+import type { ObserveEvent } from '../../../services/observe/events.js';
+import { describeEvent } from '../fleet-model.js';
+import { Panel } from '../components/Panel.js';
+import { glyph, toneColor } from '../theme.js';
 
 interface EventsPanelProps {
-  events: string[];
+  events: readonly ObserveEvent[];
+  rows?: number;
 }
 
-export function EventsPanel({ events }: EventsPanelProps) {
+const MARK = { ok: '✓', warn: glyph.alert, bad: glyph.alert, info: glyph.sep } as const;
+
+function clock(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour12: false });
+}
+
+/** What changed and what you did, newest last. */
+export function EventsPanel({ events, rows = 5 }: EventsPanelProps) {
   return (
-    <Box
-      borderStyle="round"
-      borderColor={BORDER}
-      padding={1}
-      flexDirection="column"
-      flexGrow={1}
-      backgroundColor={BG}
-    >
-      <Text bold color={ACCENT}>Events</Text>
+    <Panel title="Activity">
       {events.length === 0 ? (
-        <Text dimColor>  No events yet. [L] live logs · [F] fullscreen · [?] help</Text>
+        <Text dimColor>Quiet so far. Changes in health, reachability and your actions land here.</Text>
       ) : (
-        events.slice(-6).map((event, index) => <Text key={`${index}-${event}`}>{event}</Text>)
+        events.slice(-rows).map((event, index) => {
+          const { tone, text } = describeEvent(event);
+          return (
+            <Box key={`${index}-${event.at}`} height={1}>
+              <Text wrap="truncate-end">
+                <Text dimColor>{clock(event.at)}  </Text>
+                <Text color={toneColor(tone)}>{MARK[tone]} {text}</Text>
+              </Text>
+            </Box>
+          );
+        })
       )}
-    </Box>
+    </Panel>
   );
 }

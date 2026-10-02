@@ -12,6 +12,17 @@ import type { ExecResult } from '../../shared/types.js';
 export interface ExecOptions {
   timeout?: number;
   onData?: (chunk: string, fd: 'stdout' | 'stderr') => void;
+  /**
+   * Ends a long-running command (a log follow). `exec` then resolves with
+   * whatever the command had produced - an abort is a normal way to finish.
+   */
+  signal?: AbortSignal;
+  /**
+   * Allocate a pseudo-terminal. The remote side hangs up the command when the
+   * channel closes, so an abandoned `tail -f` does not outlive the session.
+   * stderr is merged into stdout, and line endings arrive as CRLF.
+   */
+  pty?: boolean;
 }
 
 export abstract class RemoteExecutor {

@@ -55,6 +55,8 @@ program
 program
   .command('init')
   .description('Initialize a new shipnode.config.ts')
+  .option('--host <ip>', "Your server's IP address or hostname")
+  .option('--domain <domain>', 'Domain to serve the app on (HTTPS is automatic)')
   .option('--non-interactive', 'Generate config without prompts')
   .option('--print', 'Print config to stdout without writing file')
   .action((opts) => cmdInit(process.cwd(), opts));
@@ -139,13 +141,25 @@ program
 
 program
   .command('logs')
-  .description('Show application logs')
-  .option('--lines <n>', 'Number of log lines to show', '100')
+  .description('Show application logs (add --follow to stream every server live)')
+  .option('--lines <n>', 'Number of log lines to show (also the backlog for --follow)', '100')
+  .option('-f, --follow', 'Stream new lines from every server until Ctrl-C')
+  .option('--level <level>', 'Only this level and above: warn or error')
+  .option('--grep <pattern>', 'Only lines matching text, /regex/, or !text to exclude')
   .option('--process <name>', 'Target a specific process (PM2 app or watt unit)')
   .option('--app <name>', 'Target a specific app')
   .option('--config <path>', 'Use a specific config file')
   .option('--on <server>', 'Target a specific server')
-  .action((opts) => cmdLogs(process.cwd(), { lines: parseInt(opts.lines, 10), process: opts.process, app: opts.app, config: opts.config, on: opts.on }));
+  .action((opts) => cmdLogs(process.cwd(), {
+    lines: parseInt(opts.lines, 10),
+    follow: opts.follow,
+    level: opts.level,
+    grep: opts.grep,
+    process: opts.process,
+    app: opts.app,
+    config: opts.config,
+    on: opts.on,
+  }));
 
 program
   .command('restart')
@@ -175,10 +189,10 @@ program
 
 program
   .command('monitor')
-  .description('Live TUI dashboard with process stats (PM2 or systemd), system metrics, and logs')
+  .description('Live TUI dashboard across every server: fleet overview, per-replica detail, and filterable streaming logs')
   .option('--interval <seconds>', 'Polling interval in seconds (default: 2)', '2')
-  .option('--app <name>', 'Target a specific app')
-  .option('--on <server>', 'Watch one replica (required for a live TUI on a fleet)')
+  .option('--app <name>', 'Watch a specific app')
+  .option('--on <server>', 'Watch one server instead of the whole fleet')
   .option('--once', 'Collect one snapshot and exit')
   .option('--json', 'Print one snapshot as JSON (implies --once)')
   .option('--config <path>', 'Use a specific config file')

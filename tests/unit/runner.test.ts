@@ -8,13 +8,21 @@ const mocks = vi.hoisted(() => ({
   /** Hosts whose connection is still open — must be empty once a run returns. */
   open: new Set<string>(),
   config: undefined as unknown as ShipnodeConfig,
+  /** Users the fake server refuses, as ssh2 does when no key is authorised. */
+  refusedUsers: new Set<string>(),
+  /** `user@host` for every connect attempt, accepted or not. */
+  attempts: [] as string[],
 }));
 
 vi.mock('../../src/infrastructure/ssh/connection.js', () => {
   return {
     SshConnection: class MockSshConnection {
       private host = '';
-      async connect(cfg?: { host: string }) {
+      async connect(cfg?: { host: string; user?: string }) {
+        mocks.attempts.push(`${cfg?.user}@${cfg?.host}`);
+        if (cfg?.user && mocks.refusedUsers.has(cfg.user)) {
+          throw new Error('SSH connection failed: All configured authentication methods failed');
+        }
         this.host = cfg?.host ?? '';
         mocks.connected.push(this.host);
         mocks.open.add(this.host);
@@ -62,6 +70,8 @@ function workspace(): ShipnodeConfig {
 }
 
 beforeEach(() => {
+  mocks.refusedUsers.clear();
+  mocks.attempts.length = 0;
   mocks.connected.length = 0;
   mocks.open.clear();
   mocks.config = {
@@ -245,6 +255,56 @@ describe('runRemoteCommandForTargets', () => {
     );
 
     expect(visited).toEqual(['data']);
+  });
+});
+
+describe('runRemoteCommandForTargets — sshFallback', () => {
+  const asRoot = (ssh: { user: string }) => (ssh.user === 'deploy' ? { ...ssh, user: 'root' } as never : undefined);
+
+  it('logs in as the fallback user when the configured one is refused, and says who it is', async () => {
+    mocks.refusedUsers.add('deploy');
+    const infoSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const seen: string[] = [];
+
+    await runRemoteCommandForTargets('/test', async ({ ssh, config }) => {
+      seen.push(`${ssh.user} (config ${config.ssh.user})`);
+    }, { sshFallback: asRoot });
+
+    expect(mocks.attempts).toEqual(['deploy@1.2.3.4', 'root@1.2.3.4']);
+    expect(seen).toEqual(['root (config deploy)']);
+    infoSpy.mockRestore();
+  });
+
+  it('does not retry without a fallback', async () => {
+    mocks.refusedUsers.add('deploy');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runRemoteCommandForTargets('/test', async () => {});
+
+    expect(mocks.attempts).toEqual(['deploy@1.2.3.4']);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('names both users when the fallback is refused too', async () => {
+    mocks.refusedUsers.add('deploy');
+    mocks.refusedUsers.add('root');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const failures: string[] = [];
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation((...args) => { failures.push(args.join(' ')); });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => { failures.push(args.join(' ')); });
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => { failures.push(String(chunk)); return true; });
+
+    await runRemoteCommandForTargets('/test', async () => {}, { sshFallback: asRoot });
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(failures.join('\n')).toContain('as deploy or root');
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
+    logSpy.mockRestore();
+    writeSpy.mockRestore();
   });
 });
 

@@ -1,14 +1,7 @@
 import { loadConfig } from '../../config/loader.js';
-import { SshConnection } from '../../infrastructure/ssh/connection.js';
-import { configForServer } from '../../domain/servers.js';
 import type { ShipnodeConfig } from '../../shared/types.js';
 import { runMonitor } from '../monitor/index.js';
-import {
-  getAccessoriesForMonitorTarget,
-  getAppsForMonitorTarget,
-  resolveMonitorSession,
-} from '../monitor/monitor-session.js';
-import { observeStateJson, printObserveStatus, takeSnapshot } from '../observe.js';
+import { connectFleet, observeStateJson, planObserveHosts, printObserveStatus, takeSnapshot } from '../observe.js';
 import { ui } from '../ui.js';
 
 export async function cmdMonitor(
@@ -49,50 +42,24 @@ async function runLiveDashboard(
   config: ShipnodeConfig,
   options: { app?: string; on?: string; interval: number },
 ): Promise<void> {
-  const session = resolveMonitorSession(config, options.app, options.on);
-  if (session.isErr()) {
-    ui.error(session.error.message);
+  // The whole workspace by default; --app and --on narrow it. A fleet is
+  // exactly what this view is for, so nothing here insists on a single replica.
+  const plan = planObserveHosts(config, { app: options.app, on: options.on });
+  if (plan.isErr()) {
+    ui.error(plan.error.message);
+    process.exit(1);
+    return;
+  }
+  if (plan.value.length === 0) {
+    ui.error('Nothing to monitor: no server runs an app or accessory.');
     process.exit(1);
     return;
   }
 
-  const apps = getAppsForMonitorTarget(config, session.value.target.name);
-  if (apps.isErr()) {
-    ui.error(apps.error.message);
-    process.exit(1);
-    return;
-  }
-  const accessoryNames = getAccessoriesForMonitorTarget(config, session.value.target.name);
-  if (accessoryNames.isErr()) {
-    ui.error(accessoryNames.error.message);
-    process.exit(1);
-    return;
-  }
-
-  const { target, app } = session.value;
-  const host = `${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`;
-  const ssh = new SshConnection();
+  const fleet = await connectFleet(config, plan.value);
   try {
-    await ssh.connect(target.ssh);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    ui.error(`Failed to connect to ${host}: ${msg}`);
-    process.exit(1);
-    return;
-  }
-
-  try {
-    await runMonitor({
-      executor: ssh,
-      config: configForServer(config, target.name),
-      app,
-      apps: apps.value,
-      accessoryNames: accessoryNames.value,
-      targetName: target.name,
-      host,
-      interval: options.interval,
-    });
+    await runMonitor({ fleet, interval: options.interval, focusApp: options.app });
   } finally {
-    ssh.disconnect();
+    fleet.close();
   }
 }

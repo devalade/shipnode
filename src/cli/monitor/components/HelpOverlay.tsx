@@ -1,44 +1,84 @@
 import { Box, Text } from 'ink';
+import { Panel } from './Panel.js';
+import { color } from '../theme.js';
 
-const BG = '#0d1117';
-const ACCENT = '#d6a85d';
+type Section = { title: string; bindings: Array<[string, string]> };
 
-const BINDINGS: Array<[string, string]> = [
-  ['q', 'quit'],
-  ['Tab', 'switch app on this server'],
-  ['r', 'refresh now'],
-  ['l', 'toggle live log strip'],
-  ['f', 'fullscreen logs'],
-  ['←/→', 'filter logs by process (fullscreen)'],
-  ['/', 'search logs (fullscreen)'],
-  ['space', 'pause/resume logs (fullscreen)'],
-  ['↑/↓', 'select process or release'],
-  ['Enter/x', 'restart process / rollback to release'],
-  ['?', 'this help'],
+const LEFT: Section[] = [
+  {
+    title: 'Everywhere',
+    bindings: [
+      ['f', 'logs, scoped to the selection'],
+      ['l', 'log strip under the view'],
+      ['r', 'refresh now'],
+      ['?', 'this help'],
+      ['q', 'quit'],
+    ],
+  },
+  {
+    title: 'Fleet',
+    bindings: [
+      ['↑ ↓', 'select a replica'],
+      ['⏎', 'open it'],
+    ],
+  },
+  {
+    title: 'Replica',
+    bindings: [
+      ['↑ ↓', 'select process or release'],
+      ['⏎ x', 'restart / roll back'],
+      ['esc', 'back to the fleet'],
+    ],
+  },
 ];
+
+const RIGHT: Section[] = [
+  {
+    title: 'Logs',
+    bindings: [
+      ['s S', 'server: next / previous'],
+      ['a A', 'app'],
+      ['p P', 'process'],
+      ['v', 'level: all, ≥warn, error'],
+      ['/', 'search: text, /regex/, !not'],
+      ['m', 'hide or dim non-matches'],
+      ['c', 'clear filters'],
+      ['space', 'pause'],
+      ['↑ ↓ pgup pgdn', 'scroll back'],
+      ['G', 'follow newest'],
+      ['C', 'clear buffer'],
+      ['esc f', 'back'],
+    ],
+  },
+];
+
+function Column({ sections }: { sections: Section[] }) {
+  return (
+    <Box flexDirection="column" width={44} marginRight={2}>
+      {sections.map((section) => (
+        <Box key={section.title} flexDirection="column" marginBottom={1}>
+          <Text bold color={color.accent}>{section.title}</Text>
+          {section.bindings.map(([keys, description]) => (
+            <Box key={keys} height={1}>
+              <Box width={15} flexShrink={0}><Text bold>{keys}</Text></Box>
+              <Text dimColor wrap="truncate-end">{description}</Text>
+            </Box>
+          ))}
+        </Box>
+      ))}
+    </Box>
+  );
+}
 
 export function HelpOverlay() {
   return (
-    <Box
-      flexDirection="column"
-      padding={1}
-      borderStyle="round"
-      borderColor="cyan"
-      backgroundColor={BG}
-      alignItems="center"
-    >
-      <Text bold color={ACCENT}>Keybindings</Text>
-      <Box flexDirection="column" marginTop={1}>
-        {BINDINGS.map(([keys, description]) => (
-          <Box key={keys}>
-            <Text bold color={ACCENT}>{keys.padEnd(9)}</Text>
-            <Text dimColor>{description}</Text>
-          </Box>
-        ))}
-      </Box>
-      <Box marginTop={1}>
-        <Text dimColor>press any key to close</Text>
-      </Box>
+    <Box flexDirection="column" height="100%" justifyContent="center" alignItems="center">
+      <Panel title="Keys" right={<Text dimColor>any key closes</Text>} width={96} focused>
+        <Box>
+          <Column sections={LEFT} />
+          <Column sections={RIGHT} />
+        </Box>
+      </Panel>
     </Box>
   );
 }

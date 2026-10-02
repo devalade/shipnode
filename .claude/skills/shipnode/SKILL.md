@@ -85,10 +85,11 @@ Target one app: `shipnode deploy --app api`, `shipnode logs --app web`. `rollbac
 ## Workflows
 
 ### First deploy
-1. `shipnode init`
-2. `shipnode setup` — creates `deploy` user by default (`--no-deploy-user` to skip)
-3. `shipnode env` (per app if multi-app: `--app api`)
-4. `shipnode deploy`
+1. `shipnode init` — asks only for the server IP and an optional domain; `--host <ip> --domain <d> --non-interactive` skips prompts
+2. `shipnode setup` — creates the `deploy` user (`--no-deploy-user` to skip). When the config says `user: 'deploy'` and that user does not exist yet, it logs in as `root` for this run
+3. `shipnode deploy` — the first deploy uploads the local `envFile` when the server has none (outside CI). With no local `.env`, it starts from an empty one. Use `shipnode env` to push later changes
+
+The health check passes on any response below 500 until `.healthCheck(path)` is set; a configured path must return 2xx/3xx.
 
 ### CI/CD
 
@@ -170,8 +171,10 @@ shipnode cloudflare init   # one tunnel, ingress per app domain
 
 ### Monitor
 ```bash
-shipnode monitor           # live TUI: PM2, system, health, logs
-shipnode monitor --app api
+shipnode monitor           # live TUI across every server: fleet overview, replica detail, streaming logs
+shipnode monitor --app api # one app on all its servers
+shipnode monitor --on web-2
+shipnode monitor --once    # one snapshot; --json for machine-readable
 ```
 
 ## Day-to-day
@@ -179,6 +182,7 @@ shipnode monitor --app api
 ```bash
 shipnode status [--app name]
 shipnode logs [--app name] [--lines 500]
+shipnode logs --follow [--level error] [--grep '/timeout/i'] [--on server]   # live, merged across servers
 shipnode restart [--app name]
 shipnode stop [--app name]
 shipnode run "pnpm db:apply" [--app name]

@@ -49,7 +49,7 @@ describe('ShipnodeBuilder', () => {
     expect(config.apps[0].blueGreenRetention).toBe('none');
     expect(config.apps[0].sharedDirs).toEqual(['storage', 'uploads']);
     expect(config.apps[0].sharedFiles).toEqual(['.htpasswd']);
-    expect(config.apps[0].healthCheck).toEqual({ enabled: true, path: '/healthz', timeout: 60, retries: 5, startupDelay: 10 });
+    expect(config.apps[0].healthCheck).toEqual({ enabled: true, path: '/healthz', timeout: 60, retries: 5, startupDelay: 10, strict: true });
     expect(config.apps[0].envFile).toBe('.env.production');
     expect(config.nodeVersion).toBe('22');
     expect(config.pkgManager).toBe('pnpm');

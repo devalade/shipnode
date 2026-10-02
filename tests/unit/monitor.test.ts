@@ -5,9 +5,9 @@ import { parsePm2Jlist, parseSystemStats, parseReleaseRecords, parseDeployLock, 
 import { collectMetrics, collectLogs, collectCaddyLogs } from '../../src/cli/monitor/poller.js';
 import { appSectionName } from '../../src/domain/observe/script.js';
 import { restartProcess, rollbackToRelease } from '../../src/cli/monitor/actions.js';
-import { logLineColor } from '../../src/cli/monitor/panels/LogPanel.js';
+import { logLineColor } from '../../src/cli/monitor/log-color.js';
 import { assembleConfig } from '../../src/config/assembly.js';
-import { getAccessoriesForMonitorTarget, getAppsForMonitorTarget, resolveMonitorSession } from '../../src/cli/monitor/monitor-session.js';
+import { getAccessoriesForMonitorTarget, getAppsForMonitorTarget } from '../../src/cli/monitor/monitor-session.js';
 
 // ── Charts ────────────────────────────────────────────────────────
 
@@ -691,45 +691,6 @@ describe('collectCaddyLogs', () => {
 });
 
 describe('monitor session', () => {
-  it('resolves the selected app server target', () => {
-    const config = assembleConfig({
-      servers: {
-        app: { host: '1.1.1.1', user: 'deploy', port: 22 },
-        data: { host: '2.2.2.2', user: 'deploy', port: 22 },
-      },
-      remotePath: '/var/www/app',
-      apps: [
-        { name: 'api', appType: 'backend', on: 'app', healthCheck: { enabled: true } },
-        { name: 'worker', appType: 'backend', on: 'data', healthCheck: { enabled: true } },
-      ],
-    });
-
-    const session = resolveMonitorSession(config, 'worker');
-
-    expect(session.isOk()).toBe(true);
-    if (session.isOk()) {
-      expect(session.value.target.name).toBe('data');
-      expect(session.value.target.ssh.host).toBe('2.2.2.2');
-    }
-  });
-
-  it('picks a fleet replica with --on', () => {
-    const config = assembleConfig({
-      servers: {
-        a: { host: '1.1.1.1', user: 'deploy', port: 22 },
-        b: { host: '2.2.2.2', user: 'deploy', port: 22 },
-      },
-      remotePath: '/var/www/app',
-      apps: [
-        { name: 'api', appType: 'backend', on: ['a', 'b'], healthCheck: { enabled: true } },
-      ],
-    });
-
-    const session = resolveMonitorSession(config, 'api', 'b');
-    expect(session.isOk()).toBe(true);
-    if (session.isOk()) expect(session.value.target.name).toBe('b');
-  });
-
   it('limits selectable apps to the connected server target', () => {
     const config = assembleConfig({
       servers: {
@@ -886,14 +847,20 @@ describe('Ink components', () => {
     expect(typeof mod.ReleasePanel).toBe('function');
   });
 
-  it('LogPanel is a function', async () => {
-    const mod = await import('../../src/cli/monitor/panels/LogPanel.js');
-    expect(typeof mod.LogPanel).toBe('function');
+  it('LogViewer is a function', async () => {
+    const mod = await import('../../src/cli/monitor/panels/LogViewer.js');
+    expect(typeof mod.LogViewer).toBe('function');
   });
 
-  it('AppSelector is a function', async () => {
-    const mod = await import('../../src/cli/monitor/app-selector.js');
-    expect(typeof mod.AppSelector).toBe('function');
+  it('AppsPanel and ServersPanel are functions', async () => {
+    const mod = await import('../../src/cli/monitor/panels/FleetPanel.js');
+    expect(typeof mod.AppsPanel).toBe('function');
+    expect(typeof mod.ServersPanel).toBe('function');
+  });
+
+  it('Panel is a function', async () => {
+    const mod = await import('../../src/cli/monitor/components/Panel.js');
+    expect(typeof mod.Panel).toBe('function');
   });
 
   it('App is a function', async () => {

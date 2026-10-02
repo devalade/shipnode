@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
-import { uploadEnvironmentFile } from '../../src/cli/commands/env.js';
+import { uploadEnvironmentFile } from '../../src/domain/deploy/dotenv.js';
 
 describe('env upload — executor contract', () => {
   it('atomically uploads via base64 with restrictive permissions', async () => {

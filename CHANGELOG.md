@@ -4,6 +4,20 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Added
+- **`monitor` watches the whole fleet.** With no `--on` it connects to every server and opens a fleet overview: each app on each server it runs on, the release each replica serves, process and health state, and a one-line verdict per app (a half-finished roll reads `split across 2 releases` and marks the replica that is `behind`; an unreachable server keeps its row). `Enter` opens the per-replica view the old single-server monitor showed. `--on` and `--app` still narrow it. Rollback from the monitor is refused for an app that runs on several servers, since it would split the fleet; use `shipnode rollback`.
+- **Live log streaming with filters.** `f` opens a merged, streaming view of every server's logs (PM2, systemd and Caddy access logs) over the existing SSH connections, replacing the 2-second `pm2 logs --nostream` poll and its duplicated or dropped lines. Filter by server (`s`), app (`a`), process (`p`), level (`v`: all, warn+, error) and text, `/regex/` or `!exclude` search (`/`), in hide or dim mode (`m`), with live `ERR`/`WARN` counts. Pause, scroll back, and clear are supported. A dropped connection is retried with backoff without replaying lines already shown.
+- **The monitor has a consistent visual design.** Panels carry their title in the border, data sits in aligned tables with column headings, and colour is reserved for state (green ok, amber degraded, red failing) with one accent for titles and selection. A breadcrumb header shows where you are and how fresh the data is (`live`, `stale` once polls stop arriving), alerts get their own line, and the footer lists the keys for the current view and briefly confirms actions. Tables drop their least important columns on narrow terminals instead of overflowing, and nothing paints a background, so light terminal themes work.
+- **`shipnode logs --follow`** streams the same merged logs to the terminal, with `--level`, `--grep`, `--app`, `--on` and `--process`. `--level` and `--grep` also filter the one-shot `logs` output.
+
+### Changed
+- **`init` asks at most six questions instead of up to fifteen:** what you're deploying (pre-selected from detection), server IP, port, domain, and for backends whether to install a database or Redis. SSH user and port, deploy path, PM2 name, runtime, health check path and extra users take defaults you can edit in the file. `--host` and `--domain` let `init --non-interactive` write a complete config. A DB password is no longer written into the config as a literal; it reads `process.env.DB_PASSWORD`. If `shipnode.config.ts` already exists, `init` says so before asking anything.
+- **The default health check accepts any HTTP answer below 500.** Apps without a `/health` route no longer fail their first deploy on a 404. A path set with `.healthCheck(path)` (or `healthCheck.path`) is still held to 2xx/3xx; `healthCheck.strict` overrides either way. Failures now say whether nothing answered on the port or the configured route returned 404.
+
+### Fixed
+- **`setup` could not reach a fresh server with the config `init` wrote.** `init` sets `user: 'deploy'`, which only exists after `setup` creates it. When the server refuses `deploy`, `setup` now logs in as `root` for that run. If the config uses another user, the "switch ssh.user" hint is shown as before.
+- **The first deploy failed with "Remote environment file is missing".** When the server has no env file, `deploy` now uploads the local one (what `shipnode env` would do). With no local `.env` either, it creates an empty one. A custom `envFile` name that is missing locally still fails. None of this happens in CI, where the env belongs to `ci env-sync` (ADR-0006).
+
 ## [3.2.0-beta.3] - 2026-10-01
 
 ### Changed

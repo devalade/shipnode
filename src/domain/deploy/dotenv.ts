@@ -1,3 +1,5 @@
+import type { RemoteExecutor } from '../remote/executor.js';
+
 function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
@@ -23,4 +25,23 @@ export function runWithDotenv(
   const encodedEnvironment = Buffer.from(JSON.stringify(explicitEnvironment)).toString('base64url');
   return `node -e "$(printf '%s' ${shellSingleQuote(encodedRunner)} | base64 --decode)" -- ` +
     `${shellSingleQuote(envFile)} ${shellSingleQuote(encodedEnvironment)} bash -c ${shellSingleQuote(command)}`;
+}
+
+/** Atomically replace a remote environment file without exposing its raw content to shell parsing. */
+export async function uploadEnvironmentFile(
+  executor: RemoteExecutor,
+  remotePath: string,
+  content: Buffer,
+): Promise<void> {
+  const b64 = content.toString('base64');
+  await executor.execOrThrow(`mkdir -p "$(dirname ${shellSingleQuote(remotePath)})"`);
+  const temporaryEnv = `${remotePath}.shipnode.XXXXXX`;
+  await executor.execOrThrow([
+    `tmp=$(mktemp ${shellSingleQuote(temporaryEnv)})`,
+    `trap 'rm -f "$tmp"' EXIT`,
+    `printf '%s' ${shellSingleQuote(b64)} | base64 -d > "$tmp"`,
+    'chmod 600 "$tmp"',
+    `mv -f "$tmp" ${shellSingleQuote(remotePath)}`,
+    'trap - EXIT',
+  ].join(' && '));
 }

@@ -180,13 +180,22 @@ export const WattConfigSchema = z.object({
   maxHeapUsed: z.string().regex(/^\d+[KMG]?$/i, 'maxHeapUsed must look like 512M or 1G').optional(),
 });
 
+// A path the user chose is a promise that the route exists, so the probe holds
+// it to a 2xx/3xx. A path shipnode picked is only a guess: most apps have no
+// `/health` route, and failing their first deploy on a 404 says nothing about
+// whether the app is up. Then any answer below 500 means the app is listening.
 export const HealthCheckConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  path: z.string().default('/health'),
+  path: z.string().optional(),
   timeout: z.number().int().min(1).default(30),
   retries: z.number().int().min(1).default(3),
   startupDelay: z.number().int().min(0).default(3),
-}).default({});
+  strict: z.boolean().optional(),
+}).transform(({ path, strict, ...rest }) => ({
+  ...rest,
+  path: path ?? '/health',
+  strict: strict ?? path !== undefined,
+})).default({});
 
 const networkDbFields = {
   on: z.string().min(1).optional(),

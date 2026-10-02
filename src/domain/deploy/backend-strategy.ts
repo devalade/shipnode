@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { execa } from 'execa';
+import { readFile } from 'node:fs/promises';
 import { pathExists } from 'fs-extra';
 import { resolve } from 'path';
 import type { ShipnodeConfig, ShipnodeApp, Pm2App, PkgManager } from '../../shared/types.js';
@@ -10,7 +11,7 @@ import { getInstallCommand, getRunCommand, detectPkgManager } from '../framework
 import { RSYNC_DEFAULT_EXCLUDES } from '../../shared/constants.js';
 import { DeployError } from '../../shared/errors.js';
 import type { DeploymentStrategy, StrategyContext } from './strategy.js';
-import { runWithDotenv } from './dotenv.js';
+import { runWithDotenv, uploadEnvironmentFile } from './dotenv.js';
 import { envSymlinkCommand } from './env-links.js';
 import {
   WATT_APP_FILE, WATT_RUNTIME_FILE, WATT_START_COMMAND,
@@ -66,7 +67,37 @@ export class BackendStrategy implements DeploymentStrategy {
     await execa('rsync', args, { stdio: 'inherit' });
   }
 
+  /**
+   * The first deploy finds no env file on the server. Failing there only sends
+   * the developer off to run `shipnode env`, which uploads the same local file —
+   * so upload it here instead. With no local file and the default `.env` name,
+   * start from an empty one: plenty of apps need no variables at all. A custom
+   * `envFile` name is a promise that the file exists, so its absence still fails.
+   *
+   * Never in CI. There the env belongs to `ci env-sync` (ADR-0006), and a missing
+   * file is a misconfigured workflow rather than a first deploy.
+   */
+  private async provisionFirstEnv(ctx: StrategyContext): Promise<void> {
+    if (!this.app.envFile || process.env['CI']) return;
+
+    const sharedEnvPath = `${this.appPath}/shared/${this.app.envFile}`;
+    const probe = await ctx.executor.exec(`[ -f ${shellSingleQuote(sharedEnvPath)} ]`);
+    if (probe.exitCode === 0) return;
+
+    const localEnvPath = resolve(this.cwd, this.app.envFile);
+    if (await pathExists(localEnvPath)) {
+      await uploadEnvironmentFile(ctx.executor, sharedEnvPath, await readFile(localEnvPath));
+      console.log(chalk.dim(`  uploaded ${this.app.envFile} (first deploy) — after editing it, run: shipnode env`));
+      return;
+    }
+
+    if (this.app.envFile !== '.env') return;
+    await uploadEnvironmentFile(ctx.executor, sharedEnvPath, Buffer.alloc(0));
+    console.log(chalk.yellow(`  no .env found locally — the app starts with no variables. Add them, then run: shipnode env`));
+  }
+
   async setupEnvironment(ctx: StrategyContext): Promise<void> {
+    await this.provisionFirstEnv(ctx);
     const pkgManager = await this.resolvePkgManager();
     const installCmd = this.workspace.installCommand ?? getInstallCommand(pkgManager);
     const runCmd = getRunCommand(pkgManager);

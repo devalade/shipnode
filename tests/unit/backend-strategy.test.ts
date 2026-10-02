@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BackendStrategy } from '../../src/domain/deploy/backend-strategy.js';
 import { FakeRemoteExecutor } from '../testing/fake-executor.js';
 import type { ShipnodeConfig } from '../../src/shared/types.js';
@@ -11,6 +11,11 @@ vi.mock('execa', () => ({
 
 vi.mock('fs-extra', () => ({
   pathExists: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>()),
+  readFile: vi.fn().mockResolvedValue(Buffer.from('DATABASE_URL=postgres://local\n')),
 }));
 
 const { execa } = await import('execa');
@@ -700,5 +705,64 @@ describe('BackendStrategy.startApp — blue-green', () => {
     await strategy.afterHealthy!(ctx);
     const afterCmds = executor.getHistory().map((h) => h.command);
     expect(afterCmds.some((c) => c.includes('pm2 reload') && c.includes('ecosystem.workers.config.cjs'))).toBe(true);
+  });
+});
+
+describe('BackendStrategy — first deploy env', () => {
+  const missingRemoteEnv = (executor: FakeRemoteExecutor) =>
+    executor.when((c) => c.startsWith('[ -f '), { stdout: '', stderr: '', exitCode: 1 });
+  const uploads = (executor: FakeRemoteExecutor) =>
+    executor.getHistory().filter((e) => e.command.includes('mv -f "$tmp"')).map((e) => e.command);
+
+  beforeEach(() => vi.stubEnv('CI', ''));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('uploads the local .env when the server has none yet', async () => {
+    mockedPathExists.mockResolvedValue(true as never);
+    const executor = new FakeRemoteExecutor();
+    missingRemoteEnv(executor);
+    await makeStrategy(makeConfig(), '/local/project').setupEnvironment!(makeCtx(executor));
+
+    const [upload] = uploads(executor);
+    expect(upload).toContain("'/var/www/app/myapp/shared/.env'");
+    expect(upload).toContain(Buffer.from('DATABASE_URL=postgres://local\n').toString('base64'));
+  });
+
+  it('starts from an empty .env when there is none locally either', async () => {
+    const executor = new FakeRemoteExecutor();
+    missingRemoteEnv(executor);
+    await makeStrategy(makeConfig(), '/local/project').setupEnvironment!(makeCtx(executor));
+
+    const [upload] = uploads(executor);
+    expect(upload).toContain("printf '%s' '' | base64 -d");
+    expect(upload).toContain("'/var/www/app/myapp/shared/.env'");
+  });
+
+  it('leaves a missing custom env file to the preflight — a named file is meant to exist', async () => {
+    const config = makeConfig({ envFile: '.env.production' });
+    const executor = new FakeRemoteExecutor();
+    missingRemoteEnv(executor);
+    await makeStrategy(config, '/local/project').setupEnvironment!(makeCtx(executor, { config }));
+
+    expect(uploads(executor)).toEqual([]);
+  });
+
+  it('never touches the server env when it already exists', async () => {
+    mockedPathExists.mockResolvedValue(true as never);
+    const executor = new FakeRemoteExecutor();
+    await makeStrategy(makeConfig(), '/local/project').setupEnvironment!(makeCtx(executor));
+
+    expect(uploads(executor)).toEqual([]);
+  });
+
+  it('does nothing in CI, where the env belongs to ci env-sync', async () => {
+    vi.stubEnv('CI', 'true');
+    mockedPathExists.mockResolvedValue(true as never);
+    const executor = new FakeRemoteExecutor();
+    missingRemoteEnv(executor);
+    await makeStrategy(makeConfig(), '/local/project').setupEnvironment!(makeCtx(executor));
+
+    expect(executor.getHistory().some((e) => e.command.startsWith('[ -f '))).toBe(false);
+    expect(uploads(executor)).toEqual([]);
   });
 });

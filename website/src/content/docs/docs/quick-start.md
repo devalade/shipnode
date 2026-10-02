@@ -59,22 +59,20 @@ bun add -d @devalade/shipnode
 npx shipnode init
 ```
 
-This prompts for framework, package manager, app type, SSH target, domain, and port — then writes `shipnode.config.ts`. You can rerun `init` or edit the file by hand at any time. See the [configuration reference](/docs/configuration/) for every option.
+`init` detects your framework, package manager and port. It asks for your server's IP, an optional domain, and whether to install a database or Redis, then writes `shipnode.config.ts`. You can edit the file by hand at any time. See the [configuration reference](/docs/configuration/) for every option.
 
-A minimal backend config:
+What it writes for a typical API:
 
 ```ts
 import { shipnode } from '@devalade/shipnode';
 
 export default shipnode
   .backend()
-  .ssh({ host: '203.0.113.10', user: 'root' })
+  .ssh({ host: '203.0.113.10', user: 'deploy' })
   .deployTo('/var/www/api')
-  .pm2('api', { instances: 2 })
+  .pm2('api')
   .port(3000)
   .domain('api.example.com')
-  .healthCheck('/health')
-  .nodeVersion('22')
   .pkgManager('pnpm')
   .build();
 ```
@@ -85,7 +83,9 @@ export default shipnode
 npx shipnode setup
 ```
 
-One-time, idempotent. Installs **mise**, **Node.js**, **PM2** (+ `pm2-logrotate`), **Caddy**, and your package manager. Re-running it is safe — it skips anything already present.
+One-time, idempotent. Installs **mise**, **Node.js**, **PM2**, **Caddy**, and your package manager, and creates a `deploy` user keyed with your SSH key. Re-running it is safe — it skips anything already present.
+
+The config says `user: 'deploy'`, but that user doesn't exist on a fresh server yet. On that first run, `setup` logs in as `root` to create it, and you don't have to edit anything.
 
 Verify with:
 
@@ -95,9 +95,9 @@ npx shipnode doctor
 
 If anything is red, fix it before deploying.
 
-## 4. Upload secrets
+## 4. Secrets
 
-Most apps need environment variables in production — database URLs, API keys, signing secrets. Keep them in a local file (do **not** commit it) and push it to the server once:
+On the first deploy, shipnode uploads your local `.env` to the server for you. If you don't have one, the server gets an empty one. You only need this step to push a different file or to update values later:
 
 ```bash
 npx shipnode env --file .env.production
@@ -131,7 +131,7 @@ install   pnpm install --frozen-lockfile
 build     pnpm run build
 symlink   current  ->  releases/20260524160000
 pm2       reload api --update-env
-health    GET /health  200 OK  47ms
+health    GET /health  answered  47ms
 deployed  https://api.example.com
 ```
 
@@ -225,8 +225,9 @@ npx shipnode logs
 
 Most common reasons:
 
-- The `healthCheck` path in `shipnode.config.ts` doesn't exist in your app (404).
-- The app didn't bind to the port from `.port(...)`.
+- The app didn't bind to the port from `.port(...)` — the error says "Nothing answered on port …".
+- The app answered with a 5xx.
+- You set `.healthCheck(path)` and that route doesn't exist (404). Without a configured path, any response below 500 counts as healthy.
 - A required env var isn't set — re-check `npx shipnode env --file .env.production`.
 
 ### `Deploy is locked` even though nothing is running

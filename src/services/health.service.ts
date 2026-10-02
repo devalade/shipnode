@@ -18,6 +18,28 @@ function retryDelayMs(attempt: number, backoff?: RetryBackoff): number {
   return Math.min(backoff.maxMs, backoff.initialMs * 2 ** (attempt - 1));
 }
 
+/**
+ * Whether one probe's HTTP status means the app is up. Strict checks need a
+ * 2xx/3xx; lenient ones accept any answer below 500, because a 404 from an app
+ * with no health route still proves it is listening. Status 0 means nothing
+ * answered at all.
+ */
+export function isHealthyStatus(status: number, strict: boolean): boolean {
+  if (strict) return status >= 200 && status < 400;
+  return status >= 100 && status < 500;
+}
+
+/** One line telling the developer what the last status most likely means. */
+function healthFailureHint(status: number, port: number | undefined, path: string): string {
+  if (!status) {
+    return `\nNothing answered on port ${port}. Make sure your app listens on process.env.PORT (or port ${port}).`;
+  }
+  if (status === 404) {
+    return `\nYour app has no route at ${path}. Add one, or drop .healthCheck(...) to accept any response.`;
+  }
+  return '';
+}
+
 interface Pm2JlistEntry {
   name: string;
   pm2_env?: {
@@ -115,7 +137,7 @@ export class HealthCheckService {
       lastStatus = parseInt(parts[0], 10);
       lastResponseMs = parseInt(parts[1], 10);
 
-      if (lastStatus >= 200 && lastStatus < 400) {
+      if (isHealthyStatus(lastStatus, healthCheck.strict ?? true)) {
         return { attempts: attempt, responseMs: lastResponseMs };
       }
 
@@ -126,7 +148,9 @@ export class HealthCheckService {
 
     const diagnostics = unit ? await this.collectUnitLogs(unit) : await this.collectPm2Logs(webApp.name);
     throw new HealthCheckError(
-      `Health check failed after ${retries} attempts. Last status: ${lastStatus}` + diagnostics,
+      `Health check failed after ${retries} attempts. Last status: ${lastStatus}` +
+      healthFailureHint(lastStatus, port, path) +
+      diagnostics,
       retries,
       lastStatus,
     );

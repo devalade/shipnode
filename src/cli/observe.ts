@@ -5,6 +5,7 @@ import { parseSystemStats } from '../domain/observe/parse.js';
 import { releaseNameOf, type FleetView, type ServerSnapshot } from '../domain/observe/snapshot.js';
 import { configForAppResult, configForServer, getServerTargets, type ServerTarget } from '../domain/servers.js';
 import { SshConnection } from '../infrastructure/ssh/connection.js';
+import type { RemoteExecutor } from '../domain/remote/executor.js';
 import type { AppTargetError, ServerTargetError } from '../shared/result-errors.js';
 import { UnknownServerTargetError } from '../shared/result-errors.js';
 import type { ShipnodeApp, ShipnodeConfig, SshConfig } from '../shared/types.js';
@@ -38,21 +39,52 @@ export async function takeSnapshot(
   const hosts = planObserveHosts(config, filter);
   if (hosts.isErr()) return Result.err(hosts.error);
 
-  const connections: SshConnection[] = [];
-  const targets: ObserveTarget[] = [];
+  const fleet = await connectFleet(config, hosts.value);
   try {
-    for (const host of hosts.value) {
-      targets.push(await connectHost(config, host, connections));
-    }
     const session = new ObserveSession({
-      targets,
+      targets: fleet.targets,
       intervalSeconds: filter.intervalSeconds ?? 2,
     });
     await session.tick();
     return Result.ok(session.getState());
   } finally {
-    for (const ssh of connections) ssh.disconnect();
+    fleet.close();
   }
+}
+
+/** One planned host, connected (or not) and ready for observing, acting on, and streaming from. */
+export interface FleetHost extends ObserveHostPlan {
+  /** `user@host:port`, for display. */
+  address: string;
+  /** This server's slice of the workspace, for actions that read config. */
+  config: ShipnodeConfig;
+  /** Null when the connection failed; `error` says why. */
+  executor: RemoteExecutor | null;
+  error?: string;
+}
+
+export interface FleetConnection {
+  hosts: FleetHost[];
+  targets: ObserveTarget[];
+  close(): void;
+}
+
+/**
+ * Connect every host once, in parallel, and keep the connections.
+ *
+ * A host that cannot be reached is not an error here: it becomes an observer
+ * that reports the failure every tick, so the fleet view can show it as down
+ * instead of the whole command refusing to start.
+ */
+export async function connectFleet(config: ShipnodeConfig, plans: ObserveHostPlan[]): Promise<FleetConnection> {
+  const connected = await Promise.all(plans.map((plan) => connectHost(config, plan)));
+  return {
+    hosts: connected.map((entry) => entry.host),
+    targets: connected.map((entry) => entry.target),
+    close() {
+      for (const entry of connected) entry.ssh?.disconnect();
+    },
+  };
 }
 
 export function planObserveHosts(
@@ -99,25 +131,37 @@ function selectServers(
 
 async function connectHost(
   config: ShipnodeConfig,
-  host: ObserveHostPlan,
-  connections: SshConnection[],
-): Promise<ObserveTarget> {
+  plan: ObserveHostPlan,
+): Promise<{ host: FleetHost; target: ObserveTarget; ssh: SshConnection | null }> {
+  const serverConfig = configForServer(config, plan.name);
+  const base = {
+    ...plan,
+    address: `${plan.ssh.user}@${plan.ssh.host}:${plan.ssh.port}`,
+    config: serverConfig,
+  };
   const ssh = new SshConnection();
   try {
-    await ssh.connect(host.ssh);
-    connections.push(ssh);
+    await ssh.connect(plan.ssh);
     return {
-      observer: new MetricsCollector(ssh, host.name, configForServer(config, host.name)),
-      apps: host.apps,
-      accessoryNames: host.accessoryNames,
+      host: { ...base, executor: ssh },
+      target: {
+        observer: new MetricsCollector(ssh, plan.name, serverConfig),
+        apps: plan.apps,
+        accessoryNames: plan.accessoryNames,
+      },
+      ssh,
     };
   } catch (cause: unknown) {
     ssh.disconnect();
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = `Failed to connect: ${cause instanceof Error ? cause.message : String(cause)}`;
     return {
-      observer: unreachableObserver(host.name, `Failed to connect: ${message}`, host.apps),
-      apps: host.apps,
-      accessoryNames: host.accessoryNames,
+      host: { ...base, executor: null, error: message },
+      target: {
+        observer: unreachableObserver(plan.name, message, plan.apps),
+        apps: plan.apps,
+        accessoryNames: plan.accessoryNames,
+      },
+      ssh: null,
     };
   }
 }
