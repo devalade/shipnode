@@ -4,6 +4,8 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [3.2.0-rc.1] - 2026-10-02
+
 ### Fixed
 - **`shipnode -v` prints the version.** The CLI only accepted Commander's default `-V`; `-v` now works alongside `--version`.
 
