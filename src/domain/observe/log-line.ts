@@ -170,14 +170,20 @@ export class LineAssembler {
  * Drops the backlog a reconnect replays.
  *
  * Every (re)connect asks the server for its last N lines so a fresh viewer has
- * context. After a dropped connection those lines were already shown, so the
- * guard holds the tail of what this source delivered and swallows incoming
- * lines for as long as they keep matching it in order. The first line that
- * does not match ends the replay; everything after it is new.
+ * context. After a dropped connection those lines were already shown. The
+ * backlog is a run of what this source delivered, ending at or after the last
+ * line seen - so the guard follows every position in the seen tail where the
+ * replay could have started, advancing each on a matching line. Logs repeat
+ * themselves (`GET /health 200`), which is why one guess at the start is not
+ * enough. The longest consistent replay wins: a line is swallowed while any
+ * alignment can still take it, and replay ends at the first line none can -
+ * that line, and everything after it, is new.
  */
 export class ReplayGuard {
   private seen: string[] = [];
   private replay: string[] = [];
+  /** Positions in `replay` each surviving alignment expects next; null until the first replayed line. */
+  private alignments: number[] | null = null;
   private replaying = false;
 
   constructor(private readonly window: number = 50) {}
@@ -185,21 +191,32 @@ export class ReplayGuard {
   /** Arm for a reconnect: the next lines may repeat what was already delivered. */
   arm(): void {
     this.replay = [...this.seen];
-    this.replaying = true;
+    this.alignments = null;
+    this.replaying = this.replay.length > 0;
   }
 
   /** True when the line should be shown. */
   accept(text: string): boolean {
     if (this.replaying) {
-      const at = this.replay.indexOf(text);
-      if (at !== -1) {
-        this.replay = this.replay.slice(at + 1);
+      const from = this.alignments ?? this.replay.map((_, index) => index);
+      // An alignment that already reached the newest seen line has nothing left to match.
+      const next = from
+        .filter((at) => at < this.replay.length && this.replay[at] === text)
+        .map((at) => at + 1);
+      if (next.length > 0) {
+        this.alignments = next;
         return false;
       }
-      this.replaying = false;
+      this.endReplay();
     }
     this.seen.push(text);
     if (this.seen.length > this.window) this.seen.shift();
     return true;
+  }
+
+  private endReplay(): void {
+    this.replaying = false;
+    this.alignments = null;
+    this.replay = [];
   }
 }

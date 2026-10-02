@@ -127,6 +127,22 @@ describe('ReplayGuard', () => {
     expect(['x', 'y'].map((t) => guard.accept(t))).toEqual([true, true]);
   });
 
+  it('aligns a replay of repetitive lines to the newest run, then shows new repeats', () => {
+    const guard = new ReplayGuard();
+    ['GET /health 200', 'GET /health 200', 'boot', 'GET /health 200', 'GET /health 200'].forEach((t) => guard.accept(t));
+    guard.arm();
+    // Backlog is the last two lines; then the same request keeps arriving for real.
+    const shown = ['GET /health 200', 'GET /health 200', 'GET /health 200', 'GET /health 200'].map((t) => guard.accept(t));
+    expect(shown).toEqual([false, false, true, true]);
+  });
+
+  it('shows lines that arrived during the gap, after the replayed part', () => {
+    const guard = new ReplayGuard();
+    ['a', 'b', 'c'].forEach((t) => guard.accept(t));
+    guard.arm();
+    expect(['b', 'c', 'missed', 'next'].map((t) => guard.accept(t))).toEqual([false, false, true, true]);
+  });
+
   it('does not swallow a genuine repeat after the replay ends', () => {
     const guard = new ReplayGuard();
     ['a', 'b'].forEach((t) => guard.accept(t));
@@ -468,6 +484,21 @@ describe('LogStream', () => {
     await stream.stop();
   });
 
+  it('drops a half line left by a connection that died, instead of gluing it to the next', async () => {
+    const a = new StreamingExecutor();
+    const stream = makeStream({ a });
+    stream.start();
+    await tick();
+    a.session(0).emit('0|web | whole\n0|web | half-writ');
+    a.session(0).fail(new Error('reset'));
+    await tick();
+    await tick();
+    a.session(1).emit('0|web | fresh\n');
+    await tick();
+    expect(stream.lines().map((l) => l.text)).toEqual(['whole', 'fresh']);
+    await stream.stop();
+  });
+
   it('reports a failing source as reconnecting with the reason, then live again', async () => {
     const a = new StreamingExecutor();
     const stream = makeStream({ a }, { liveAfterMs: 1000 });
@@ -552,5 +583,14 @@ describe('LogStream', () => {
     expect(notifications - before).toBeLessThanOrEqual(2);
     expect(stream.lines()).toHaveLength(50);
     await stream.stop();
+  });
+});
+
+describe('logs textFilter', () => {
+  it('keeps a stack trace with its error under --level error', async () => {
+    const { textFilter } = await import('../../src/cli/commands/logs.js');
+    const keep = textFilter({ ...EMPTY_LOG_FILTER, minLevel: 'error' });
+    const lines = ['ready', 'TypeError: boom', '    at run (/app/x.js:1:1)', 'GET / 200'];
+    expect(lines.filter(keep)).toEqual(['TypeError: boom', '    at run (/app/x.js:1:1)']);
   });
 });

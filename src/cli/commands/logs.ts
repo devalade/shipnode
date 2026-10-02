@@ -9,7 +9,7 @@ import {
   parseLevelOption,
   type LogFilter,
 } from '../../domain/observe/log-filter.js';
-import { detectLevel, LOG_LEVEL_RANK, type LogLine } from '../../domain/observe/log-line.js';
+import { detectLevel, isContinuation, LOG_LEVEL_RANK, type LogLevel, type LogLine } from '../../domain/observe/log-line.js';
 import { planLogSources } from '../../domain/observe/log-source.js';
 import { getPm2Name } from '../../domain/pm2/apps.js';
 import { LogStream, type LogBinding } from '../../services/observe/log-stream.js';
@@ -44,11 +44,22 @@ function prefixLines(text: string, label: string, keep: (line: string) => boolea
     .join('\n');
 }
 
-/** Level and text filtering for raw text, where no stream has classified the line yet. */
-function textFilter(filter: LogFilter): (line: string) => boolean {
+/**
+ * Level and text filtering for raw text, where no stream has classified the
+ * line yet. A stack frame takes the level of the line above it, as it does in
+ * `--follow`, so `--level error` keeps a trace with its error. Stateful: make
+ * one per block of output.
+ */
+export function textFilter(filter: LogFilter): (line: string) => boolean {
   const { matcher } = compileQuery(filter.query);
   const min = filter.minLevel === null ? 0 : LOG_LEVEL_RANK[filter.minLevel];
-  return (line) => (LOG_LEVEL_RANK[detectLevel(line) ?? 'info'] >= min) && (matcher === null || matcher(line));
+  let previous: LogLevel | undefined;
+  return (line) => {
+    const detected = detectLevel(line);
+    const level = detected ?? (isContinuation(line) ? previous : undefined) ?? 'info';
+    if (detected !== undefined) previous = detected;
+    return LOG_LEVEL_RANK[level] >= min && (matcher === null || matcher(line));
+  };
 }
 
 function filterFromOptions(options: LogsOptions): LogFilter | null {
@@ -76,7 +87,7 @@ export async function cmdLogs(cwd: string, options: LogsOptions): Promise<void> 
     return;
   }
 
-  const keep = textFilter(filter);
+  const keep = (): ((line: string) => boolean) => textFilter(filter);
   await runRemoteCommandForTargets(
     cwd,
     async ({ config, executor, serverName }) => {
@@ -105,8 +116,8 @@ export async function cmdLogs(cwd: string, options: LogsOptions): Promise<void> 
           for (const unit of units) {
             const result = await executor.exec(logsCommand(unit, { lines }));
             const label = `[${serverName} ${app.name} ${unit}]`;
-            if (result.stdout) process.stdout.write(`${prefixLines(result.stdout, label, keep)}\n`);
-            if (result.stderr) process.stderr.write(`${prefixLines(result.stderr, label, keep)}\n`);
+            if (result.stdout) process.stdout.write(`${prefixLines(result.stdout, label, keep())}\n`);
+            if (result.stderr) process.stderr.write(`${prefixLines(result.stderr, label, keep())}\n`);
           }
           continue;
         }
@@ -118,8 +129,8 @@ export async function cmdLogs(cwd: string, options: LogsOptions): Promise<void> 
           `${mise}; mise exec "node@${nodeVersion}" -- pm2 logs ${target} --lines ${lines} --nostream`,
         );
         const label = `[${serverName} ${app.name}]`;
-        if (result.stdout) process.stdout.write(`${prefixLines(result.stdout, label, keep)}\n`);
-        if (result.stderr) process.stderr.write(`${prefixLines(result.stderr, label, keep)}\n`);
+        if (result.stdout) process.stdout.write(`${prefixLines(result.stdout, label, keep())}\n`);
+        if (result.stderr) process.stderr.write(`${prefixLines(result.stderr, label, keep())}\n`);
       }
     },
     { configPath: options.config, appName: options.app, serverName: options.on },

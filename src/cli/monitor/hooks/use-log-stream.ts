@@ -69,6 +69,8 @@ export function useLogStream(hosts: readonly FleetHost[], wanted: boolean): LogS
 
     return () => {
       cancelled = true;
+      // Cancelled while still planning: let a later run plan again rather than never stream.
+      if (streamRef.current === null) startedRef.current = false;
     };
   }, [wanted, hosts]);
 

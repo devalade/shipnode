@@ -45,6 +45,12 @@ export async function cmdInit(cwd: string, options: InitOptions): Promise<void> 
     process.exit(1);
   }
 
+  // The domain is written into the generated TypeScript as a string literal.
+  if (options.domain !== undefined && options.domain.trim() !== '' && !isValidIpOrHostname(options.domain.trim())) {
+    ui.error('Invalid --domain. Must be a hostname, like api.example.com.');
+    process.exit(1);
+  }
+
   if (options.nonInteractive || options.print) {
     const config = generateConfig({
       app: detection.appType === 'backend' ? 'backend' : 'frontend',
@@ -106,6 +112,7 @@ export async function cmdInit(cwd: string, options: InitOptions): Promise<void> 
   const domainVal = options.domain ?? await text({
     message: 'Domain (leave empty to skip — you get HTTPS automatically when set)',
     placeholder: appType === 'backend' ? 'api.example.com' : 'example.com',
+    validate: (value) => (!value?.trim() || isValidIpOrHostname(value.trim()) ? undefined : 'Enter a hostname, like api.example.com'),
   });
   cancelIfNeeded(domainVal);
   const domain = (domainVal as string | undefined)?.trim() || undefined;

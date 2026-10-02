@@ -153,7 +153,7 @@ export class LogStream {
 
   private async follow(binding: LogBinding, index: number, signal: AbortSignal): Promise<void> {
     const { executor, source } = binding;
-    const assembler = new LineAssembler();
+    let assembler = new LineAssembler();
     const guard = new ReplayGuard();
     let lastLevel: LogLevel | undefined;
     let attempt = 0;
@@ -185,6 +185,8 @@ export class LogStream {
       this.setState(index, firstConnect ? 'connecting' : 'reconnecting');
       if (!firstConnect) guard.arm();
       firstConnect = false;
+      // A connection that died mid-line leaves half a line; it must not prefix the next one's first.
+      assembler = new LineAssembler();
 
       let reason: string;
       const liveTimer = setTimeout(() => this.setState(index, 'live'), this.liveAfterMs);
