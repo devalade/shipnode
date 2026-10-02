@@ -21,7 +21,8 @@ const groups = [
     label: "Operate",
     commands: [
       ["shipnode status", "Inspect PM2 and release state"],
-      ["shipnode logs", "Stream process logs"],
+      ["shipnode logs --follow", "Stream and filter logs from every server"],
+      ["shipnode monitor", "Live dashboard across every server"],
       ["shipnode metrics", "Open the PM2 monitoring dashboard"],
       ["shipnode restart", "Restart the application"],
       ["shipnode stop", "Stop the application"],

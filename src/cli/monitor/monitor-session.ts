@@ -1,33 +1,7 @@
 import { Result, type Result as ResultType } from 'better-result';
-import { getServerTargetResult, resolveServerNamesResult, type ServerTarget } from '../../domain/servers.js';
+import { resolveServerNamesResult } from '../../domain/servers.js';
 import type { ShipnodeApp, ShipnodeConfig } from '../../shared/types.js';
-import { UnknownAppError, type AppTargetError, type ServerTargetError } from '../../shared/result-errors.js';
-
-export interface MonitorSession {
-  config: ShipnodeConfig;
-  app: ShipnodeApp;
-  target: ServerTarget;
-}
-
-export function resolveMonitorSession(
-  config: ShipnodeConfig,
-  appName?: string,
-  serverName?: string,
-): ResultType<MonitorSession, AppTargetError> {
-  const app = appName === undefined
-    ? config.apps[0]
-    : config.apps.find((candidate) => candidate.name === appName);
-
-  if (app === undefined) return Result.err(new UnknownAppError({ name: appName ?? '(default)' }));
-
-  // The live TUI holds one connection. `--once` / `--json` observe the whole
-  // fleet; this path still needs a replica. `--on` picks it; otherwise the
-  // app's `on` must already name a single server.
-  const target = getServerTargetResult(config, serverName ?? app.on, `App '${app.name}'`);
-  if (target.isErr()) return Result.err(target.error);
-
-  return Result.ok({ config, app, target: target.value });
-}
+import type { ServerTargetError } from '../../shared/result-errors.js';
 
 export function getAppsForMonitorTarget(
   config: ShipnodeConfig,

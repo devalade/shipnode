@@ -1,116 +1,162 @@
-import { Box, useInput, useApp, useStdout } from 'ink';
-import { useState } from 'react';
-import type { RemoteExecutor } from '../../domain/remote/executor.js';
-import type { ShipnodeConfig, ShipnodeApp } from '../../shared/types.js';
+import { Box, useApp, useInput, useStdout } from 'ink';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import { HEALTH_ALERT_THRESHOLD } from '../../services/observe/session.js';
+import type { ObserveEvent } from '../../services/observe/events.js';
+import { applyLogFilter, countLevels, logFacets } from '../../domain/observe/log-filter.js';
+import type { FleetConnection } from '../observe.js';
 import { Pm2Panel } from './panels/Pm2Panel.js';
 import { SystemPanel } from './panels/SystemPanel.js';
 import { ReleasePanel } from './panels/ReleasePanel.js';
-import { LogPanel } from './panels/LogPanel.js';
 import { EventsPanel } from './panels/EventsPanel.js';
+import { FleetPanel } from './panels/FleetPanel.js';
+import { LogViewer } from './panels/LogViewer.js';
 import { StaticFrontendPanel } from './panels/StaticFrontendPanel.js';
 import { AccessoriesPanel } from './panels/AccessoriesPanel.js';
-import { AppSelector } from './app-selector.js';
 import { HelpOverlay } from './components/HelpOverlay.js';
 import { ConfirmDialog } from './components/ConfirmDialog.js';
 import { restartProcess, rollbackToRelease } from './actions.js';
-import chalk from 'chalk';
-import { useMonitorData, HEALTH_ALERT_THRESHOLD } from './hooks/use-monitor-data.js';
-import { useLiveLogs } from './hooks/use-live-logs.js';
 import { MonitorFrame, WaitingPanel } from './layout/MonitorFrame.js';
+import type { HeaderAlert } from './layout/HeaderBar.js';
+import { buildFleetRows, toMetricsSnapshot } from './fleet-model.js';
+import { INITIAL_LOG_VIEW, logViewReducer } from './log-view-state.js';
+import { useFleet } from './hooks/use-fleet.js';
+import { useLogStream } from './hooks/use-log-stream.js';
 
-type View = 'dashboard' | 'logs';
-type Overlay = 'none' | 'selector' | 'help' | 'confirmRestart' | 'confirmRollback';
+type View = 'fleet' | 'detail' | 'logs';
+type Overlay = 'none' | 'help' | 'confirmRestart' | 'confirmRollback';
+
+/** Rows the logs view spends on everything but log lines: header, status, border, title, filter bar, source warning. */
+const LOGS_CHROME_ROWS = 9;
+const STRIP_ROWS = 5;
+const MAX_ALERTS = 3;
 
 interface AppProps {
-  executor: RemoteExecutor;
-  config: ShipnodeConfig;
-  app: ShipnodeApp;
-  apps: ShipnodeApp[];
-  accessoryNames: string[];
-  targetName: string;
-  host: string;
+  fleet: FleetConnection;
   interval: number;
+  /** Open on this app instead of the fleet overview. */
+  focusApp?: string;
 }
 
-export function App({ executor, config, app: initialApp, apps, accessoryNames, targetName, host, interval }: AppProps) {
+export function App({ fleet: connection, interval, focusApp }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
-  const [currentApp, setCurrentApp] = useState(initialApp);
-  const [view, setView] = useState<View>('dashboard');
+  const { state, session, refresh } = useFleet(connection.targets, interval);
+  const [view, setView] = useState<View>('fleet');
+  const [returnTo, setReturnTo] = useState<Exclude<View, 'logs'>>('fleet');
   const [overlay, setOverlay] = useState<Overlay>('none');
-  const [liveMode, setLiveMode] = useState(false);
-  const [logFilter, setLogFilter] = useState<string | null>(null);
-  const [logSearch, setLogSearch] = useState('');
-  const [searchTyping, setSearchTyping] = useState(false);
-  const [logsPaused, setLogsPaused] = useState(false);
-  const [selectedRow, setSelectedRow] = useState(0);
-  const monitor = useMonitorData(executor, config, currentApp, interval, accessoryNames);
-  const liveActive = liveMode || view === 'logs';
-  const liveLogs = useLiveLogs(executor, currentApp, liveActive && !logsPaused, interval, logFilter);
+  const [stripOn, setStripOn] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [detailRow, setDetailRow] = useState(0);
+  const [logView, dispatchLog] = useReducer(logViewReducer, INITIAL_LOG_VIEW);
 
-  // On the 24-row terminals this layout was tuned for, the releases box has
-  // room for exactly one row; taller terminals get a few more so a rollback
-  // selection made with ↑/↓ is actually visible before confirming.
+  const rows = buildFleetRows(state.fleets);
+  const logs = useLogStream(connection.hosts, stripOn || view === 'logs');
   const terminalRows = stdout?.rows ?? 24;
+
+  // ── Fleet selection ──────────────────────────────────────────────
+  const selectedAt = Math.max(0, rows.findIndex((row) => row.key === selectedKey));
+  const selected = rows[selectedAt];
+
+  // A fleet of one is not worth an overview: open it directly, once.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpened.current || rows.length === 0) return;
+    autoOpened.current = true;
+    const focus = focusApp === undefined ? undefined : rows.find((row) => row.app === focusApp);
+    const target = rows.length === 1 ? rows[0] : focus;
+    if (target !== undefined && rows.length === 1) {
+      setDetailKey(target.key);
+      setView('detail');
+      setReturnTo('detail');
+    }
+    setSelectedKey((focus ?? rows[0]).key);
+  }, [rows.length]);
+
+  // ── Detail target ────────────────────────────────────────────────
+  const detail = view === 'detail' || overlay.startsWith('confirm') ? rows.find((row) => row.key === detailKey) : undefined;
+  const detailHost = detail === undefined ? undefined : connection.hosts.find((host) => host.name === detail.server);
+  const detailApp = detail === undefined ? undefined : detailHost?.apps.find((app) => app.name === detail.app);
+  const detailServer = detail === undefined ? undefined : state.servers.find((server) => server.server === detail.server);
+  const detailSnapshot = detailServer !== undefined && detail?.snapshot !== undefined ? toMetricsSnapshot(detailServer, detail.snapshot) : null;
+  const detailHistory = detail === undefined ? undefined : session.history(detail.server, detail.app);
+
+  const processes = detailSnapshot?.processes ?? [];
+  const maxReleases = (detailHost?.accessoryNames.length ?? 0) > 0 ? 4 : 5;
+  const releaseRows = (detailSnapshot?.releases ?? []).slice(0, maxReleases);
+  const totalDetailRows = processes.length + releaseRows.length;
+  const detailIndex = totalDetailRows === 0 ? 0 : Math.min(detailRow, totalDetailRows - 1);
+  const selectedProcess = detailIndex < processes.length ? processes[detailIndex] : undefined;
+  const selectedRelease = detailIndex >= processes.length ? releaseRows[detailIndex - processes.length] : undefined;
+  const currentTimestamp = detailSnapshot?.currentRelease?.split('/').pop() ?? null;
   const releaseBoxExtra = Math.max(0, Math.min(6, terminalRows - 30));
 
-  // Selection runs over processes first, then the visible release rows, so
-  // ↓ walks straight from the PM2 panel into the Releases panel.
-  const processes = monitor.snapshot?.processes ?? [];
-  const maxReleases = accessoryNames.length > 0 ? 4 : 5;
-  const releaseRows = (monitor.snapshot?.releases ?? []).slice(0, maxReleases);
-  const totalRows = processes.length + releaseRows.length;
-  const selectedIndex = totalRows === 0 ? 0 : Math.min(selectedRow, totalRows - 1);
-  const selectedInfo = selectedIndex < processes.length ? processes[selectedIndex] : undefined;
-  const selectedRelease =
-    selectedIndex >= processes.length ? releaseRows[selectedIndex - processes.length] : undefined;
-  const currentTimestamp = monitor.snapshot?.currentRelease?.split('/').pop() ?? null;
-  const alertStreak =
-    monitor.healthFailStreak >= HEALTH_ALERT_THRESHOLD ? monitor.healthFailStreak : 0;
+  // ── Logs ─────────────────────────────────────────────────────────
+  const source = logView.frozen ?? logs.lines;
+  const filtered = applyLogFilter(source, logView.filter);
+  const counts = countLevels(source, logView.filter);
+  const facets = logFacets(logs.lines, logView.filter);
+  const serverNames = connection.hosts.map((host) => host.name).sort();
+  const showServer = serverNames.length > 1;
+  const showApp = new Set(logs.lines.map((line) => line.app)).size > 1;
+  const troubled = logs.health.filter((entry) => entry.state !== 'live');
+  const logHeight = Math.max(3, terminalRows - LOGS_CHROME_ROWS);
+  const maxScroll = Math.max(0, filtered.lines.length - logHeight);
 
+  // ── Alerts ───────────────────────────────────────────────────────
+  const alerts: HeaderAlert[] = [];
+  for (const server of state.servers) {
+    if (server.error !== undefined) alerts.push({ text: `${server.server} DOWN` });
+    else if (server.deployLock != null) alerts.push({ text: `DEPLOY LOCK ${server.server} (${server.deployLock.ageSeconds}s)` });
+  }
+  for (const row of state.fleets.flatMap((f) => f.replicas.map((r) => ({ app: f.app, server: r.server })))) {
+    const streak = session.healthFailStreak(row.server, row.app);
+    if (streak >= HEALTH_ALERT_THRESHOLD) alerts.push({ text: `HEALTH ${row.app}@${row.server} ×${streak}` });
+  }
+  const shownAlerts = alerts.slice(0, MAX_ALERTS);
+  if (alerts.length > MAX_ALERTS) shownAlerts.push({ text: `+${alerts.length - MAX_ALERTS} more` });
+
+  // Ring the terminal bell once when a health check starts failing.
+  const lastEvent = useRef<ObserveEvent | undefined>(undefined);
+  useEffect(() => {
+    const events = state.events;
+    const from = lastEvent.current === undefined ? 0 : events.indexOf(lastEvent.current) + 1;
+    if (events.slice(from).some((event) => event.kind === 'health-failing')) stdout?.write('\x07');
+    lastEvent.current = events[events.length - 1];
+  }, [state.events]);
+
+  // ── Actions ──────────────────────────────────────────────────────
   const confirmRestart = async (): Promise<void> => {
     setOverlay('none');
-    if (selectedInfo === undefined) return;
-    monitor.appendEvent(chalk.yellow(`Restarting ${selectedInfo.pm2Name}…`));
-    const result = await restartProcess(executor, selectedInfo.pm2Name, selectedInfo.supervisor);
-    if (result.isOk()) {
-      monitor.appendEvent(chalk.green(`Restarted ${chalk.bold(selectedInfo.pm2Name)}`));
-    } else {
-      monitor.appendEvent(chalk.red(result.error.message));
-    }
-    void monitor.refresh();
+    if (selectedProcess === undefined || detailHost?.executor == null) return;
+    session.notice(`Restarting ${selectedProcess.pm2Name} on ${detailHost.name}…`);
+    const result = await restartProcess(detailHost.executor, selectedProcess.pm2Name, selectedProcess.supervisor);
+    session.notice(result.isOk() ? `Restarted ${selectedProcess.pm2Name} on ${detailHost.name}` : result.error.message);
+    void refresh();
   };
 
   const confirmRollback = async (): Promise<void> => {
     setOverlay('none');
-    if (selectedRelease === undefined) return;
-    monitor.appendEvent(chalk.yellow(`Rolling back to ${selectedRelease.timestamp}…`));
-    const result = await rollbackToRelease(executor, config, currentApp, selectedRelease.timestamp);
-    if (result.isOk()) {
-      monitor.appendEvent(chalk.green(`Rolled back to ${chalk.bold(selectedRelease.timestamp)}`));
-    } else {
-      monitor.appendEvent(chalk.red(result.error.message));
-    }
-    void monitor.refresh();
+    if (selectedRelease === undefined || detailHost?.executor == null || detailApp === undefined) return;
+    session.notice(`Rolling back ${detailApp.name} on ${detailHost.name} to ${selectedRelease.timestamp}…`);
+    const result = await rollbackToRelease(detailHost.executor, detailHost.config, detailApp, selectedRelease.timestamp);
+    session.notice(result.isOk() ? `Rolled back to ${selectedRelease.timestamp}` : result.error.message);
+    void refresh();
   };
 
-  const exitLogsView = (): void => {
-    setView('dashboard');
-    setSearchTyping(false);
-    setLogSearch('');
-    setLogsPaused(false);
+  const openLogs = (from: Exclude<View, 'logs'>): void => {
+    const scope = from === 'detail' ? detail : selected;
+    dispatchLog({ type: 'enter', server: from === 'detail' ? (scope?.server ?? null) : null, app: scope?.app ?? null });
+    setReturnTo(from);
+    setView('logs');
   };
 
-  const cycleLogFilter = (direction: 1 | -1): void => {
-    if (currentApp.appType === 'frontend') return;
-    const names = monitor.snapshot?.processes.map((p) => p.pm2Name) ?? [];
-    if (names.length === 0) return;
-    const cycle: Array<string | null> = [null, ...names];
-    const index = cycle.indexOf(logFilter);
-    const next = cycle[(index + direction + cycle.length) % cycle.length];
-    setLogFilter(next);
+  const closeLogs = (): void => {
+    dispatchLog({ type: 'resume' });
+    setView(returnTo);
   };
 
+  // ── Keys ─────────────────────────────────────────────────────────
   useInput((input, key) => {
     if (overlay === 'help') {
       setOverlay('none');
@@ -119,24 +165,12 @@ export function App({ executor, config, app: initialApp, apps, accessoryNames, t
     if (overlay !== 'none') return;
 
     // While typing a search query every printable key belongs to the query,
-    // including q/f/r — this branch must stay ahead of the global bindings.
-    if (view === 'logs' && searchTyping) {
-      if (key.return) {
-        setSearchTyping(false);
-        return;
-      }
-      if (key.escape) {
-        setSearchTyping(false);
-        setLogSearch('');
-        return;
-      }
-      if (key.backspace || key.delete) {
-        setLogSearch((s) => s.slice(0, -1));
-        return;
-      }
-      if (input !== '' && !key.ctrl && !key.meta) {
-        setLogSearch((s) => s + input);
-      }
+    // including q/f/r - this branch must stay ahead of the global bindings.
+    if (view === 'logs' && logView.typing) {
+      if (key.return) dispatchLog({ type: 'commit-search' });
+      else if (key.escape) dispatchLog({ type: 'cancel-search' });
+      else if (key.backspace || key.delete) dispatchLog({ type: 'backspace' });
+      else if (input !== '' && !key.ctrl && !key.meta) dispatchLog({ type: 'type', text: input });
       return;
     }
 
@@ -149,90 +183,90 @@ export function App({ executor, config, app: initialApp, apps, accessoryNames, t
       return;
     }
     if (input === 'r' || input === 'R') {
-      void monitor.refresh();
-      monitor.appendEvent(chalk.green('Refresh triggered'));
-      return;
-    }
-    if (input === 'f' || input === 'F') {
-      if (view === 'logs') exitLogsView();
-      else setView('logs');
+      void refresh();
+      session.notice('Refresh triggered');
       return;
     }
 
     if (view === 'logs') {
-      if (key.escape) exitLogsView();
-      if (key.leftArrow) cycleLogFilter(-1);
-      if (key.rightArrow) cycleLogFilter(1);
-      if (input === '/') {
-        setSearchTyping(true);
-        setLogSearch('');
+      if (input === 'f' || input === 'F' || key.escape) return closeLogs();
+      if (input === 's' || input === 'S') return dispatchLog({ type: 'cycle', dimension: 'server', direction: input === 's' ? 1 : -1, facets });
+      if (input === 'a' || input === 'A') return dispatchLog({ type: 'cycle', dimension: 'app', direction: input === 'a' ? 1 : -1, facets });
+      if (input === 'p' || input === 'P') return dispatchLog({ type: 'cycle', dimension: 'process', direction: input === 'p' ? 1 : -1, facets });
+      if (input === 'v') return dispatchLog({ type: 'cycle-level' });
+      if (input === 'm') return dispatchLog({ type: 'toggle-mode' });
+      if (input === '/') return dispatchLog({ type: 'start-search' });
+      if (input === 'c') return dispatchLog({ type: 'clear-filters' });
+      if (input === 'C') {
+        dispatchLog({ type: 'resume' });
+        return logs.clear();
       }
-      if (input === ' ') setLogsPaused((p) => !p);
+      if (input === ' ') return dispatchLog({ type: 'toggle-pause', live: logs.lines });
+      if (input === 'G' || key.end) return dispatchLog({ type: 'resume' });
+      if (key.upArrow) return dispatchLog({ type: 'scroll', delta: 1, live: logs.lines, max: maxScroll });
+      if (key.downArrow) return dispatchLog({ type: 'scroll', delta: -1, live: logs.lines, max: maxScroll });
+      if (key.pageUp) return dispatchLog({ type: 'scroll', delta: logHeight - 1, live: logs.lines, max: maxScroll });
+      if (key.pageDown) return dispatchLog({ type: 'scroll', delta: -(logHeight - 1), live: logs.lines, max: maxScroll });
       return;
     }
 
-    if (key.tab) {
-      setOverlay('selector');
+    if (input === 'f' || input === 'F') return openLogs(view);
+    if (input === 'l' || input === 'L') {
+      setStripOn((on) => !on);
       return;
     }
-    if (key.upArrow) {
-      setSelectedRow(Math.max(0, selectedIndex - 1));
+
+    if (view === 'fleet') {
+      if (key.upArrow) setSelectedKey(rows[Math.max(0, selectedAt - 1)]?.key ?? null);
+      else if (key.downArrow) setSelectedKey(rows[Math.min(rows.length - 1, selectedAt + 1)]?.key ?? null);
+      else if (key.return && selected !== undefined) {
+        setDetailKey(selected.key);
+        setDetailRow(0);
+        setReturnTo('fleet');
+        setView('detail');
+      }
       return;
     }
-    if (key.downArrow) {
-      setSelectedRow(Math.min(Math.max(totalRows - 1, 0), selectedIndex + 1));
+
+    // detail
+    if (key.escape) {
+      setView('fleet');
       return;
     }
+    if (key.upArrow) return setDetailRow(Math.max(0, detailIndex - 1));
+    if (key.downArrow) return setDetailRow(Math.min(Math.max(totalDetailRows - 1, 0), detailIndex + 1));
     if (key.return || input === 'x' || input === 'X') {
-      if (selectedInfo !== undefined) {
-        if (monitor.snapshot?.deployLock != null) {
-          monitor.appendEvent(chalk.red('Restart blocked: a deploy is in progress (lock held)'));
-          return;
-        }
-        setOverlay('confirmRestart');
+      if (detailSnapshot?.deployLock != null) {
+        session.notice(`Blocked: a deploy is in progress on ${detail?.server} (lock held)`);
         return;
       }
+      if (selectedProcess !== undefined) return setOverlay('confirmRestart');
       if (selectedRelease !== undefined) {
-        if (monitor.snapshot?.deployLock != null) {
-          monitor.appendEvent(chalk.red('Rollback blocked: a deploy is in progress (lock held)'));
+        if (detail?.replicated === true) {
+          session.notice(`Rollback on one replica of ${detail.app} would split the fleet - use 'shipnode rollback'`);
           return;
         }
         if (selectedRelease.status !== 'success') {
-          monitor.appendEvent(chalk.red('Cannot roll back to a failed release'));
+          session.notice('Cannot roll back to a failed release');
           return;
         }
         if (selectedRelease.timestamp === currentTimestamp) {
-          monitor.appendEvent(chalk.yellow(`${selectedRelease.timestamp} is already the current release`));
+          session.notice(`${selectedRelease.timestamp} is already the current release`);
           return;
         }
         setOverlay('confirmRollback');
-        return;
       }
-      return;
-    }
-    if (input === 'l' || input === 'L') {
-      setLiveMode((v) => {
-        const next = !v;
-        if (next) {
-          monitor.appendEvent(chalk.yellow('Live logs enabled'));
-        } else {
-          liveLogs.clearLogs();
-          monitor.appendEvent(chalk.yellow('Live logs disabled'));
-        }
-        return next;
-      });
     }
   });
 
-  if (overlay === 'help') {
-    return <HelpOverlay />;
-  }
+  // ── Overlays ─────────────────────────────────────────────────────
+  if (overlay === 'help') return <HelpOverlay />;
 
-  if (overlay === 'confirmRestart' && selectedInfo !== undefined) {
-    const dropsRequests = selectedInfo.execMode !== 'cluster' || selectedInfo.instances <= 1;
+  if (overlay === 'confirmRestart' && selectedProcess !== undefined) {
+    const dropsRequests = selectedProcess.execMode !== 'cluster' || selectedProcess.instances <= 1;
     return (
       <ConfirmDialog
-        title={`Restart ${selectedInfo.pm2Name}?`}
+        title={`Restart ${selectedProcess.pm2Name} on ${detailHost?.name}?`}
         lines={dropsRequests ? ['Single-instance process — restart drops in-flight requests.'] : []}
         onConfirm={() => {
           void confirmRestart();
@@ -242,12 +276,12 @@ export function App({ executor, config, app: initialApp, apps, accessoryNames, t
     );
   }
 
-  if (overlay === 'confirmRollback' && selectedRelease !== undefined) {
+  if (overlay === 'confirmRollback' && selectedRelease !== undefined && detailApp !== undefined) {
     return (
       <ConfirmDialog
-        title={`Rollback ${currentApp.name} to ${selectedRelease.timestamp}?`}
+        title={`Rollback ${detailApp.name} to ${selectedRelease.timestamp}?`}
         lines={
-          currentApp.appType === 'backend'
+          detailApp.appType === 'backend'
             ? ['Switches the current symlink and reloads PM2 from that release.']
             : ['Switches the current symlink.']
         }
@@ -259,103 +293,125 @@ export function App({ executor, config, app: initialApp, apps, accessoryNames, t
     );
   }
 
-  if (overlay === 'selector') {
-    return (
-      <AppSelector
-        apps={apps}
-        targetName={targetName}
-        onSelect={(app) => {
-          setCurrentApp(app);
-          setOverlay('none');
-          exitLogsView();
-          setLogFilter(null);
-          setSelectedRow(0);
-          monitor.reset();
-          liveLogs.clearLogs();
-          setLiveMode(false);
-          monitor.appendEvent(chalk.green(`Switched to ${chalk.bold(app.name)}`));
-        }}
-        onCancel={() => setOverlay('none')}
-      />
-    );
-  }
+  // ── Views ────────────────────────────────────────────────────────
+  const unreachable = state.servers.filter((server) => server.error !== undefined).length;
+  const frame = {
+    interval,
+    liveMode: stripOn || view === 'logs',
+    alerts: shownAlerts,
+    lastUpdate: state.lastUpdate,
+    polling: state.polling,
+  };
 
   if (view === 'logs') {
-    const rows = stdout?.rows ?? 24;
-    const title =
-      currentApp.appType === 'frontend'
-        ? `Caddy Access Log — ${currentApp.name}`
-        : `Live Logs — ${logFilter ?? 'all processes'}  (←/→ filter, / search, space pause, F back)`;
+    const scope = [logView.filter.server, logView.filter.app].filter((part) => part !== null).join(' / ');
     return (
       <MonitorFrame
-        app={currentApp}
-        targetName={targetName}
-        host={host}
-        interval={interval}
-        liveMode={liveActive}
-        lastUpdate={monitor.lastUpdate}
-        snapshot={monitor.snapshot}
-        polling={monitor.polling}
-        error={monitor.error}
-        healthFailStreak={alertStreak}
+        {...frame}
+        scope={scope === '' ? 'logs · all' : `logs · ${scope}`}
+        summary={`${filtered.lines.length}/${source.length} lines · ${logs.health.length - troubled.length}/${logs.health.length} sources live`}
+        hints="s/a/p server·app·proc  v level  / search  m mode  space pause  c clear"
+        error={logs.skipped.length > 0 ? `no logs from ${logs.skipped.join(', ')}` : null}
       >
         <Box flexGrow={1}>
-          <LogPanel
-            logBuffer={liveLogs.logBuffer}
-            maxLines={Math.max(10, rows - 6)}
-            title={title}
-            search={logSearch}
-            searchTyping={searchTyping}
-            paused={logsPaused}
+          <LogViewer
+            title="Live Logs"
+            lines={filtered.lines}
+            matched={filtered.matched}
+            filter={logView.filter}
+            servers={serverNames}
+            showServer={showServer}
+            showApp={showApp}
+            height={logHeight}
+            offset={logView.offset}
+            frozen={logView.frozen !== null}
+            typing={logView.typing}
+            queryError={filtered.queryError}
+            counts={counts}
+            troubled={troubled}
+            totalSources={logs.health.length}
           />
         </Box>
       </MonitorFrame>
     );
   }
 
+  const bottom = stripOn ? (
+    <LogViewer
+      compact
+      title="Live Logs"
+      lines={filtered.lines}
+      matched={filtered.matched}
+      filter={logView.filter}
+      servers={serverNames}
+      showServer={showServer}
+      showApp={showApp}
+      height={STRIP_ROWS}
+      offset={0}
+      frozen={logView.frozen !== null}
+      typing={false}
+      troubled={troubled}
+      totalSources={logs.health.length}
+    />
+  ) : (
+    <EventsPanel events={state.events} />
+  );
+
+  if (view === 'fleet') {
+    return (
+      <MonitorFrame
+        {...frame}
+        scope={`fleet · ${connection.hosts.length} server${connection.hosts.length === 1 ? '' : 's'}`}
+        summary={`${state.fleets.length} app(s)${unreachable > 0 ? ` · ${unreachable} down` : ''}`}
+        hints="↑/↓ select  Enter open  f logs  l strip"
+      >
+        <Box flexGrow={1} minHeight={8}>
+          <FleetPanel
+            fleets={state.fleets}
+            rows={rows}
+            servers={state.servers}
+            selectedKey={selected?.key ?? null}
+            height={Math.max(4, terminalRows - 8 - 4)}
+          />
+        </Box>
+        <Box height={8}>{bottom}</Box>
+      </MonitorFrame>
+    );
+  }
+
+  // detail
+  const unavailable = detail?.reachable === false ? (detail.error ?? 'server unreachable') : null;
   return (
     <MonitorFrame
-      app={currentApp}
-      targetName={targetName}
-      host={host}
-      interval={interval}
-      liveMode={liveActive}
-      lastUpdate={monitor.lastUpdate}
-      snapshot={monitor.snapshot}
-      polling={monitor.polling}
-      error={monitor.error}
-      healthFailStreak={alertStreak}
+      {...frame}
+      scope={detail === undefined ? 'detail' : `${detail.app} (${detail.appType}) on ${detail.server}`}
+      summary={detailSnapshot ? `${processes.length} process(es)` : '-'}
+      hints={`Esc back  ↑/↓ select  Enter restart/rollback  f logs`}
+      error={unavailable}
     >
       <Box flexGrow={1} flexDirection="row" minHeight={8}>
         <Box width="60%" flexDirection="column">
-          {currentApp.appType === 'frontend' ? (
-            <StaticFrontendPanel app={currentApp} caddy={monitor.snapshot?.caddy ?? null} />
-          ) : monitor.snapshot ? (
+          {detailApp?.appType === 'frontend' ? (
+            <StaticFrontendPanel app={detailApp} caddy={detailSnapshot?.caddy ?? null} />
+          ) : detailSnapshot && detailHistory ? (
             <Pm2Panel
-              processes={monitor.snapshot.processes}
-              cpuHistory={monitor.history.cpu}
-              memHistory={monitor.history.memory}
-              health={monitor.snapshot.health}
-              responseHistory={monitor.history.responseMs}
-              selectedIndex={selectedInfo !== undefined ? selectedIndex : undefined}
+              processes={detailSnapshot.processes}
+              cpuHistory={detailHistory.cpu}
+              memHistory={detailHistory.memory}
+              health={detailSnapshot.health}
+              responseHistory={detailHistory.responseMs}
+              selectedIndex={selectedProcess !== undefined ? detailIndex : undefined}
             />
           ) : (
             <WaitingPanel />
           )}
         </Box>
         <Box width="40%" flexDirection="column">
-          {monitor.snapshot ? (
+          {detailSnapshot && detailHistory ? (
             <>
-              <SystemPanel
-                system={monitor.snapshot.system}
-                cpuHistory={monitor.history.cpu}
-                memHistory={monitor.history.memory}
-              />
-              {accessoryNames.length > 0 && (
-                <AccessoriesPanel
-                  configuredNames={accessoryNames}
-                  accessories={monitor.snapshot.accessories}
-                />
+              <SystemPanel system={detailSnapshot.system} cpuHistory={detailHistory.cpu} memHistory={detailHistory.memory} />
+              {(detailHost?.accessoryNames.length ?? 0) > 0 && (
+                <AccessoriesPanel configuredNames={detailHost?.accessoryNames ?? []} accessories={detailSnapshot.accessories} />
               )}
             </>
           ) : (
@@ -364,26 +420,18 @@ export function App({ executor, config, app: initialApp, apps, accessoryNames, t
         </Box>
       </Box>
 
-      {monitor.snapshot && (
-        <Box height={(accessoryNames.length > 0 ? 6 : 7) + releaseBoxExtra}>
+      {detailSnapshot && (
+        <Box height={((detailHost?.accessoryNames.length ?? 0) > 0 ? 6 : 7) + releaseBoxExtra}>
           <ReleasePanel
-            currentRelease={monitor.snapshot.currentRelease}
-            releases={monitor.snapshot.releases}
+            currentRelease={detailSnapshot.currentRelease}
+            releases={detailSnapshot.releases}
             maxReleases={maxReleases}
-            selectedIndex={
-              selectedRelease !== undefined ? selectedIndex - processes.length : undefined
-            }
+            selectedIndex={selectedRelease !== undefined ? detailIndex - processes.length : undefined}
           />
         </Box>
       )}
 
-      <Box height={8}>
-        {liveMode ? (
-          <LogPanel logBuffer={liveLogs.logBuffer} />
-        ) : (
-          <EventsPanel events={monitor.events} />
-        )}
-      </Box>
+      <Box height={8}>{bottom}</Box>
     </MonitorFrame>
   );
 }

@@ -133,7 +133,7 @@ export class SshConnection extends RemoteExecutor {
     }
 
     return new Promise<ExecResult>((resolve, reject) => {
-      this.client.exec(command, { pty: false }, (err, stream: ClientChannel) => {
+      this.client.exec(command, { pty: options?.pty === true }, (err, stream: ClientChannel) => {
         if (err) {
           return reject(new SshError(`Failed to execute command: ${err.message}`));
         }
@@ -154,7 +154,14 @@ export class SshConnection extends RemoteExecutor {
           options?.onData?.(chunk, 'stderr');
         });
 
+        const onAbort = (): void => {
+          stream.close();
+        };
+        if (options?.signal?.aborted) onAbort();
+        else options?.signal?.addEventListener('abort', onAbort, { once: true });
+
         stream.on('close', (code: number | undefined) => {
+          options?.signal?.removeEventListener('abort', onAbort);
           exitCode = code ?? 1;
           resolve({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode });
         });

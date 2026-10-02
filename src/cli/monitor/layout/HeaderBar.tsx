@@ -1,40 +1,33 @@
 import { Box, Text } from 'ink';
-import type { ShipnodeApp } from '../../../shared/types.js';
-import type { DeployLockInfo } from '../state.js';
 
 const ACCENT = '#d6a85d';
 const BG_HEADER = '#161b22';
 
-interface HeaderBarProps {
-  app: ShipnodeApp;
-  targetName: string;
-  host: string;
-  interval: number;
-  liveMode: boolean;
-  deployLock?: DeployLockInfo | null;
-  /** Consecutive failed health probes; alerting once it reaches the threshold. */
-  healthFailStreak?: number;
+export interface HeaderAlert {
+  text: string;
 }
 
-export function HeaderBar({ app, targetName, host, interval, liveMode, deployLock, healthFailStreak = 0 }: HeaderBarProps) {
+interface HeaderBarProps {
+  /** What is being watched: "fleet · 3 servers", or "api on b". */
+  scope: string;
+  interval: number;
+  liveMode: boolean;
+  alerts: readonly HeaderAlert[];
+}
+
+export function HeaderBar({ scope, interval, liveMode, alerts }: HeaderBarProps) {
   return (
     <Box height={1} backgroundColor={BG_HEADER} paddingLeft={1}>
-      <Text bold color={ACCENT}>ShipNode Monitor </Text>
-      <Text>— {app.name} ({app.appType}) </Text>
-      <Text dimColor>— {targetName} {host}</Text>
-      <Text dimColor>{'  │'} interval: {interval}s</Text>
-      {liveMode ? (
-        <Text>{'  │'} logs: <Text color="green">ON</Text></Text>
-      ) : (
-        <Text dimColor>  │ logs: off</Text>
-      )}
-      {deployLock != null && (
-        <Text bold color="red">{'  │ '}DEPLOY LOCK ({deployLock.ageSeconds}s)</Text>
-      )}
-      {healthFailStreak > 0 && (
-        <Text bold color="red">{'  │ '}HEALTH FAILING ×{healthFailStreak}</Text>
-      )}
-      <Text dimColor>{'  │'} [?] help</Text>
+      <Text wrap="truncate-end">
+        <Text bold color={ACCENT}>ShipNode Monitor </Text>
+        <Text>— {scope}</Text>
+        <Text dimColor>{'  │'} interval: {interval}s</Text>
+        {liveMode ? <Text>{'  │'} logs: <Text color="green">ON</Text></Text> : <Text dimColor>  │ logs: off</Text>}
+        {alerts.map((alert) => (
+          <Text key={alert.text} bold color="red">{'  │ '}{alert.text}</Text>
+        ))}
+        <Text dimColor>{'  │'} [?] help</Text>
+      </Text>
     </Box>
   );
 }

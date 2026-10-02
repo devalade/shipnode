@@ -171,8 +171,10 @@ shipnode cloudflare init   # one tunnel, ingress per app domain
 
 ### Monitor
 ```bash
-shipnode monitor           # live TUI: PM2, system, health, logs
-shipnode monitor --app api
+shipnode monitor           # live TUI across every server: fleet overview, replica detail, streaming logs
+shipnode monitor --app api # one app on all its servers
+shipnode monitor --on web-2
+shipnode monitor --once    # one snapshot; --json for machine-readable
 ```
 
 ## Day-to-day
@@ -180,6 +182,7 @@ shipnode monitor --app api
 ```bash
 shipnode status [--app name]
 shipnode logs [--app name] [--lines 500]
+shipnode logs --follow [--level error] [--grep '/timeout/i'] [--on server]   # live, merged across servers
 shipnode restart [--app name]
 shipnode stop [--app name]
 shipnode run "pnpm db:apply" [--app name]

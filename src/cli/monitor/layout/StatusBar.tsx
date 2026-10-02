@@ -1,30 +1,27 @@
 import { Box, Text } from 'ink';
-import type { MetricsSnapshot } from '../state.js';
 
 const BG_HEADER = '#161b22';
 
 interface StatusBarProps {
-  lastUpdate: string;
-  snapshot: MetricsSnapshot | null;
+  lastUpdate: string | null;
   polling: boolean;
-  error: string | null;
+  /** "3 servers · 5 apps", or whatever summarises what is on screen. */
+  summary: string;
+  /** Hotkeys for the current view. */
+  hints?: string;
+  error?: string | null;
 }
 
-export function StatusBar({ lastUpdate, snapshot, polling, error }: StatusBarProps) {
-  const health = snapshot?.health;
+export function StatusBar({ lastUpdate, polling, summary, hints, error }: StatusBarProps) {
+  const updated = lastUpdate === null ? '-' : new Date(lastUpdate).toLocaleTimeString();
   return (
     <Box height={1} backgroundColor={BG_HEADER}>
-      <Text dimColor>
-        {' '}Status: {polling ? 'polling' : snapshot ? 'ready' : 'waiting'}{'  │  '}
-        Last update: {lastUpdate || '-'}{'  │  '}
-        {snapshot ? `${snapshot.processes.length} process(es)` : '-'}
+      <Text wrap="truncate-end" dimColor>
+        {' '}Status: {polling ? 'polling' : lastUpdate === null ? 'waiting' : 'ready'}{'  │  '}
+        Last update: {updated}{'  │  '}{summary}
+        {hints !== undefined && `  │  ${hints}`}
       </Text>
-      {health !== undefined && (
-        <Text color={health.status === 'ok' ? 'green' : 'red'}>
-          {'  │  '}hc:{health.httpCode || 'down'} {health.responseMs}ms
-        </Text>
-      )}
-      {error && <Text color="red">{'  │  '}{error}</Text>}
+      {error != null && <Text color="red">{'  │  '}{error}</Text>}
     </Box>
   );
 }

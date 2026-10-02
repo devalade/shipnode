@@ -1,59 +1,30 @@
 import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
-import type { ShipnodeApp } from '../../../shared/types.js';
-import type { MetricsSnapshot } from '../state.js';
-import { HeaderBar } from './HeaderBar.js';
+import { HeaderBar, type HeaderAlert } from './HeaderBar.js';
 import { StatusBar } from './StatusBar.js';
 
 const BG = '#0d1117';
 const BORDER = '#30363d';
 
 interface MonitorFrameProps {
-  app: ShipnodeApp;
-  targetName: string;
-  host: string;
+  scope: string;
   interval: number;
   liveMode: boolean;
-  lastUpdate: string;
-  snapshot: MetricsSnapshot | null;
+  alerts: readonly HeaderAlert[];
+  lastUpdate: string | null;
   polling: boolean;
-  error: string | null;
-  /** Streak to surface in the header; pass 0 until it crosses the alert threshold. */
-  healthFailStreak?: number;
+  summary: string;
+  hints?: string;
+  error?: string | null;
   children: ReactNode;
 }
 
-export function MonitorFrame({
-  app,
-  targetName,
-  host,
-  interval,
-  liveMode,
-  lastUpdate,
-  snapshot,
-  polling,
-  error,
-  healthFailStreak = 0,
-  children,
-}: MonitorFrameProps) {
+export function MonitorFrame({ scope, interval, liveMode, alerts, lastUpdate, polling, summary, hints, error, children }: MonitorFrameProps) {
   return (
     <Box flexDirection="column" height="100%" backgroundColor={BG}>
-      <HeaderBar
-        app={app}
-        targetName={targetName}
-        host={host}
-        interval={interval}
-        liveMode={liveMode}
-        deployLock={snapshot?.deployLock}
-        healthFailStreak={healthFailStreak}
-      />
+      <HeaderBar scope={scope} interval={interval} liveMode={liveMode} alerts={alerts} />
       {children}
-      <StatusBar
-        lastUpdate={lastUpdate}
-        snapshot={snapshot}
-        polling={polling}
-        error={error}
-      />
+      <StatusBar lastUpdate={lastUpdate} polling={polling} summary={summary} hints={hints} error={error} />
     </Box>
   );
 }

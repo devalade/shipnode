@@ -1,28 +1,33 @@
 import { Box, Text } from 'ink';
+import type { ObserveEvent } from '../../../services/observe/events.js';
+import { describeEvent } from '../fleet-model.js';
 
 const ACCENT = '#d6a85d';
 const BG = '#0d1117';
 const BORDER = '#30363d';
+const TONE = { ok: 'green', warn: 'yellow', bad: 'red', info: 'yellow' } as const;
 
 interface EventsPanelProps {
-  events: string[];
+  events: readonly ObserveEvent[];
+  rows?: number;
 }
 
-export function EventsPanel({ events }: EventsPanelProps) {
+export function EventsPanel({ events, rows = 6 }: EventsPanelProps) {
   return (
-    <Box
-      borderStyle="round"
-      borderColor={BORDER}
-      padding={1}
-      flexDirection="column"
-      flexGrow={1}
-      backgroundColor={BG}
-    >
+    <Box borderStyle="round" borderColor={BORDER} paddingX={1} flexDirection="column" flexGrow={1} backgroundColor={BG}>
       <Text bold color={ACCENT}>Events</Text>
       {events.length === 0 ? (
-        <Text dimColor>  No events yet. [L] live logs · [F] fullscreen · [?] help</Text>
+        <Text dimColor>  No events yet. [L] live log strip · [F] fullscreen logs · [?] help</Text>
       ) : (
-        events.slice(-6).map((event, index) => <Text key={`${index}-${event}`}>{event}</Text>)
+        events.slice(-rows).map((event, index) => {
+          const { tone, text } = describeEvent(event);
+          return (
+            <Text key={`${index}-${event.at}`} wrap="truncate-end">
+              <Text dimColor>{new Date(event.at).toLocaleTimeString()} </Text>
+              <Text color={TONE[tone]}>{text}</Text>
+            </Text>
+          );
+        })
       )}
     </Box>
   );
