@@ -48,7 +48,7 @@ const program = new Command();
 program
   .name('shipnode')
   .description('Deploy Node.js apps to a single VPS')
-  .version(version);
+  .version(version, '-v, --version', 'Output the version number');
 
 // ── Core ──────────────────────────────────────────────────────────
 
