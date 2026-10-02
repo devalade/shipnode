@@ -4,6 +4,8 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+## [3.2.0-rc.0] - 2026-10-02
+
 ### Added
 - **`monitor` watches the whole fleet.** With no `--on` it connects to every server and opens a fleet overview: each app on each server it runs on, the release each replica serves, process and health state, and a one-line verdict per app (a half-finished roll reads `split across 2 releases` and marks the replica that is `behind`; an unreachable server keeps its row). `Enter` opens the per-replica view the old single-server monitor showed. `--on` and `--app` still narrow it. Rollback from the monitor is refused for an app that runs on several servers, since it would split the fleet; use `shipnode rollback`.
 - **Live log streaming with filters.** `f` opens a merged, streaming view of every server's logs (PM2, systemd and Caddy access logs) over the existing SSH connections, replacing the 2-second `pm2 logs --nostream` poll and its duplicated or dropped lines. Filter by server (`s`), app (`a`), process (`p`), level (`v`: all, warn+, error) and text, `/regex/` or `!exclude` search (`/`), in hide or dim mode (`m`), with live `ERR`/`WARN` counts. Pause, scroll back, and clear are supported. A dropped connection is retried with backoff without replaying lines already shown.
@@ -16,6 +18,7 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ### Fixed
 - **`setup` could not reach a fresh server with the config `init` wrote.** `init` sets `user: 'deploy'`, which only exists after `setup` creates it. When the server refuses `deploy`, `setup` now logs in as `root` for that run. If the config uses another user, the "switch ssh.user" hint is shown as before.
+- **`init` accepted any `--domain`.** The value is written into `shipnode.config.ts` as a string, so a stray quote produced a config that no longer loaded. `init` now requires a hostname, on the flag and in the prompt.
 - **The first deploy failed with "Remote environment file is missing".** When the server has no env file, `deploy` now uploads the local one (what `shipnode env` would do). With no local `.env` either, it creates an empty one. A custom `envFile` name that is missing locally still fails. None of this happens in CI, where the env belongs to `ci env-sync` (ADR-0006).
 
 ## [3.2.0-beta.3] - 2026-10-01
