@@ -1,4 +1,4 @@
-import { Box, useApp, useInput, useStdout } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { HEALTH_ALERT_THRESHOLD } from '../../services/observe/session.js';
 import type { ObserveEvent } from '../../services/observe/events.js';
@@ -6,17 +6,19 @@ import { applyLogFilter, countLevels, logFacets } from '../../domain/observe/log
 import type { FleetConnection } from '../observe.js';
 import { Pm2Panel } from './panels/Pm2Panel.js';
 import { SystemPanel } from './panels/SystemPanel.js';
-import { ReleasePanel } from './panels/ReleasePanel.js';
+import { ReleasePanel, releasePanelHeight } from './panels/ReleasePanel.js';
 import { EventsPanel } from './panels/EventsPanel.js';
-import { FleetPanel } from './panels/FleetPanel.js';
-import { LogViewer } from './panels/LogViewer.js';
+import { AppsPanel, ServersPanel, serversPanelHeight } from './panels/FleetPanel.js';
+import { LOG_VIEWER_CHROME, LogViewer } from './panels/LogViewer.js';
 import { StaticFrontendPanel } from './panels/StaticFrontendPanel.js';
 import { AccessoriesPanel } from './panels/AccessoriesPanel.js';
 import { HelpOverlay } from './components/HelpOverlay.js';
 import { ConfirmDialog } from './components/ConfirmDialog.js';
 import { restartProcess, rollbackToRelease } from './actions.js';
-import { MonitorFrame, WaitingPanel } from './layout/MonitorFrame.js';
-import type { HeaderAlert } from './layout/HeaderBar.js';
+import { MonitorFrame, type Flash, type HeaderAlert } from './layout/MonitorFrame.js';
+import { Panel } from './components/Panel.js';
+import type { Hint } from './components/KeyHints.js';
+import type { Tone } from './theme.js';
 import { buildFleetRows, toMetricsSnapshot } from './fleet-model.js';
 import { INITIAL_LOG_VIEW, logViewReducer } from './log-view-state.js';
 import { useFleet } from './hooks/use-fleet.js';
@@ -25,10 +27,12 @@ import { useLogStream } from './hooks/use-log-stream.js';
 type View = 'fleet' | 'detail' | 'logs';
 type Overlay = 'none' | 'help' | 'confirmRestart' | 'confirmRollback';
 
-/** Rows the logs view spends on everything but log lines: header, status, border, title, filter bar, source warning. */
-const LOGS_CHROME_ROWS = 9;
+/** Lines of log or activity in the strip under the fleet and replica views. */
 const STRIP_ROWS = 5;
+/** The strip's panel: its lines plus top and bottom edges. */
+const BOTTOM_HEIGHT = STRIP_ROWS + 2;
 const MAX_ALERTS = 3;
+const FLASH_MS = 4000;
 
 interface AppProps {
   fleet: FleetConnection;
@@ -49,10 +53,29 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
   const [detailKey, setDetailKey] = useState<string | null>(null);
   const [detailRow, setDetailRow] = useState(0);
   const [logView, dispatchLog] = useReducer(logViewReducer, INITIAL_LOG_VIEW);
+  const [flash, setFlash] = useState<Flash | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Say something in the footer for a moment. */
+  const showFlash = (next: Flash): void => {
+    setFlash(next);
+    if (flashTimer.current !== null) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), FLASH_MS);
+  };
+
+  /** Flash it and keep it in the activity log. */
+  const notify = (tone: Tone, text: string): void => {
+    session.notice(text);
+    showFlash({ tone, text });
+  };
+  useEffect(() => () => {
+    if (flashTimer.current !== null) clearTimeout(flashTimer.current);
+  }, []);
 
   const rows = buildFleetRows(state.fleets);
   const logs = useLogStream(connection.hosts, stripOn || view === 'logs');
   const terminalRows = stdout?.rows ?? 24;
+  const terminalCols = stdout?.columns ?? 100;
 
   // ── Fleet selection ──────────────────────────────────────────────
   const selectedAt = Math.max(0, rows.findIndex((row) => row.key === selectedKey));
@@ -89,7 +112,6 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
   const selectedProcess = detailIndex < processes.length ? processes[detailIndex] : undefined;
   const selectedRelease = detailIndex >= processes.length ? releaseRows[detailIndex - processes.length] : undefined;
   const currentTimestamp = detailSnapshot?.currentRelease?.split('/').pop() ?? null;
-  const releaseBoxExtra = Math.max(0, Math.min(6, terminalRows - 30));
 
   // ── Logs ─────────────────────────────────────────────────────────
   const source = logView.frozen ?? logs.lines;
@@ -100,21 +122,25 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
   const showServer = serverNames.length > 1;
   const showApp = new Set(logs.lines.map((line) => line.app)).size > 1;
   const troubled = logs.health.filter((entry) => entry.state !== 'live');
-  const logHeight = Math.max(3, terminalRows - LOGS_CHROME_ROWS);
-  const maxScroll = Math.max(0, filtered.lines.length - logHeight);
 
   // ── Alerts ───────────────────────────────────────────────────────
   const alerts: HeaderAlert[] = [];
   for (const server of state.servers) {
-    if (server.error !== undefined) alerts.push({ text: `${server.server} DOWN` });
-    else if (server.deployLock != null) alerts.push({ text: `DEPLOY LOCK ${server.server} (${server.deployLock.ageSeconds}s)` });
+    if (server.error !== undefined) alerts.push({ text: `${server.server} unreachable` });
+    else if (server.deployLock != null) alerts.push({ text: `${server.server} deploy lock ${server.deployLock.ageSeconds}s` });
   }
   for (const row of state.fleets.flatMap((f) => f.replicas.map((r) => ({ app: f.app, server: r.server })))) {
     const streak = session.healthFailStreak(row.server, row.app);
-    if (streak >= HEALTH_ALERT_THRESHOLD) alerts.push({ text: `HEALTH ${row.app}@${row.server} ×${streak}` });
+    if (streak >= HEALTH_ALERT_THRESHOLD) alerts.push({ text: `${row.app} on ${row.server} health failing ×${streak}` });
   }
   const shownAlerts = alerts.slice(0, MAX_ALERTS);
   if (alerts.length > MAX_ALERTS) shownAlerts.push({ text: `+${alerts.length - MAX_ALERTS} more` });
+
+  // ── Height budget ────────────────────────────────────────────────
+  // Every view gets the terminal minus the header, the alert bar when shown, and the footer.
+  const bodyHeight = Math.max(8, terminalRows - 2 - (shownAlerts.length > 0 ? 1 : 0));
+  const logHeight = Math.max(3, bodyHeight - LOG_VIEWER_CHROME);
+  const maxScroll = Math.max(0, filtered.lines.length - logHeight);
 
   // Ring the terminal bell once when a health check starts failing.
   const lastEvent = useRef<ObserveEvent | undefined>(undefined);
@@ -129,18 +155,20 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
   const confirmRestart = async (): Promise<void> => {
     setOverlay('none');
     if (selectedProcess === undefined || detailHost?.executor == null) return;
-    session.notice(`Restarting ${selectedProcess.pm2Name} on ${detailHost.name}…`);
+    notify('info', `Restarting ${selectedProcess.pm2Name} on ${detailHost.name}…`);
     const result = await restartProcess(detailHost.executor, selectedProcess.pm2Name, selectedProcess.supervisor);
-    session.notice(result.isOk() ? `Restarted ${selectedProcess.pm2Name} on ${detailHost.name}` : result.error.message);
+    if (result.isOk()) notify('ok', `Restarted ${selectedProcess.pm2Name} on ${detailHost.name}`);
+    else notify('bad', result.error.message);
     void refresh();
   };
 
   const confirmRollback = async (): Promise<void> => {
     setOverlay('none');
     if (selectedRelease === undefined || detailHost?.executor == null || detailApp === undefined) return;
-    session.notice(`Rolling back ${detailApp.name} on ${detailHost.name} to ${selectedRelease.timestamp}…`);
+    notify('info', `Rolling back ${detailApp.name} on ${detailHost.name} to ${selectedRelease.timestamp}…`);
     const result = await rollbackToRelease(detailHost.executor, detailHost.config, detailApp, selectedRelease.timestamp);
-    session.notice(result.isOk() ? `Rolled back to ${selectedRelease.timestamp}` : result.error.message);
+    if (result.isOk()) notify('ok', `Rolled back ${detailApp.name} to ${selectedRelease.timestamp}`);
+    else notify('bad', result.error.message);
     void refresh();
   };
 
@@ -184,7 +212,7 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
     }
     if (input === 'r' || input === 'R') {
       void refresh();
-      session.notice('Refresh triggered');
+      showFlash({ tone: 'muted', text: 'refreshing…' });
       return;
     }
 
@@ -237,21 +265,21 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
     if (key.downArrow) return setDetailRow(Math.min(Math.max(totalDetailRows - 1, 0), detailIndex + 1));
     if (key.return || input === 'x' || input === 'X') {
       if (detailSnapshot?.deployLock != null) {
-        session.notice(`Blocked: a deploy is in progress on ${detail?.server} (lock held)`);
+        notify('bad', `A deploy holds the lock on ${detail?.server} - try again when it finishes`);
         return;
       }
       if (selectedProcess !== undefined) return setOverlay('confirmRestart');
       if (selectedRelease !== undefined) {
         if (detail?.replicated === true) {
-          session.notice(`Rollback on one replica of ${detail.app} would split the fleet - use 'shipnode rollback'`);
+          notify('warn', `Rolling back one replica would split ${detail.app} - use 'shipnode rollback'`);
           return;
         }
         if (selectedRelease.status !== 'success') {
-          session.notice('Cannot roll back to a failed release');
+          notify('warn', 'That release failed to deploy - pick a successful one');
           return;
         }
         if (selectedRelease.timestamp === currentTimestamp) {
-          session.notice(`${selectedRelease.timestamp} is already the current release`);
+          notify('muted', `${selectedRelease.timestamp} is already current`);
           return;
         }
         setOverlay('confirmRollback');
@@ -294,107 +322,115 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
   }
 
   // ── Views ────────────────────────────────────────────────────────
-  const unreachable = state.servers.filter((server) => server.error !== undefined).length;
   const frame = {
     interval,
-    liveMode: stripOn || view === 'logs',
-    alerts: shownAlerts,
-    lastUpdate: state.lastUpdate,
     polling: state.polling,
+    lastUpdate: state.lastUpdate,
+    streaming: logs.health.length > 0 ? { live: logs.health.length - troubled.length, total: logs.health.length } : null,
+    alerts: shownAlerts,
+    flash,
+  };
+
+  const viewerProps = {
+    matched: filtered.matched,
+    filter: logView.filter,
+    total: source.length,
+    servers: serverNames,
+    showServer,
+    showApp,
+    frozen: logView.frozen !== null,
+    health: logs.health,
   };
 
   if (view === 'logs') {
-    const scope = [logView.filter.server, logView.filter.app].filter((part) => part !== null).join(' / ');
+    const scope = [logView.filter.server, logView.filter.app].filter((part): part is string => part !== null);
+    const hints: Hint[] = logView.typing
+      ? [['⏎', 'keep search'], ['esc', 'drop search']]
+      : [['s a p', 'server·app·proc'], ['v', 'level'], ['/', 'search'], ['space', logView.frozen ? 'resume' : 'pause'], ['c', 'clear'], ['esc', 'back']];
     return (
-      <MonitorFrame
-        {...frame}
-        scope={scope === '' ? 'logs · all' : `logs · ${scope}`}
-        summary={`${filtered.lines.length}/${source.length} lines · ${logs.health.length - troubled.length}/${logs.health.length} sources live`}
-        hints="s/a/p server·app·proc  v level  / search  m mode  space pause  c clear"
-        error={logs.skipped.length > 0 ? `no logs from ${logs.skipped.join(', ')}` : null}
-      >
-        <Box flexGrow={1}>
-          <LogViewer
-            title="Live Logs"
-            lines={filtered.lines}
-            matched={filtered.matched}
-            filter={logView.filter}
-            servers={serverNames}
-            showServer={showServer}
-            showApp={showApp}
-            height={logHeight}
-            offset={logView.offset}
-            frozen={logView.frozen !== null}
-            typing={logView.typing}
-            queryError={filtered.queryError}
-            counts={counts}
-            troubled={troubled}
-            totalSources={logs.health.length}
-          />
-        </Box>
+      <MonitorFrame {...frame} crumbs={['logs', ...(scope.length > 0 ? scope : ['everything'])]} hints={hints}>
+        <LogViewer
+          {...viewerProps}
+          focused
+          lines={filtered.lines}
+          height={logHeight}
+          offset={logView.offset}
+          typing={logView.typing}
+          queryError={filtered.queryError}
+          counts={counts}
+        />
       </MonitorFrame>
     );
   }
 
   const bottom = stripOn ? (
-    <LogViewer
-      compact
-      title="Live Logs"
-      lines={filtered.lines}
-      matched={filtered.matched}
-      filter={logView.filter}
-      servers={serverNames}
-      showServer={showServer}
-      showApp={showApp}
-      height={STRIP_ROWS}
-      offset={0}
-      frozen={logView.frozen !== null}
-      typing={false}
-      troubled={troubled}
-      totalSources={logs.health.length}
-    />
+    <LogViewer {...viewerProps} compact lines={filtered.lines} height={STRIP_ROWS} offset={0} typing={false} />
   ) : (
-    <EventsPanel events={state.events} />
+    <EventsPanel events={state.events} rows={STRIP_ROWS} />
   );
 
   if (view === 'fleet') {
+    const serversHeight = serversPanelHeight(connection.hosts.length);
+    // The apps panel takes what is left; its body loses the two edges and the column header.
+    const appsBody = bodyHeight - serversHeight - BOTTOM_HEIGHT - 3;
     return (
       <MonitorFrame
         {...frame}
-        scope={`fleet · ${connection.hosts.length} server${connection.hosts.length === 1 ? '' : 's'}`}
-        summary={`${state.fleets.length} app(s)${unreachable > 0 ? ` · ${unreachable} down` : ''}`}
-        hints="↑/↓ select  Enter open  f logs  l strip"
+        crumbs={['fleet']}
+        hints={[['↑↓', 'select'], ['⏎', 'open'], ['f', 'logs'], ['l', stripOn ? 'activity' : 'log strip'], ['r', 'refresh']]}
       >
-        <Box flexGrow={1} minHeight={8}>
-          <FleetPanel
-            fleets={state.fleets}
-            rows={rows}
-            servers={state.servers}
-            selectedKey={selected?.key ?? null}
-            height={Math.max(4, terminalRows - 8 - 4)}
-          />
+        <AppsPanel width={terminalCols} fleets={state.fleets} rows={rows} selectedKey={selected?.key ?? null} height={appsBody} serverCount={connection.hosts.length} />
+        <Box height={serversHeight} flexShrink={0}>
+          <ServersPanel width={terminalCols} servers={state.servers} expected={connection.hosts.length} />
         </Box>
-        <Box height={8}>{bottom}</Box>
+        <Box height={BOTTOM_HEIGHT} flexShrink={0}>{bottom}</Box>
       </MonitorFrame>
     );
   }
 
   // detail
-  const unavailable = detail?.reachable === false ? (detail.error ?? 'server unreachable') : null;
+  const crumbs = detail === undefined ? ['fleet', 'replica'] : ['fleet', detail.app, detail.server];
+  const accessories = detailHost?.accessoryNames ?? [];
+  const rollbackNote = detail?.replicated === true ? 'roll back fleets with shipnode rollback' : undefined;
+  const hints: Hint[] = [
+    ['↑↓', 'select'],
+    ['⏎', selectedRelease !== undefined ? 'roll back' : 'restart'],
+    ['f', 'logs'],
+    ['l', stripOn ? 'activity' : 'log strip'],
+    ['esc', 'fleet'],
+  ];
+
+  if (detail !== undefined && !detail.reachable) {
+    return (
+      <MonitorFrame {...frame} crumbs={crumbs} hints={[['esc', 'fleet'], ['f', 'logs']]}>
+        <Panel title={detail.server} subtitle="unreachable" focused>
+          <Text color="red">{detail.error ?? 'The last poll could not reach this server.'}</Text>
+          <Text dimColor>The overview keeps polling; this view fills in once the server answers.</Text>
+        </Panel>
+      </MonitorFrame>
+    );
+  }
+
+  // The host column is fixed; the process table takes the rest and drops columns to fit it.
+  const sideWidth = terminalCols >= 120 ? 46 : terminalCols >= 100 ? 40 : 34;
+  const mainWidth = terminalCols - sideWidth;
+
+  const waiting = (
+    <Panel title="Processes">
+      <Text dimColor>Waiting for the first poll…</Text>
+    </Panel>
+  );
+
   return (
-    <MonitorFrame
-      {...frame}
-      scope={detail === undefined ? 'detail' : `${detail.app} (${detail.appType}) on ${detail.server}`}
-      summary={detailSnapshot ? `${processes.length} process(es)` : '-'}
-      hints={`Esc back  ↑/↓ select  Enter restart/rollback  f logs`}
-      error={unavailable}
-    >
+    <MonitorFrame {...frame} crumbs={crumbs} hints={hints}>
       <Box flexGrow={1} flexDirection="row" minHeight={8}>
-        <Box width="60%" flexDirection="column">
+        <Box flexGrow={1} flexDirection="column">
           {detailApp?.appType === 'frontend' ? (
             <StaticFrontendPanel app={detailApp} caddy={detailSnapshot?.caddy ?? null} />
           ) : detailSnapshot && detailHistory ? (
             <Pm2Panel
+              width={mainWidth}
+              focused={selectedProcess !== undefined}
               processes={detailSnapshot.processes}
               cpuHistory={detailHistory.cpu}
               memHistory={detailHistory.memory}
@@ -403,35 +439,37 @@ export function App({ fleet: connection, interval, focusApp }: AppProps) {
               selectedIndex={selectedProcess !== undefined ? detailIndex : undefined}
             />
           ) : (
-            <WaitingPanel />
+            waiting
           )}
         </Box>
-        <Box width="40%" flexDirection="column">
-          {detailSnapshot && detailHistory ? (
-            <>
-              <SystemPanel system={detailSnapshot.system} cpuHistory={detailHistory.cpu} memHistory={detailHistory.memory} />
-              {(detailHost?.accessoryNames.length ?? 0) > 0 && (
-                <AccessoriesPanel configuredNames={detailHost?.accessoryNames ?? []} accessories={detailSnapshot.accessories} />
-              )}
-            </>
-          ) : (
-            <WaitingPanel />
-          )}
-        </Box>
+        {detailSnapshot && detail !== undefined && (
+          <Box width={sideWidth} flexShrink={0} flexDirection="column">
+            <Box height={6} flexShrink={0}>
+              <SystemPanel server={detail.server} system={detailSnapshot.system} />
+            </Box>
+            {accessories.length > 0 && (
+              <Box flexGrow={1} flexDirection="column">
+                <AccessoriesPanel configuredNames={accessories} accessories={detailSnapshot.accessories} />
+              </Box>
+            )}
+          </Box>
+        )}
       </Box>
 
       {detailSnapshot && (
-        <Box height={((detailHost?.accessoryNames.length ?? 0) > 0 ? 6 : 7) + releaseBoxExtra}>
+        <Box height={releasePanelHeight(Math.min(releaseRows.length, maxReleases))} flexShrink={0}>
           <ReleasePanel
+            width={terminalCols}
             currentRelease={detailSnapshot.currentRelease}
             releases={detailSnapshot.releases}
             maxReleases={maxReleases}
             selectedIndex={selectedRelease !== undefined ? detailIndex - processes.length : undefined}
+            rollbackNote={rollbackNote}
           />
         </Box>
       )}
 
-      <Box height={8}>{bottom}</Box>
+      <Box height={BOTTOM_HEIGHT} flexShrink={0}>{bottom}</Box>
     </MonitorFrame>
   );
 }

@@ -1,138 +1,204 @@
 import { Box, Text } from 'ink';
+import type { ReactNode } from 'react';
 import type { FleetView, ServerSnapshot } from '../../../domain/observe/snapshot.js';
 import { systemCpuPercent } from '../../../domain/observe/types.js';
 import { describeFleet, type FleetRow } from '../fleet-model.js';
-import { formatBytes } from '../charts.js';
-import { Gauge } from '../components/charts.js';
+import { formatBytes, formatUptime } from '../charts.js';
+import { Meter } from '../components/charts.js';
+import { Panel, PANEL_INSET } from '../components/Panel.js';
+import { Cell, fitColumns, TableHeader, TableRow, type Column } from '../components/Table.js';
+import { color, glyph, toneColor } from '../theme.js';
 
-const BG = '#0d1117';
-const BG_SELECTED = '#1f2937';
-const ACCENT = '#d6a85d';
-const TONE = { ok: 'green', warn: 'yellow', bad: 'red' } as const;
+/** Selection marker and status dot: `❯ ● `. */
+const LEAD = 4;
 
-interface FleetPanelProps {
-  fleets: readonly FleetView[];
-  rows: readonly FleetRow[];
-  servers: readonly ServerSnapshot[];
-  selectedKey: string | null;
-  /** Lines available; the list scrolls to keep the selection in view. */
-  height: number;
-}
+const APP_COLUMNS: Column[] = [
+  { key: 'server', header: 'SERVER', width: 16 },
+  { key: 'release', header: 'RELEASE', width: 24 },
+  { key: 'procs', header: 'PROCS', width: 8, align: 'right' },
+  { key: 'cpu', header: 'CPU', width: 7, align: 'right', drop: 2 },
+  { key: 'mem', header: 'MEM', width: 10, align: 'right', drop: 3 },
+  { key: 'health', header: 'HEALTH', width: 16 },
+  { key: 'restarts', header: '↻', width: 5, align: 'right', drop: 4 },
+];
 
-type Item =
-  | { kind: 'app'; fleet: FleetView }
-  | { kind: 'row'; row: FleetRow }
-  | { kind: 'servers-head' }
-  | { kind: 'server'; server: ServerSnapshot };
+type Item = { kind: 'app'; fleet: FleetView } | { kind: 'row'; row: FleetRow };
 
-function itemsOf(fleets: readonly FleetView[], rows: readonly FleetRow[], servers: readonly ServerSnapshot[]): Item[] {
-  const items: Item[] = [];
-  for (const fleet of fleets) {
-    items.push({ kind: 'app', fleet });
-    for (const row of rows) if (row.app === fleet.app) items.push({ kind: 'row', row });
-  }
-  items.push({ kind: 'servers-head' });
-  for (const server of servers) items.push({ kind: 'server', server });
-  return items;
-}
-
-function shortRelease(release: string | null): string {
-  return release === null ? 'none' : release.length > 19 ? release.slice(0, 19) : release;
-}
-
-function ReplicaLine({ row, selected }: { row: FleetRow; selected: boolean }) {
-  const releaseColor =
-    row.releaseState === 'behind' ? 'red' : row.releaseState === 'none' ? 'yellow' : row.releaseState === 'unknown' ? 'gray' : undefined;
-  const allOnline = row.total > 0 && row.online === row.total;
+function ReleaseCell({ row }: { row: FleetRow }) {
+  if (row.release === null) return <Text color={color.warn}>no release</Text>;
   return (
-    <Box paddingLeft={1} backgroundColor={selected ? BG_SELECTED : undefined}>
-      <Text wrap="truncate-end">
-        <Text color={ACCENT}>{selected ? '❯' : ' '}</Text>
-        <Text color={row.reachable ? 'green' : 'red'}> {row.reachable ? '●' : '○'} </Text>
-        <Text bold>{row.server.padEnd(12).slice(0, 12)}</Text>
-        {!row.reachable ? (
-          <Text color="red"> unreachable</Text>
-        ) : row.error !== undefined ? (
-          <Text color="red"> {row.error}</Text>
-        ) : (
-          <>
-            <Text color={releaseColor}> {shortRelease(row.release).padEnd(19)}</Text>
-            {row.releaseState === 'behind' && <Text color="red"> behind</Text>}
-            {row.appType === 'backend' && (
-              <Text color={allOnline ? 'green' : 'red'}> {row.online}/{row.total} up</Text>
-            )}
-            {row.appType === 'backend' && (
-              <Text dimColor> cpu {row.cpu.toFixed(0)}% mem {formatBytes(row.memoryMb)}</Text>
-            )}
-            {row.restarts > 0 && <Text color="yellow"> ↻{row.restarts}</Text>}
-            {row.health !== undefined && (
-              <Text color={row.health.status === 'ok' ? 'green' : 'red'}>
-                {' '}hc {row.health.httpCode || 'down'} {row.health.responseMs}ms
-              </Text>
-            )}
-          </>
-        )}
-      </Text>
-    </Box>
+    <Text>
+      <Text color={row.releaseState === 'behind' ? color.bad : undefined}>{row.release}</Text>
+      {row.releaseState === 'behind' && <Text color={color.bad} bold> behind</Text>}
+    </Text>
   );
 }
 
-function ServerLine({ server }: { server: ServerSnapshot }) {
-  if (server.error !== undefined) {
+function rowCells(row: FleetRow, selected: boolean): Record<string, ReactNode> {
+  const server = <Text bold={selected} color={selected ? color.accent : undefined}>{row.server}</Text>;
+  const backend = row.appType === 'backend';
+  return {
+    server,
+    release: <ReleaseCell row={row} />,
+    procs: backend ? (
+      <Text color={row.total > 0 && row.online === row.total ? undefined : color.bad}>{row.online}/{row.total}</Text>
+    ) : (
+      <Text dimColor>static</Text>
+    ),
+    cpu: backend ? `${row.cpu.toFixed(0)}%` : <Text dimColor>—</Text>,
+    mem: backend ? formatBytes(row.memoryMb) : <Text dimColor>—</Text>,
+    health:
+      row.health === undefined ? (
+        <Text dimColor>—</Text>
+      ) : (
+        <Text color={row.health.status === 'ok' ? color.ok : color.bad}>
+          {row.health.httpCode || 'down'} <Text dimColor>{glyph.sep} {row.health.responseMs}ms</Text>
+        </Text>
+      ),
+    restarts: <Text color={row.restarts > 0 ? color.warn : undefined} dimColor={row.restarts === 0}>{row.restarts}</Text>,
+  };
+}
+
+function ReplicaRow({ row, selected, columns }: { row: FleetRow; selected: boolean; columns: readonly Column[] }) {
+  const degraded = row.error !== undefined || (row.total > 0 && row.online < row.total);
+  const dot = !row.reachable ? glyph.down : degraded ? glyph.degraded : glyph.ok;
+  const dotColor = !row.reachable || row.error !== undefined ? color.bad : degraded ? color.warn : color.ok;
+  const lead = (
+    <Box width={LEAD} flexShrink={0}>
+      <Text color={color.accent}>{selected ? glyph.select : ' '} </Text>
+      <Text color={dotColor}>{dot}</Text>
+    </Box>
+  );
+  const problem = !row.reachable ? `unreachable${row.error !== undefined ? ` ${glyph.sep} ${row.error}` : ''}` : row.error;
+  if (problem !== undefined) {
     return (
-      <Box paddingLeft={3}>
-        <Text wrap="truncate-end"><Text color="red">○ </Text><Text bold>{server.server.padEnd(12).slice(0, 12)}</Text><Text color="red"> {server.error}</Text></Text>
+      <Box height={1}>
+        {lead}
+        <Cell width={columns[0].width}>{rowCells(row, selected).server}</Cell>
+        <Text color={color.bad} wrap="truncate-end">{problem}</Text>
       </Box>
     );
   }
-  const mem = server.system.totalMem > 0 ? server.system.usedMem / server.system.totalMem : 0;
-  const disk = server.system.totalDisk > 0 ? server.system.usedDisk / server.system.totalDisk : 0;
+  return <TableRow columns={columns} cells={rowCells(row, selected)} lead={lead} />;
+}
+
+function AppHeading({ fleet }: { fleet: FleetView }) {
+  const verdict = describeFleet(fleet);
   return (
-    <Box paddingLeft={3}>
+    <Box height={1}>
       <Text wrap="truncate-end">
-        <Text color="green">● </Text>
-        <Text bold>{server.server.padEnd(12).slice(0, 12)}</Text>
-        <Text dimColor> cpu </Text><Gauge percent={systemCpuPercent(server.system)} width={8} />
-        <Text dimColor> mem </Text><Gauge percent={mem} width={8} />
-        <Text dimColor> disk {(disk * 100).toFixed(0)}%</Text>
-        {server.deployLock != null && <Text bold color="red"> DEPLOY LOCK {server.deployLock.ageSeconds}s</Text>}
+        <Text bold>{fleet.app}</Text>
+        <Text dimColor> {fleet.appType}  </Text>
+        <Text color={toneColor(verdict.tone)}>{verdict.tone === 'ok' ? '✓' : glyph.alert} {verdict.text}</Text>
       </Text>
     </Box>
   );
 }
 
-export function FleetPanel({ fleets, rows, servers, selectedKey, height }: FleetPanelProps) {
-  const items = itemsOf(fleets, rows, servers);
-  const selectedAt = items.findIndex((item) => item.kind === 'row' && item.row.key === selectedKey);
+interface AppsPanelProps {
+  /** Outer width, for choosing which columns fit. */
+  width: number;
+  fleets: readonly FleetView[];
+  rows: readonly FleetRow[];
+  selectedKey: string | null;
+  /** Body rows available; the list scrolls to keep the selection in view. */
+  height: number;
+  serverCount: number;
+}
 
-  // Keep the selection in view; with nothing selected, show the top.
-  const room = Math.max(3, height);
-  const start = selectedAt < 0 ? 0 : Math.min(Math.max(0, selectedAt - Math.floor(room / 2)), Math.max(0, items.length - room));
+/** Every app, and under it every server it runs on. The view's focus. */
+export function AppsPanel({ width, fleets, rows, selectedKey, height, serverCount }: AppsPanelProps) {
+  const columns = fitColumns(APP_COLUMNS, width - PANEL_INSET, LEAD);
+  const items: Item[] = fleets.flatMap((fleet) => [
+    { kind: 'app' as const, fleet },
+    ...rows.filter((row) => row.app === fleet.app).map((row) => ({ kind: 'row' as const, row })),
+  ]);
+  const room = Math.max(1, height);
+  const at = items.findIndex((item) => item.kind === 'row' && item.row.key === selectedKey);
+  const start = at < 0 ? 0 : Math.min(Math.max(0, at - Math.floor(room / 2)), Math.max(0, items.length - room));
   const visible = items.slice(start, start + room);
+  const hiddenAbove = start;
+  const hiddenBelow = Math.max(0, items.length - start - room);
 
   return (
-    <Box borderStyle="round" borderColor="#30363d" paddingX={1} flexDirection="column" flexGrow={1} backgroundColor={BG}>
-      <Text bold color={ACCENT}>Fleet</Text>
-      {fleets.length === 0 && <Text dimColor>  Waiting for data...</Text>}
-      {visible.map((item, index) => {
-        if (item.kind === 'app') {
-          const headline = describeFleet(item.fleet);
+    <Panel
+      focused
+      title="Apps"
+      subtitle={`${fleets.length} app${fleets.length === 1 ? '' : 's'} ${glyph.sep} ${rows.length} replica${rows.length === 1 ? '' : 's'}`}
+      right={hiddenAbove + hiddenBelow > 0 ? <Text dimColor>{hiddenAbove > 0 ? `↑${hiddenAbove} ` : ''}{hiddenBelow > 0 ? `↓${hiddenBelow}` : ''}</Text> : undefined}
+    >
+      {fleets.length === 0 ? (
+        <Text dimColor>Connecting to {serverCount} server{serverCount === 1 ? '' : 's'}…</Text>
+      ) : (
+        <>
+          <TableHeader columns={columns} lead={LEAD} />
+          {visible.map((item) =>
+            item.kind === 'app' ? (
+              <AppHeading key={`app:${item.fleet.app}`} fleet={item.fleet} />
+            ) : (
+              <ReplicaRow key={item.row.key} row={item.row} selected={item.row.key === selectedKey} columns={columns} />
+            ),
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+const SERVER_COLUMNS: Column[] = [
+  { key: 'server', header: 'SERVER', width: 16 },
+  { key: 'cpu', header: 'CPU', width: 16 },
+  { key: 'mem', header: 'MEM', width: 16 },
+  { key: 'disk', header: 'DISK', width: 16, drop: 2 },
+  { key: 'load', header: 'LOAD', width: 13, drop: 3 },
+  { key: 'up', header: 'UP', width: 12, drop: 4 },
+];
+
+/** Host-level facts, once per server rather than once per app on it. */
+export function ServersPanel({ width, servers, expected }: { width: number; servers: readonly ServerSnapshot[]; expected: number }) {
+  const columns = fitColumns(SERVER_COLUMNS, width - PANEL_INSET, 2);
+  const down = servers.filter((server) => server.error !== undefined).length;
+  return (
+    <Panel title="Servers" subtitle={`${expected}${down > 0 ? ` ${glyph.sep} ${down} down` : ''}`}>
+      <TableHeader columns={columns} lead={2} />
+      {servers.length === 0 && <Text dimColor>Waiting for the first poll…</Text>}
+      {servers.map((server) => {
+        const name = <Text bold>{server.server}</Text>;
+        if (server.error !== undefined) {
           return (
-            <Text key={`app:${item.fleet.app}`} wrap="truncate-end">
-              <Text bold>{item.fleet.app}</Text>
-              <Text dimColor> ({item.fleet.appType}) </Text>
-              <Text color={TONE[headline.tone]}>{headline.tone === 'ok' ? '✓' : '⚠'} {headline.text}</Text>
-            </Text>
+            <Box key={server.server} height={1}>
+              <Box width={2} flexShrink={0}><Text color={color.bad}>{glyph.down}</Text></Box>
+              <Cell width={16}>{name}</Cell>
+              <Text color={color.bad} wrap="truncate-end">{server.error}</Text>
+            </Box>
           );
         }
-        if (item.kind === 'row') {
-          return <ReplicaLine key={item.row.key} row={item.row} selected={item.row.key === selectedKey} />;
-        }
-        if (item.kind === 'servers-head') {
-          return <Text key={`head:${index}`} bold color={ACCENT}>Servers</Text>;
-        }
-        return <ServerLine key={`server:${item.server.server}`} server={item.server} />;
+        const { system } = server;
+        const locked = server.deployLock != null;
+        return (
+          <TableRow
+            key={server.server}
+            columns={columns}
+            lead={<Box width={2} flexShrink={0}><Text color={locked ? color.warn : color.ok}>{locked ? glyph.degraded : glyph.ok}</Text></Box>}
+            cells={{
+              server: name,
+              cpu: <Meter percent={systemCpuPercent(system)} width={8} />,
+              mem: <Meter percent={system.totalMem > 0 ? system.usedMem / system.totalMem : 0} width={8} />,
+              disk: <Meter percent={system.totalDisk > 0 ? system.usedDisk / system.totalDisk : 0} width={8} />,
+              load: <Text>{system.load1.toFixed(2)}<Text dimColor> / {system.cores}c</Text></Text>,
+              // A held lock matters more than uptime, so it takes that slot.
+              up: locked
+                ? <Text color={color.warn} bold>lock {server.deployLock?.ageSeconds}s</Text>
+                : <Text dimColor>{formatUptime(system.uptime)}</Text>,
+            }}
+          />
+        );
       })}
-    </Box>
+    </Panel>
   );
+}
+
+/** Rows the servers panel needs: title edge, column header, one per server, bottom edge. */
+export function serversPanelHeight(count: number): number {
+  return Math.max(1, count) + 3;
 }

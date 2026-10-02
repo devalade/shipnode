@@ -852,9 +852,15 @@ describe('Ink components', () => {
     expect(typeof mod.LogViewer).toBe('function');
   });
 
-  it('FleetPanel is a function', async () => {
+  it('AppsPanel and ServersPanel are functions', async () => {
     const mod = await import('../../src/cli/monitor/panels/FleetPanel.js');
-    expect(typeof mod.FleetPanel).toBe('function');
+    expect(typeof mod.AppsPanel).toBe('function');
+    expect(typeof mod.ServersPanel).toBe('function');
+  });
+
+  it('Panel is a function', async () => {
+    const mod = await import('../../src/cli/monitor/components/Panel.js');
+    expect(typeof mod.Panel).toBe('function');
   });
 
   it('App is a function', async () => {

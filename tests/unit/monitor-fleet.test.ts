@@ -7,6 +7,7 @@ import type { ProcessInfo } from '../../src/domain/observe/types.js';
 import { parseSystemStats } from '../../src/domain/observe/parse.js';
 import type { LogLine } from '../../src/domain/observe/log-line.js';
 import { sourceLabel } from '../../src/cli/monitor/panels/LogViewer.js';
+import { fitColumns, type Column } from '../../src/cli/monitor/components/Table.js';
 
 function proc(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
   return {
@@ -77,6 +78,13 @@ describe('describeFleet', () => {
     expect(describeFleet(pivotByApp([server('a', [app('r1')]), server('b', [app('r1')])])[0])).toEqual({
       tone: 'ok', text: 'converged on r1',
     });
+  });
+
+  it('names every problem, not just the worst', () => {
+    const down = server('c', [], { error: 'x', plannedApps: [{ app: 'api', appType: 'backend' }] });
+    const verdict = describeFleet(pivotByApp([server('a', [app('r2')]), server('b', [app('r1')]), down])[0]);
+    expect(verdict.tone).toBe('bad');
+    expect(verdict.text).toMatch(/unreachable: c · split across 2 releases/);
   });
 
   it('warns about a replica with no release', () => {
@@ -170,14 +178,42 @@ describe('sourceLabel', () => {
   const line = { server: 'b', app: 'api', process: 'api-web' } as LogLine;
 
   it('shows only the parts that vary on screen', () => {
-    expect(sourceLabel(line, true, true)).toBe('b api:api-web');
-    expect(sourceLabel(line, true, false)).toBe('b:api-web');
-    expect(sourceLabel(line, false, false)).toBe('api-web');
+    expect(sourceLabel(line, true, true)).toBe('b api:web');
+    expect(sourceLabel(line, true, false)).toBe('b:web');
+    expect(sourceLabel(line, false, false)).toBe('web');
   });
 
   it('omits a process that is just the app, or unknown', () => {
     expect(sourceLabel({ ...line, process: 'api' } as LogLine, true, true)).toBe('b api');
     expect(sourceLabel({ ...line, process: null } as LogLine, true, true)).toBe('b api');
     expect(sourceLabel({ ...line, process: null } as LogLine, false, false)).toBe('');
+  });
+});
+
+describe('fitColumns', () => {
+  const columns: Column[] = [
+    { key: 'name', header: 'NAME', width: 20 },
+    { key: 'status', header: 'STATUS', width: 10 },
+    { key: 'mem', header: 'MEM', width: 10, drop: 1 },
+    { key: 'restarts', header: '↻', width: 5, drop: 2 },
+  ];
+  const keys = (cols: Column[]) => cols.map((c) => c.key);
+
+  it('keeps everything when it fits', () => {
+    expect(keys(fitColumns(columns, 45))).toEqual(['name', 'status', 'mem', 'restarts']);
+  });
+
+  it('drops the highest priority number first, only as far as needed', () => {
+    expect(keys(fitColumns(columns, 44))).toEqual(['name', 'status', 'mem']);
+    expect(keys(fitColumns(columns, 39))).toEqual(['name', 'status']);
+  });
+
+  it('counts the reserved gutter', () => {
+    expect(keys(fitColumns(columns, 45, 4))).toEqual(['name', 'status', 'mem']);
+  });
+
+  it('narrows the first column when even the essentials do not fit, down to a floor', () => {
+    expect(fitColumns(columns, 24)[0].width).toBe(14);
+    expect(fitColumns(columns, 5)[0].width).toBe(8);
   });
 });

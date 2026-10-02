@@ -96,18 +96,22 @@ export interface FleetHeadline {
   text: string;
 }
 
-/** One sentence per app: is the fleet agreed on a release, and can every replica be seen? */
+/**
+ * One line per app: is the fleet agreed on a release, and can every replica be
+ * seen? Every problem is named, worst first, because an unreachable replica can
+ * hide a split roll behind it.
+ */
 export function describeFleet(fleet: FleetView): FleetHeadline {
   const { convergence, unreachable, replicas } = fleet;
   const total = replicas.length + unreachable.length;
-  if (unreachable.length > 0) {
-    return { tone: 'bad', text: `${unreachable.length}/${total} unreachable: ${unreachable.join(', ')}` };
-  }
-  if (convergence.releases.length > 1) {
-    return { tone: 'bad', text: `split across ${convergence.releases.length} releases - a roll stopped partway` };
-  }
-  if (convergence.undeployed.length > 0) {
-    return { tone: 'warn', text: `no release on ${convergence.undeployed.join(', ')}` };
+  const bad: string[] = [];
+  const warn: string[] = [];
+  if (unreachable.length > 0) bad.push(`${unreachable.length}/${total} unreachable: ${unreachable.join(', ')}`);
+  if (convergence.releases.length > 1) bad.push(`split across ${convergence.releases.length} releases - a roll stopped partway`);
+  if (convergence.undeployed.length > 0) warn.push(`no release on ${convergence.undeployed.join(', ')}`);
+
+  if (bad.length + warn.length > 0) {
+    return { tone: bad.length > 0 ? 'bad' : 'warn', text: [...bad, ...warn].join(' · ') };
   }
   return { tone: 'ok', text: total > 1 ? `converged on ${convergence.releases[0] ?? 'no release'}` : 'ok' };
 }

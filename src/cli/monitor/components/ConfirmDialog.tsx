@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from 'ink';
-
-const BG = '#0d1117';
-const ACCENT = '#d6a85d';
+import { Panel } from './Panel.js';
+import { KeyHints } from './KeyHints.js';
+import { color } from '../theme.js';
 
 interface ConfirmDialogProps {
   title: string;
@@ -20,26 +20,16 @@ export function ConfirmDialog({ title, lines, onConfirm, onCancel }: ConfirmDial
   });
 
   return (
-    <Box
-      flexDirection="column"
-      padding={1}
-      borderStyle="round"
-      borderColor="yellow"
-      backgroundColor={BG}
-      alignItems="center"
-    >
-      <Text bold color={ACCENT}>{title}</Text>
-      {lines.map((line, i) => (
-        <Text key={i} dimColor>{line}</Text>
-      ))}
-      <Box marginTop={1}>
-        <Text>
-          <Text color="green">y/Enter</Text>
-          <Text dimColor> confirm  ·  </Text>
-          <Text color="red">n/Esc</Text>
-          <Text dimColor> cancel</Text>
-        </Text>
-      </Box>
+    <Box flexDirection="column" height="100%" justifyContent="center" alignItems="center">
+      <Panel title="Confirm" width={64} focused>
+        <Text bold color={color.warn}>{title}</Text>
+        {lines.map((line, i) => (
+          <Text key={i} dimColor>{line}</Text>
+        ))}
+        <Box marginTop={1}>
+          <KeyHints hints={[['y ⏎', 'confirm'], ['n esc', 'cancel']]} />
+        </Box>
+      </Panel>
     </Box>
   );
 }

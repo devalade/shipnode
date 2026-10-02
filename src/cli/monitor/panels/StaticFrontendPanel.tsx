@@ -1,62 +1,63 @@
 import { Box, Text } from 'ink';
 import type { ShipnodeApp } from '../../../shared/types.js';
 import type { CaddyInfo } from '../state.js';
+import { Panel } from '../components/Panel.js';
+import { Cell, TableHeader, type Column } from '../components/Table.js';
+import { color, glyph } from '../theme.js';
 
-const BG = '#0d1117';
+const COLUMNS: Column[] = [
+  { key: 'status', header: 'STATUS', width: 8 },
+  { key: 'method', header: 'METHOD', width: 8 },
+  { key: 'ms', header: 'TIME', width: 8, align: 'right' },
+  { key: 'uri', header: 'PATH', width: 60 },
+];
 
 interface StaticFrontendPanelProps {
   app: ShipnodeApp;
   caddy: CaddyInfo | null;
 }
 
-export function StaticFrontendPanel({ app, caddy }: StaticFrontendPanelProps) {
-  return (
-    <Box borderStyle="round" borderColor="#30363d" padding={1} flexDirection="column" flexGrow={1} backgroundColor={BG}>
-      <Text bold color="#d6a85d">  Static Frontend</Text>
-      <Box marginTop={1} paddingLeft={1} flexDirection="column">
-        <Box>
-          <Text>app        {app.name}</Text>
-        </Box>
-        <Box>
-          <Text>build dir  {app.buildDir ?? 'dist (auto-detected)'}</Text>
-        </Box>
-        <Box>
-          <Text>caddy      </Text>
-          {caddy === null ? (
-            <Text dimColor>waiting…</Text>
-          ) : (
-            <Text color={caddy.serviceActive ? 'green' : 'red'}>
-              ● {caddy.serviceActive ? 'active' : 'inactive'}
-            </Text>
-          )}
-        </Box>
+function statusTone(status: number): string {
+  if (status >= 500) return color.bad;
+  if (status >= 400) return color.warn;
+  return color.ok;
+}
 
-        {caddy !== null && caddy.total > 0 && (
-          <>
-            <Box marginTop={1}>
-              <Text dimColor>last {caddy.total} reqs  </Text>
-              <Text color="green">2xx {caddy.ok2xx}</Text>
-              <Text color={caddy.err4xx > 0 ? 'yellow' : 'gray'}>  4xx {caddy.err4xx}</Text>
-              <Text color={caddy.err5xx > 0 ? 'red' : 'gray'}>  5xx {caddy.err5xx}</Text>
-            </Box>
-            <Box flexDirection="column" marginTop={1}>
-              {caddy.recent.map((request, i) => (
-                <Box key={i}>
-                  <Text color={request.status >= 500 ? 'red' : request.status >= 400 ? 'yellow' : 'green'}>
-                    {request.status}
-                  </Text>
-                  <Text dimColor> {request.method} {request.uri} {request.ms}ms</Text>
-                </Box>
-              ))}
-            </Box>
-          </>
-        )}
-        {caddy !== null && caddy.total === 0 && (
-          <Box marginTop={1}>
-            <Text dimColor>no recent requests in access log</Text>
+export function StaticFrontendPanel({ app, caddy }: StaticFrontendPanelProps) {
+  const badge =
+    caddy === null ? (
+      <Text dimColor>{glyph.unknown} caddy</Text>
+    ) : (
+      <Text color={caddy.serviceActive ? color.ok : color.bad}>
+        {caddy.serviceActive ? glyph.ok : glyph.down} caddy {caddy.serviceActive ? 'active' : 'inactive'}
+      </Text>
+    );
+
+  return (
+    <Panel title="Site" subtitle={app.buildDir ?? 'dist'} right={badge}>
+      {caddy === null && <Text dimColor>Waiting for the first poll…</Text>}
+      {caddy !== null && caddy.total === 0 && <Text dimColor>No recent requests in the access log.</Text>}
+      {caddy !== null && caddy.total > 0 && (
+        <>
+          <Box height={1}>
+            <Text>
+              <Text dimColor>last {caddy.total} requests   </Text>
+              <Text color={color.ok}>2xx {caddy.ok2xx}</Text>
+              <Text color={caddy.err4xx > 0 ? color.warn : undefined} dimColor={caddy.err4xx === 0}>   4xx {caddy.err4xx}</Text>
+              <Text color={caddy.err5xx > 0 ? color.bad : undefined} dimColor={caddy.err5xx === 0}>   5xx {caddy.err5xx}</Text>
+            </Text>
           </Box>
-        )}
-      </Box>
-    </Box>
+          <TableHeader columns={COLUMNS} />
+          {caddy.recent.map((request, index) => (
+            <Box key={index} height={1}>
+              <Cell width={8}><Text color={statusTone(request.status)}>{request.status}</Text></Cell>
+              <Cell width={8}><Text dimColor>{request.method}</Text></Cell>
+              <Cell width={8} align="right"><Text dimColor>{request.ms}ms</Text></Cell>
+              <Text wrap="truncate-end">{request.uri}</Text>
+            </Box>
+          ))}
+        </>
+      )}
+    </Panel>
   );
 }
