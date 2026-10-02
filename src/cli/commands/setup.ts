@@ -29,18 +29,18 @@ interface SetupOptions {
 export async function cmdSetup(cwd: string, options: SetupOptions): Promise<void> {
   await runRemoteCommandForTargets(
     cwd,
-    async ({ config, executor, serverName }) => {
+    async ({ config, executor, serverName, ssh }) => {
       ui.banner();
-      ui.step(`Setting up ${serverName} (${config.ssh.user}@${config.ssh.host})`);
+      ui.step(`Setting up ${serverName} (${ssh.user}@${ssh.host})`);
       const created = !options.noDeployUser && (await bootstrapDeployUser(cwd, config, executor));
       await buildTasks(executor, config, created ? DEPLOY_USER : null).run();
-      if (created) {
+      if (created && config.ssh.user !== DEPLOY_USER) {
         ui.note(
           [
             `A '${DEPLOY_USER}' user was created and owns ${config.remotePath}.`,
             `Switch ssh.user in shipnode.config.ts to '${DEPLOY_USER}', then:`,
-            `  shipnode harden   # disable root SSH`,
             `  shipnode deploy`,
+            `  shipnode harden   # optional: disable root and password SSH`,
           ].join('\n'),
           'Next steps',
         );
@@ -48,7 +48,18 @@ export async function cmdSetup(cwd: string, options: SetupOptions): Promise<void
         ui.outro('Server ready — run: shipnode deploy');
       }
     },
-    { configPath: options.config, includeEmpty: true, serverName: options.on },
+    {
+      configPath: options.config,
+      includeEmpty: true,
+      serverName: options.on,
+      // A fresh server has no deploy user until this command creates it, so
+      // the config `init` writes (user: 'deploy') cannot log in yet. Reach the
+      // server as root for that first run instead of making the developer edit
+      // the config back and forth.
+      sshFallback: options.noDeployUser
+        ? undefined
+        : (ssh) => (ssh.user === DEPLOY_USER ? { ...ssh, user: 'root' } : undefined),
+    },
   );
 }
 

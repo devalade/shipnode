@@ -24,6 +24,10 @@ Generated workflows do not run a generic repository-root build. Frontend strateg
 
 Production jobs use GitHub Environment protection, least-privilege repository permissions, a timeout, and serialized concurrency with `cancel-in-progress: false`. Root-level monorepo changes continue to trigger deployments; no `paths` filter is generated.
 
+## First deploy from a developer machine
+
+When the server has no env file, `deploy` uploads the local one, which is what `shipnode env` would have done. With no local file and the default `.env` name, it creates an empty one. This never happens when `CI` is set: a missing file there means a misconfigured workflow, and the preflight still fails.
+
 ## Trade-offs
 
 - Server-managed env minimizes secret exposure but requires an out-of-band env upload or rotation step.

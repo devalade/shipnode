@@ -4,6 +4,14 @@ All notable changes to `@devalade/shipnode` will be documented here.
 
 ## [Unreleased]
 
+### Changed
+- **`init` asks at most six questions instead of up to fifteen:** what you're deploying (pre-selected from detection), server IP, port, domain, and for backends whether to install a database or Redis. SSH user and port, deploy path, PM2 name, runtime, health check path and extra users take defaults you can edit in the file. `--host` and `--domain` let `init --non-interactive` write a complete config. A DB password is no longer written into the config as a literal; it reads `process.env.DB_PASSWORD`. If `shipnode.config.ts` already exists, `init` says so before asking anything.
+- **The default health check accepts any HTTP answer below 500.** Apps without a `/health` route no longer fail their first deploy on a 404. A path set with `.healthCheck(path)` (or `healthCheck.path`) is still held to 2xx/3xx; `healthCheck.strict` overrides either way. Failures now say whether nothing answered on the port or the configured route returned 404.
+
+### Fixed
+- **`setup` could not reach a fresh server with the config `init` wrote.** `init` sets `user: 'deploy'`, which only exists after `setup` creates it. When the server refuses `deploy`, `setup` now logs in as `root` for that run. If the config uses another user, the "switch ssh.user" hint is shown as before.
+- **The first deploy failed with "Remote environment file is missing".** When the server has no env file, `deploy` now uploads the local one (what `shipnode env` would do). With no local `.env` either, it creates an empty one. A custom `envFile` name that is missing locally still fails. None of this happens in CI, where the env belongs to `ci env-sync` (ADR-0006).
+
 ## [3.2.0-beta.3] - 2026-10-01
 
 ### Changed

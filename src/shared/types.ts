@@ -159,6 +159,12 @@ export interface HealthCheckConfig {
   timeout: number;
   retries: number;
   startupDelay: number;
+  /**
+   * Whether the probe needs a 2xx/3xx. When false, any answer below 500 counts
+   * as up. The config schema sets it to false when no path was configured, so an
+   * app without a `/health` route still deploys. Omitted means strict.
+   */
+  strict?: boolean;
 }
 
 export type DatabaseConfig = SqliteDatabaseConfig | NetworkDatabaseConfig;

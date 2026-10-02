@@ -11,22 +11,17 @@ npm install -g @devalade/shipnode
 ## Quick start
 
 ```bash
-# 1. Generate config
-shipnode init
-
-# 2. Provision the server. Installs Node, PM2, Caddy, mise, DB/Redis if
-#    configured, and bootstraps a `deploy` user (sudo, NOPASSWD) keyed off
-#    ${ssh.identityFile}.pub so subsequent runs don't need root SSH.
-shipnode setup
-
-# 3. Switch ssh.user in shipnode.config.ts to 'deploy', then lock down SSH:
-shipnode harden
-
-# 4. Deploy
-shipnode deploy
+shipnode init     # asks for your server's IP (and a domain, if you have one)
+shipnode setup    # once per server: installs Node, PM2, Caddy, creates a 'deploy' user
+shipnode deploy   # every time you ship
 ```
 
-Pass `--no-deploy-user` to `setup` if you want to manage users yourself.
+That's it. All you need is a fresh Ubuntu/Debian VPS you can `ssh root@<ip>` into with your key.
+
+- `setup` logs in as `root` the first time, because the `deploy` user it creates doesn't exist yet. After that, everything runs as `deploy`.
+- On the first deploy, your local `.env` is uploaded to the server. After you change it, run `shipnode env` to push it again.
+- The health check passes once your app answers HTTP on its port. Add `.healthCheck('/health')` to require a real 2xx from a specific route.
+- `shipnode harden` (optional) disables root and password SSH and turns on a firewall.
 
 ## Configuration
 
@@ -329,9 +324,9 @@ See [ADR-0007](docs/adr/0007-fleet-replication.md) and [ADR-0008](docs/adr/0008-
 | `.zeroDowntime(altPort?)` | automatic for Caddy backends | Force blue-green releases and optionally choose the green port |
 | `.blueGreenRetention('warm' \| 'rollback' \| 'none')` | `'warm'` | What happens to the old colour after the switch: stop it but keep its release so `rollback` can start it again (`warm`), keep it running for an instant flip (`rollback`), or stop it with no rollback (`none`) |
 | `.noZeroDowntime()` | — | Opt out and recreate PM2 processes during deploy |
-| `.healthCheck(path, opts?)` | `/health`, 30s, 3 retries | Post-deploy health check |
+| `.healthCheck(path, opts?)` | `/health`, 30s, 3 retries; any response below 500 passes until you set a path | Post-deploy health check — a configured path must return 2xx/3xx |
 | `.noHealthCheck()` | — | Skip health check |
-| `.envFile(f)` | `.env` | Local .env file to upload |
+| `.envFile(f)` | `.env` | Local .env file to upload (automatically on the first deploy) |
 | `.sharedDirs(dirs)` | — | Dirs persisted across releases |
 | `.sharedFiles(files)` | — | Files persisted across releases |
 | `.database(opts)` | — | Database connection config |

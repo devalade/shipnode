@@ -106,3 +106,46 @@ describe('HealthCheckService.perform — PM2 status check', () => {
     expect(executor.getHistory()).toHaveLength(0);
   });
 });
+
+describe('HealthCheckService.perform — default vs. configured path', () => {
+  function configWith(healthCheck: Record<string, unknown>) {
+    return assembleConfig({
+      app: 'backend',
+      ssh: { host: '1.2.3.4', user: 'deploy', port: 22 },
+      remotePath: '/var/www/app',
+      pm2: { apps: [{ name: 'api', port: 3000 }] },
+      healthCheck: { timeout: 5, retries: 1, startupDelay: 0, ...healthCheck },
+    });
+  }
+
+  function respond(status: string) {
+    const executor = new FakeRemoteExecutor();
+    executor.when((c) => c.includes('curl'), { stdout: `${status} 5`, stderr: '', exitCode: 0 });
+    executor.when((c) => c.includes('pm2 jlist'), { stdout: pm2JlistOnline(['api']), stderr: '', exitCode: 0 });
+    return executor;
+  }
+
+  it('accepts a 404 when no path was configured — the app is listening, it just has no /health route', async () => {
+    const config = configWith({});
+    expect(config.apps[0].healthCheck).toMatchObject({ path: '/health', strict: false });
+
+    const result = await new HealthCheckService(respond('404'), config).perform(config.apps[0]);
+    expect(result.attempts).toBe(1);
+  });
+
+  it('still fails a 5xx when no path was configured', async () => {
+    const config = configWith({});
+    await expect(new HealthCheckService(respond('502'), config).perform(config.apps[0])).rejects.toThrow(/Last status: 502/);
+  });
+
+  it('fails when nothing answers, and says to listen on PORT', async () => {
+    const config = configWith({});
+    await expect(new HealthCheckService(respond('000'), config).perform(config.apps[0])).rejects.toThrow(/Nothing answered on port 3000/);
+  });
+
+  it('holds a configured path to a 2xx/3xx and names the missing route', async () => {
+    const config = configWith({ path: '/healthz' });
+    expect(config.apps[0].healthCheck.strict).toBe(true);
+    await expect(new HealthCheckService(respond('404'), config).perform(config.apps[0])).rejects.toThrow(/no route at \/healthz/);
+  });
+});

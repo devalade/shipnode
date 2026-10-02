@@ -55,6 +55,8 @@ program
 program
   .command('init')
   .description('Initialize a new shipnode.config.ts')
+  .option('--host <ip>', "Your server's IP address or hostname")
+  .option('--domain <domain>', 'Domain to serve the app on (HTTPS is automatic)')
   .option('--non-interactive', 'Generate config without prompts')
   .option('--print', 'Print config to stdout without writing file')
   .action((opts) => cmdInit(process.cwd(), opts));
